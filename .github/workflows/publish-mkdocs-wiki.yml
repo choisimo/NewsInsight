@@ -52,6 +52,6 @@ jobs:
           if git status --short | grep -q .; then
             git add .
             git commit -m "Update MKDocs site"
-            git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.wiki.git HEAD:main
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.wiki.git" HEAD:master
           else
             echo "No changes to publish"
