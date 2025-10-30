@@ -1,0 +1,43 @@
+site_name: News Insight Documentation
+site_description: Service specifications and guides for the News Insight platform
+site_url: https://github.com/choisimo/NewsInsight/wiki
+nav:
+  - Home: index.md
+  - Services:
+      - Crawler:
+          - Overview (EN): service/crawler/en/overview.md
+          - API Endpoints (EN): service/crawler/en/endpoints.md
+          - Data Contracts (EN): service/crawler/en/data-contracts.md
+          - 개요 (KO): service/crawler/ko/overview.md
+          - API 엔드포인트 (KO): service/crawler/ko/endpoints.md
+          - 데이터 계약 (KO): service/crawler/ko/data-contracts.md
+      - Init Document:
+          - Overview (EN): service/init_document/en/init_document.md
+          - 개요 (KO): service/init_document/ko/init_document.md
+      - News Crawling Service:
+          - Specification (EN): service/news-crawling-service/en/news-crawling-service.md
+          - 명세서 (KO): service/news-crawling-service/ko/news-crawling-service.md
+      - News Keyword Service:
+          - Specification (EN): service/news-keyword-service/en/news-keyword-service.md
+          - 명세서 (KO): service/news-keyword-service/ko/news-keyword-service.md
+      - News Sentiment Service:
+          - Specification (EN): service/news-sentiment-service/en/news-sentiment-service.md
+          - 명세서 (KO): service/news-sentiment-service/ko/news-sentiment-service.md
+theme:
+  name: material
+  language: en
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - tables
+plugins:
+  - search
+extra:
+  alternate:
+    - name: English
+      link: /
+      lang: en
+    - name: 한국어
+      link: /
+      lang: ko
