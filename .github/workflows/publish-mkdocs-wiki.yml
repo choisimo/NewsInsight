@@ -9,6 +9,9 @@ on:
       - 'mkdocs.yml'
       - '.github/workflows/publish-mkdocs-wiki.yml'
 
+permissions:
+  contents: write
+
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
