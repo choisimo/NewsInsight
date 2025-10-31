@@ -41,10 +41,8 @@ jobs:
           persist-credentials: false
 
       - name: Sync built site into wiki
-        working-directory: wiki
         run: |
-          find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
-          rsync -av --delete ../site/ .
+          rsync -av --delete --exclude '.git' site/ wiki/
 
       - name: Commit and push
         working-directory: wiki
