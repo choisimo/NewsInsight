@@ -1,0 +1,128 @@
+version: "3.9"
+
+# Unified stack with Consul KV and all present services
+services:
+  consul:
+    image: hashicorp/consul:1.18
+    command: ["agent", "-dev", "-client", "0.0.0.0", "-ui"]
+    ports:
+      - "8500:8500"  # Consul UI/API
+    environment:
+      # Optional: advertise container hostname in logs
+      - CONSUL_BIND_INTERFACE=eth0
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8500/v1/status/leader"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Init container to seed Consul KV with configuration
+  consul-seed:
+    image: alpine:3.18
+    depends_on:
+      consul:
+        condition: service_healthy
+    volumes:
+      - ../../etc/scripts:/scripts:ro
+      - ../../etc/configs:/configs:ro
+    environment:
+      - CONSUL_HTTP_ADDR=http://consul:8500
+      - CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN:-}
+    command: >
+      sh -c "
+        apk add --no-cache curl bash jq &&
+        /scripts/consul_seed.sh ${ENVIRONMENT:-development}
+      "
+    restart: "no"
+
+  api-gateway:
+    build:
+      context: ../../
+      dockerfile: backend/api-gateway-service/Dockerfile
+    image: newsinsight/api-gateway:local
+    depends_on:
+      consul:
+        condition: service_healthy
+      consul-seed:
+        condition: service_completed_successfully
+      collector-service:
+        condition: service_started
+    environment:
+      # Consul access for config loading in the app
+      - CONSUL_HOST=${CONSUL_HOST:-consul}
+      - CONSUL_PORT=${CONSUL_PORT:-8500}
+      - CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN:-}
+      # Redis for rate limiting
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      # Service port
+      - PORT=${API_GATEWAY_PORT:-8000}
+    ports:
+      - "8000:8000"
+
+  collector-service:
+    build:
+      context: ../../
+      dockerfile: backend/data-collection-service/Dockerfile
+    image: newsinsight/collector-service:local
+    depends_on:
+      consul:
+        condition: service_healthy
+      consul-seed:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      # Consul configuration
+      - CONSUL_HOST=${CONSUL_HOST:-consul}
+      - CONSUL_PORT=${CONSUL_PORT:-8500}
+      - CONSUL_ENABLED=${CONSUL_ENABLED:-true}
+      # Database configuration
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-newsinsight}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      # Service port
+      - SERVER_PORT=${COLLECTOR_PORT:-8081}
+    ports:
+      - "8081:8081"
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=${DB_NAME:-newsinsight}
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Redis for API Gateway rate limiting
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  default:
+    name: newsinsight-net
