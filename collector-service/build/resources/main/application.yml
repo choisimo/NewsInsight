@@ -1,0 +1,125 @@
+spring:
+  application:
+    name: collector-service
+  
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:newsinsight}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: ${JPA_SHOW_SQL:false}
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
+    open-in-view: false
+  
+  cloud:
+    consul:
+      enabled: ${CONSUL_ENABLED:true}
+      host: ${CONSUL_HOST:localhost}
+      port: ${CONSUL_PORT:8500}
+      discovery:
+        enabled: true
+        instance-id: ${spring.application.name}:${random.value}
+        service-name: ${spring.application.name}
+        prefer-ip-address: true
+        health-check-path: /actuator/health
+        health-check-interval: 10s
+      config:
+        enabled: true
+        prefix: config
+        default-context: application
+        profile-separator: '::'
+        format: yaml
+  
+  task:
+    execution:
+      pool:
+        core-size: 5
+        max-size: 20
+        queue-capacity: 100
+      thread-name-prefix: async-task-
+
+server:
+  port: ${SERVER_PORT:8081}
+  servlet:
+    context-path: /
+  compression:
+    enabled: true
+  error:
+    include-message: always
+    include-binding-errors: always
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  health:
+    consul:
+      enabled: ${CONSUL_ENABLED:true}
+
+logging:
+  level:
+    root: INFO
+    com.newsinsight: ${LOG_LEVEL:DEBUG}
+    org.springframework.web: INFO
+    org.hibernate.SQL: ${JPA_SHOW_SQL:false}
+    org.hibernate.type.descriptor.sql.BasicBinder: ${JPA_SHOW_SQL:false}
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+
+# Application specific configuration
+collector:
+  scheduling:
+    enabled: ${SCHEDULING_ENABLED:true}
+    # Cron expression: run every hour
+    cron: ${COLLECTION_CRON:0 0 * * * ?}
+  
+  http:
+    user-agent: ${HTTP_USER_AGENT:NewsInsight-Collector/1.0}
+    timeout:
+      connect: ${HTTP_CONNECT_TIMEOUT:10000}
+      read: ${HTTP_READ_TIMEOUT:30000}
+    max-redirects: 5
+  
+  rss:
+    enabled: true
+    fetch-timeout: 30000
+  
+  web-scraper:
+    enabled: true
+    max-content-length: 1048576  # 1MB
+    respect-robots-txt: true
+  
+  collection:
+    max-concurrent: ${MAX_CONCURRENT_COLLECTIONS:5}
+    retry:
+      max-attempts: 3
+      backoff-delay: 1000
+    cleanup:
+      old-jobs-days: 30
+  
+  quality-assurance:
+    min-content-length: ${QA_MIN_CONTENT_LENGTH:50}
+    enable-network-checks: ${QA_ENABLE_NETWORK_CHECKS:false}
+    domain-whitelist: ${QA_DOMAIN_WHITELIST:example.com,news.example.com}
+    expected-keywords: ${QA_EXPECTED_KEYWORDS:news,article,report}

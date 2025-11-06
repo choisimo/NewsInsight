@@ -1,0 +1,104 @@
+spring:
+  application:
+    name: api-gateway
+  
+  config:
+    # Consul에서 설정 가져오기
+    import: "consul:"
+  
+  cloud:
+    consul:
+      host: ${CONSUL_HOST:localhost}
+      port: ${CONSUL_PORT:8500}
+      config:
+        enabled: true
+        # 기존 Consul KV 구조와 일치
+        prefix: config
+        default-context: ${spring.application.name}
+        format: PROPERTIES
+        # Fail-Fast: Consul 연결 실패 시 즉시 종료
+        fail-fast: true
+      discovery:
+        enabled: true
+        health-check-path: /actuator/health
+        health-check-interval: 10s
+        instance-id: ${spring.application.name}:${random.value}
+
+    gateway:
+      routes:
+        # Collector 서비스 - 소스 관리
+        - id: collector-sources
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/collector/sources/**
+          filters:
+            - StripPrefix=3
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 150
+
+        # Collector 서비스 - 수집 작업
+        - id: collector-collections
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/collector/collections/**
+          filters:
+            - StripPrefix=3
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 150
+
+        # Collector 서비스 - RSS 피드
+        - id: collector-feeds
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/collector/feeds/**
+          filters:
+            - StripPrefix=3
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 150
+      
+      # 전역 CORS 설정
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - PATCH
+            allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
+  
+  # Redis 설정 (Rate Limiting용)
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+server:
+  port: ${PORT:8000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,env,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    root: INFO
+    org.springframework.cloud.gateway: INFO
+    org.springframework.security: DEBUG
+    com.newsinsight.gateway: DEBUG

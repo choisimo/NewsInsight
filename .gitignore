@@ -1,1 +1,25 @@
 SourceDev/**
+
+# Gradle caches
+.gradle/
+**/.gradle/
+
+# Build outputs
+/build/
+**/build/
+/out/
+**/out/
+
+# Compiled artifacts
+*.class
+*.jar
+*.war
+*.ear
+
+# IDE files
+.idea/
+*.iml
+*.ipr
+
+# Logs
+*.log
