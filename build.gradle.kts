@@ -18,43 +18,57 @@ allprojects {
 }
 
 subprojects {
+    // backend 디렉터리 자체는 모듈이 아니므로 스킵
+    if (path == ":backend") {
+        return@subprojects
+    }
+    
     apply(plugin = "java")
-    apply(plugin = "org.springframework.boot")
-    apply(plugin = "io.spring.dependency-management")
     
     java {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
     
+    // 실행 가능한 모듈에만 Spring Boot 플러그인 적용
+    if (name !in listOf("shared-libs")) {
+        apply(plugin = "org.springframework.boot")
+        apply(plugin = "io.spring.dependency-management")
+        
+        dependencies {
+            // 모든 서비스 공통 의존성
+            implementation("org.springframework.boot:spring-boot-starter-actuator")
+            implementation("org.springframework.cloud:spring-cloud-starter-consul-config")
+            implementation("org.springframework.cloud:spring-cloud-starter-consul-discovery")
+            
+            // Lombok (선택 사항)
+            compileOnly("org.projectlombok:lombok")
+            annotationProcessor("org.projectlombok:lombok")
+            
+            // Logging
+            implementation("net.logstash.logback:logstash-logback-encoder:7.4")
+            
+            // Validation
+            implementation("org.springframework.boot:spring-boot-starter-validation")
+            
+            // Test
+            testImplementation("org.springframework.boot:spring-boot-starter-test")
+            testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+        }
+    } else {
+        // shared-libs needs dependency management for Spring Boot dependencies
+        apply(plugin = "io.spring.dependency-management")
+    }
+    
     // Spring Cloud 버전 관리
     extra["springCloudVersion"] = "2023.0.0"
+    extra["springBootVersion"] = "3.2.1"
     
     configure<io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension> {
         imports {
+            mavenBom("org.springframework.boot:spring-boot-dependencies:${project.extra["springBootVersion"]}")
             mavenBom("org.springframework.cloud:spring-cloud-dependencies:${project.extra["springCloudVersion"]}")
         }
-    }
-    
-    dependencies {
-        // 모든 서비스 공통 의존성
-        implementation("org.springframework.boot:spring-boot-starter-actuator")
-        implementation("org.springframework.cloud:spring-cloud-starter-consul-config")
-        implementation("org.springframework.cloud:spring-cloud-starter-consul-discovery")
-        
-        // Lombok (선택 사항)
-        compileOnly("org.projectlombok:lombok")
-        annotationProcessor("org.projectlombok:lombok")
-        
-        // Logging
-        implementation("net.logstash.logback:logstash-logback-encoder:7.4")
-        
-        // Validation
-        implementation("org.springframework.boot:spring-boot-starter-validation")
-        
-        // Test
-        testImplementation("org.springframework.boot:spring-boot-starter-test")
-        testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     }
     
     tasks.withType<Test> {

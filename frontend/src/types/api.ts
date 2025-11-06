@@ -1,0 +1,34 @@
+export interface SentimentData {
+  pos: number;
+  neg: number;
+  neu: number;
+}
+
+export interface KeywordData {
+  word: string;
+  score: number;
+}
+
+export interface AnalysisResponse {
+  query: string;
+  window: string;
+  article_count: number;
+  sentiments: SentimentData;
+  top_keywords: KeywordData[];
+  analyzed_at: string;
+}
+
+export interface Article {
+  id: string;
+  title: string;
+  source: string;
+  published_at: string;
+  url: string;
+  snippet?: string;
+}
+
+export interface ArticlesResponse {
+  query: string;
+  articles: Article[];
+  total: number;
+}
