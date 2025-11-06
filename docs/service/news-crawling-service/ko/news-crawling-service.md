@@ -20,6 +20,13 @@
   - 포함: 키워드 기반 기사 수집, 기사 본문/메타데이터 정규화, 중복 제거, 수집 결과 저장, 상태 모니터링 API
   - 제외: 감성 분석, 키워드 분석, UI 제공, 외부 유료 API 결제 처리
 
+> ### 💡 구현 참고 (Implementation Note)
+>
+> 본 문서는 Scrapy 및 Celery 기반의 아키텍처를 로드맵으로 제시하고 있으나, **현재 구현체(`BACKEND-COLLECTOR-SERVICE`)**는 FastAPI를 기반으로 하는 경량화된 수집 및 연동 관리 API 중심으로 구성되어 있습니다.
+>
+> * **Current:** FastAPI 기반 API (수집 타겟 관리, 상태 조회)
+> * **Roadmap:** Scrapy/Celery 기반의 대규모 분산 크롤링 도입 (향후 정합화 예정)
+
 ## 3. 기술 스택
 
 - 프레임워크: Scrapy, Flask (관리 API), Celery
