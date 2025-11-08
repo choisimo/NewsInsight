@@ -1,15 +1,17 @@
 package com.newsinsight.collector.controller;
 
-import com.newsinsight.collector.dto.*;
+import com.newsinsight.collector.dto.CollectionJobDTO;
+import com.newsinsight.collector.dto.CollectionRequest;
+import com.newsinsight.collector.dto.CollectionResponse;
+import com.newsinsight.collector.dto.CollectionStatsDTO;
+import com.newsinsight.collector.dto.PageResponse;
 import com.newsinsight.collector.entity.CollectionJob;
+import com.newsinsight.collector.entity.CollectionJob.JobStatus;
 import com.newsinsight.collector.mapper.EntityMapper;
 import com.newsinsight.collector.service.CollectionService;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,68 +21,66 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/collections")
-@RequiredArgsConstructor
 public class CollectionController {
 
     private final CollectionService collectionService;
     private final EntityMapper entityMapper;
 
+    public CollectionController(CollectionService collectionService, EntityMapper entityMapper) {
+        this.collectionService = collectionService;
+        this.entityMapper = entityMapper;
+    }
+
     /**
-     * POST /api/v1/collections/start - Start collection for sources
+     * POST /api/v1/collections/start - 수집 작업 시작 (전체 또는 특정 소스)
      */
     @PostMapping("/start")
     public ResponseEntity<CollectionResponse> startCollection(
             @Valid @RequestBody CollectionRequest request) {
-        
+
         List<CollectionJob> jobs;
-        
-        if (request.getSourceIds() == null || request.getSourceIds().isEmpty()) {
-            // Collect from all active sources
+
+        if (request.sourceIds().isEmpty()) {
+            // 활성화된 모든 소스 대상으로 수집
             jobs = collectionService.startCollectionForAllActive();
         } else {
-            // Collect from specified sources
-            jobs = collectionService.startCollectionForSources(request.getSourceIds());
+            // 지정된 소스들만 수집
+            jobs = collectionService.startCollectionForSources(request.sourceIds());
         }
-        
+
         List<CollectionJobDTO> jobDTOs = jobs.stream()
                 .map(entityMapper::toCollectionJobDTO)
                 .toList();
-        
-        CollectionResponse response = CollectionResponse.builder()
-                .message("Collection started for " + jobs.size() + " source(s)")
-                .jobs(jobDTOs)
-                .totalJobsStarted(jobs.size())
-                .timestamp(LocalDateTime.now())
-                .build();
-        
+
+        CollectionResponse response = new CollectionResponse(
+                "Collection started for " + jobs.size() + " source(s)",
+                jobDTOs,
+                jobs.size(),
+                LocalDateTime.now()
+        );
+
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
     }
 
     /**
-     * GET /api/v1/collections/jobs - List all collection jobs
+     * GET /api/v1/collections/jobs - 수집 작업 목록 조회 (상태별 필터링)
      */
     @GetMapping("/jobs")
-    public ResponseEntity<Page<CollectionJobDTO>> listJobs(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) String status) {
-        
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
-        
-        Page<CollectionJob> jobs;
-        if (status != null && !status.isBlank()) {
-            jobs = collectionService.getJobsByStatus(status, pageable);
-        } else {
-            jobs = collectionService.getAllJobs(pageable);
-        }
-        
+    public ResponseEntity<PageResponse<CollectionJobDTO>> listJobs(
+            Pageable pageable,
+            @RequestParam(required = false) JobStatus status) {
+
+        Page<CollectionJob> jobs = (status != null)
+                ? collectionService.getJobsByStatus(status, pageable)
+                : collectionService.getAllJobs(pageable);
+
         Page<CollectionJobDTO> jobDTOs = jobs.map(entityMapper::toCollectionJobDTO);
-        
-        return ResponseEntity.ok(jobDTOs);
+
+        return ResponseEntity.ok(PageResponse.from(jobDTOs));
     }
 
     /**
-     * GET /api/v1/collections/jobs/{id} - Get collection job by ID
+     * GET /api/v1/collections/jobs/{id} - 특정 작업 상세 조회
      */
     @GetMapping("/jobs/{id}")
     public ResponseEntity<CollectionJobDTO> getJob(@PathVariable Long id) {
@@ -91,7 +91,7 @@ public class CollectionController {
     }
 
     /**
-     * POST /api/v1/collections/jobs/{id}/cancel - Cancel collection job
+     * POST /api/v1/collections/jobs/{id}/cancel - 수집 작업 취소
      */
     @PostMapping("/jobs/{id}/cancel")
     public ResponseEntity<Void> cancelJob(@PathVariable Long id) {
@@ -100,7 +100,7 @@ public class CollectionController {
     }
 
     /**
-     * GET /api/v1/collections/stats - Get collection statistics
+     * GET /api/v1/collections/stats - 수집 통계 조회
      */
     @GetMapping("/stats")
     public ResponseEntity<CollectionStatsDTO> getStats() {
@@ -109,7 +109,7 @@ public class CollectionController {
     }
 
     /**
-     * DELETE /api/v1/collections/jobs/cleanup - Cleanup old jobs
+     * DELETE /api/v1/collections/jobs/cleanup - 오래된 작업 정리
      */
     @DeleteMapping("/jobs/cleanup")
     public ResponseEntity<String> cleanupOldJobs(

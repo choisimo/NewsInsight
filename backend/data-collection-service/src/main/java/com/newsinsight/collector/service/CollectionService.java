@@ -32,7 +32,7 @@ public class CollectionService {
     private final CollectedDataService collectedDataService;
 
     /**
-     * Start collection job for a specific source
+     * 특정 소스에 대한 수집 작업 시작
      */
     @Transactional
     public CollectionJob startCollection(Long sourceId) {
@@ -48,7 +48,7 @@ public class CollectionService {
             throw new IllegalStateException("Data source is not active: " + sourceId);
         }
         
-        // Create collection job
+        // 수집 작업 엔티티 생성
         CollectionJob job = CollectionJob.builder()
                 .sourceId(sourceId)
                 .status(JobStatus.PENDING)
@@ -57,7 +57,7 @@ public class CollectionService {
         
         job = collectionJobRepository.save(job);
         
-        // Execute collection asynchronously
+        // 수집 작업을 비동기로 실행
         final Long jobId = job.getId();
         executeCollectionAsync(jobId, source);
         
@@ -65,7 +65,7 @@ public class CollectionService {
     }
 
     /**
-     * Start collection for multiple sources
+     * 여러 소스에 대한 수집 작업 시작
      */
     @Transactional
     public List<CollectionJob> startCollectionForSources(List<Long> sourceIds) {
@@ -75,7 +75,7 @@ public class CollectionService {
     }
 
     /**
-     * Start collection for all active sources
+     * 활성 소스 전체에 대한 수집 작업 시작
      */
     @Transactional
     public List<CollectionJob> startCollectionForAllActive() {
@@ -86,7 +86,7 @@ public class CollectionService {
     }
 
     /**
-     * Execute collection job asynchronously
+     * 수집 작업 비동기 실행
      */
     @Async("taskExecutor")
     public CompletableFuture<Void> executeCollectionAsync(Long jobId, DataSource source) {
@@ -96,7 +96,7 @@ public class CollectionService {
     }
 
     /**
-     * Execute actual collection logic
+     * 실제 수집 로직 실행
      */
     @Transactional
     protected void executeCollection(Long jobId, DataSource source) {
@@ -113,15 +113,15 @@ public class CollectionService {
             log.info("Starting collection job {} for source: {} ({})", 
                     jobId, source.getName(), source.getSourceType());
             
-            // Update job status to RUNNING
+            // 작업 상태를 RUNNING으로 변경
             job.setStatus(JobStatus.RUNNING);
             job.setStartedAt(LocalDateTime.now());
             collectionJobRepository.save(job);
             
-            // Collect data based on source type
+            // 소스 타입에 따라 데이터 수집
             List<CollectedData> collectedItems = collectFromSource(source);
             
-            // Save collected data
+            // 수집된 데이터 저장
             int savedCount = 0;
             for (CollectedData data : collectedItems) {
                 try {
@@ -132,10 +132,10 @@ public class CollectionService {
                 }
             }
             
-            // Update source last collected timestamp
+            // 소스의 마지막 수집 시각 업데이트
             dataSourceService.updateLastCollected(source.getId(), LocalDateTime.now());
             
-            // Update job status to COMPLETED
+            // 작업 상태를 COMPLETED로 변경
             job.setStatus(JobStatus.COMPLETED);
             job.setCompletedAt(LocalDateTime.now());
             job.setItemsCollected(savedCount);
@@ -147,7 +147,7 @@ public class CollectionService {
         } catch (Exception e) {
             log.error("Error executing collection job {}: {}", jobId, e.getMessage(), e);
             
-            // Update job status to FAILED
+            // 작업 상태를 FAILED로 변경
             job.setStatus(JobStatus.FAILED);
             job.setCompletedAt(LocalDateTime.now());
             job.setErrorMessage(e.getMessage());
@@ -156,7 +156,7 @@ public class CollectionService {
     }
 
     /**
-     * Collect data from source based on type
+     * 소스 타입에 따른 데이터 수집
      */
     private List<CollectedData> collectFromSource(DataSource source) {
         SourceType sourceType = source.getSourceType();
@@ -165,40 +165,39 @@ public class CollectionService {
             case RSS -> rssFeedService.fetchRssFeed(source);
             case WEB -> webScraperService.scrapeWebPage(source);
             case API -> {
-                log.warn("API source type not yet implemented for: {}", source.getName());
+                log.warn("API 소스 타입은 아직 미구현: {}", source.getName());
                 yield List.of();
             }
             case WEBHOOK -> {
-                log.warn("WEBHOOK source type is passive and cannot be actively collected: {}", source.getName());
+                log.warn("WEBHOOK 소스 타입은 수동 이벤트 기반으로, 능동 수집이 불가: {}", source.getName());
                 yield List.of();
             }
         };
     }
 
     /**
-     * Get collection job by ID
+     * 수집 작업 단건 조회 (ID)
      */
     public Optional<CollectionJob> getJobById(Long jobId) {
         return collectionJobRepository.findById(jobId);
     }
 
     /**
-     * Get all collection jobs with pagination
+     * 수집 작업 전체 조회 (페이지네이션)
      */
     public Page<CollectionJob> getAllJobs(Pageable pageable) {
         return collectionJobRepository.findAll(pageable);
     }
 
     /**
-     * Get collection jobs by status
+     * 상태별 수집 작업 조회
      */
-    public Page<CollectionJob> getJobsByStatus(String status, Pageable pageable) {
-        JobStatus jobStatus = JobStatus.valueOf(status.toUpperCase());
-        return collectionJobRepository.findByStatus(jobStatus, pageable);
+    public Page<CollectionJob> getJobsByStatus(JobStatus status, Pageable pageable) {
+        return collectionJobRepository.findByStatus(status, pageable);
     }
 
     /**
-     * Get collection statistics
+     * 수집 통계 조회
      */
     public CollectionStatsDTO getStatistics() {
         long totalSources = dataSourceService.countAll();
@@ -206,7 +205,7 @@ public class CollectionService {
         long totalItemsCollected = collectedDataService.countTotal();
         long unprocessedItems = collectedDataService.countUnprocessed();
         
-        // Get last collection time
+        // 최근 수집 시각 계산
         LocalDateTime lastCollection = dataSourceService.findAll(Pageable.unpaged())
                 .stream()
                 .map(DataSource::getLastCollected)
@@ -214,17 +213,17 @@ public class CollectionService {
                 .max(LocalDateTime::compareTo)
                 .orElse(null);
         
-        return CollectionStatsDTO.builder()
-                .totalSources(totalSources)
-                .activeSources(activeSources)
-                .totalItemsCollected(totalItemsCollected)
-                .itemsCollectedToday(unprocessedItems)  // Using unprocessed as proxy for today's count
-                .lastCollection(lastCollection)
-                .build();
+        return new CollectionStatsDTO(
+                totalSources,
+                activeSources,
+                totalItemsCollected,
+                unprocessedItems, // Using unprocessed as proxy for today's count
+                lastCollection
+        );
     }
 
     /**
-     * Cancel a running collection job
+     * 실행 중인 수집 작업 취소
      */
     @Transactional
     public boolean cancelJob(Long jobId) {
@@ -249,7 +248,7 @@ public class CollectionService {
     }
 
     /**
-     * Clean up old completed jobs
+     * 오래된 완료 작업 정리
      */
     @Transactional
     public int cleanupOldJobs(int daysOld) {

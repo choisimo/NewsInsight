@@ -29,7 +29,7 @@ public class RssFeedService {
     private final ObjectMapper objectMapper;
 
     /**
-     * Normalize text by removing extra whitespace
+     * 공백을 정리하여 텍스트를 정규화
      */
     private String normalizeText(String text) {
         if (text == null || text.isBlank()) {
@@ -39,7 +39,7 @@ public class RssFeedService {
     }
 
     /**
-     * Fetch and parse RSS feed
+     * RSS 피드를 조회하고 파싱
      */
     public List<CollectedData> fetchRssFeed(DataSource source) {
         List<CollectedData> results = new ArrayList<>();
@@ -72,46 +72,46 @@ public class RssFeedService {
     }
 
     /**
-     * Parse single RSS entry to CollectedData
+     * RSS 엔트리 1건을 CollectedData로 변환
      */
     private CollectedData parseEntry(SyndEntry entry, DataSource source) {
         String title = entry.getTitle();
         String description = entry.getDescription() != null ? entry.getDescription().getValue() : "";
         String link = entry.getLink();
         
-        // Normalize content
+        // 콘텐츠 정규화
         String content = normalizeText(description);
         
-        // Skip if content is too short
+        // 콘텐츠가 너무 짧으면 스킵
         if (content.length() < 10) {
             log.debug("Skipping entry with too short content: {}", title);
             return null;
         }
         
-        // Parse published date
+        // 게시일 파싱
         LocalDateTime publishedDate = null;
         Date pubDate = entry.getPublishedDate() != null ? entry.getPublishedDate() : entry.getUpdatedDate();
         if (pubDate != null) {
             publishedDate = LocalDateTime.ofInstant(pubDate.toInstant(), ZoneId.systemDefault());
         }
         
-        // Compute content hash
+        // 콘텐츠 해시 계산
         String contentHash = collectedDataService.computeContentHash(link, title, content);
         
-        // Check for duplicates
+        // 중복 여부 확인
         if (collectedDataService.isDuplicate(contentHash)) {
             log.debug("Duplicate entry detected: {}", title);
             return null;
         }
         
-        // Extract tags/categories
+        // 태그/카테고리 추출
         List<String> tags = entry.getCategories() != null 
             ? entry.getCategories().stream()
                 .map(cat -> cat.getName())
                 .collect(Collectors.toList())
             : List.of();
         
-        // Build metadata
+        // 메타데이터 구성
         Map<String, Object> metadata = Map.of(
             "adapter", "rss",
             "tags", tags,
@@ -119,7 +119,7 @@ public class RssFeedService {
             "source_name", source.getName()
         );
         
-        // Convert metadata to JSON string
+        // 메타데이터를 JSON 문자열로 변환
         String metadataJson;
         try {
             metadataJson = objectMapper.writeValueAsString(metadata);
@@ -128,7 +128,7 @@ public class RssFeedService {
             metadataJson = "{}";
         }
         
-        // Create CollectedData entity
+        // CollectedData 엔티티 생성
         CollectedData data = CollectedData.builder()
                 .sourceId(source.getId())
                 .title(title)

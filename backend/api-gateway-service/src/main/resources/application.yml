@@ -32,7 +32,7 @@ spring:
           predicates:
             - Path=/api/v1/collector/sources/**
           filters:
-            - StripPrefix=3
+            - StripPrefix=2
             - name: RequestRateLimiter
               args:
                 redis-rate-limiter.replenishRate: 100
@@ -44,7 +44,7 @@ spring:
           predicates:
             - Path=/api/v1/collector/collections/**
           filters:
-            - StripPrefix=3
+            - StripPrefix=2
             - name: RequestRateLimiter
               args:
                 redis-rate-limiter.replenishRate: 100
@@ -56,7 +56,7 @@ spring:
           predicates:
             - Path=/api/v1/collector/feeds/**
           filters:
-            - StripPrefix=3
+            - StripPrefix=2
             - name: RequestRateLimiter
               args:
                 redis-rate-limiter.replenishRate: 100

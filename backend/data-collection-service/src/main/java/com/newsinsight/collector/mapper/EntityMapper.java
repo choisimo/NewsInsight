@@ -1,36 +1,44 @@
 package com.newsinsight.collector.mapper;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.newsinsight.collector.dto.*;
 import com.newsinsight.collector.entity.CollectedData;
 import com.newsinsight.collector.entity.CollectionJob;
 import com.newsinsight.collector.entity.DataSource;
-import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
 import java.util.Map;
 
 @Component
-@RequiredArgsConstructor
 public class EntityMapper {
+
+    private static final Logger log = LoggerFactory.getLogger(EntityMapper.class);
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
     private final ObjectMapper objectMapper;
 
+    public EntityMapper(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
     public DataSourceDTO toDTO(DataSource source) {
-        return DataSourceDTO.builder()
-                .id(source.getId())
-                .name(source.getName())
-                .url(source.getUrl())
-                .sourceType(source.getSourceType())
-                .isActive(source.getIsActive())
-                .lastCollected(source.getLastCollected())
-                .collectionFrequency(source.getCollectionFrequency())
-                .metadata(parseJson(source.getMetadataJson()))
-                .createdAt(source.getCreatedAt())
-                .updatedAt(source.getUpdatedAt())
-                .build();
+        return new DataSourceDTO(
+                source.getId(),
+                source.getName(),
+                source.getUrl(),
+                source.getSourceType(),
+                source.getIsActive(),
+                source.getLastCollected(),
+                source.getCollectionFrequency(),
+                parseJson(source.getMetadataJson()),
+                source.getCreatedAt(),
+                source.getUpdatedAt()
+        );
     }
 
     // Alias method for DataSource
@@ -39,16 +47,16 @@ public class EntityMapper {
     }
 
     public CollectionJobDTO toDTO(CollectionJob job) {
-        return CollectionJobDTO.builder()
-                .id(job.getId())
-                .sourceId(job.getSourceId())
-                .status(job.getStatus())
-                .startedAt(job.getStartedAt())
-                .completedAt(job.getCompletedAt())
-                .itemsCollected(job.getItemsCollected())
-                .errorMessage(job.getErrorMessage())
-                .createdAt(job.getCreatedAt())
-                .build();
+        return new CollectionJobDTO(
+                job.getId(),
+                job.getSourceId(),
+                job.getStatus(),
+                job.getStartedAt(),
+                job.getCompletedAt(),
+                job.getItemsCollected(),
+                job.getErrorMessage(),
+                job.getCreatedAt()
+        );
     }
 
     // Alias method for CollectionJob
@@ -57,18 +65,18 @@ public class EntityMapper {
     }
 
     public CollectedDataDTO toDTO(CollectedData data) {
-        return CollectedDataDTO.builder()
-                .id(data.getId())
-                .sourceId(data.getSourceId())
-                .title(data.getTitle())
-                .content(data.getContent())
-                .url(data.getUrl())
-                .publishedDate(data.getPublishedDate())
-                .collectedAt(data.getCollectedAt())
-                .contentHash(data.getContentHash())
-                .metadata(parseJson(data.getMetadataJson()))
-                .processed(data.getProcessed())
-                .build();
+        return new CollectedDataDTO(
+                data.getId(),
+                data.getSourceId(),
+                data.getTitle(),
+                data.getContent(),
+                data.getUrl(),
+                data.getPublishedDate(),
+                data.getCollectedAt(),
+                data.getContentHash(),
+                parseJson(data.getMetadataJson()),
+                data.getProcessed()
+        );
     }
 
     // Alias method for CollectedData
@@ -78,11 +86,11 @@ public class EntityMapper {
 
     public DataSource toEntity(DataSourceCreateRequest request) {
         return DataSource.builder()
-                .name(request.getName())
-                .url(request.getUrl())
-                .sourceType(request.getSourceType())
-                .collectionFrequency(request.getCollectionFrequency())
-                .metadataJson(toJson(request.getMetadata()))
+                .name(request.name())
+                .url(request.url())
+                .sourceType(request.sourceType())
+                .collectionFrequency(request.collectionFrequency())
+                .metadataJson(toJson(request.metadata()))
                 .isActive(true)
                 .build();
     }
@@ -93,20 +101,20 @@ public class EntityMapper {
     }
 
     public void updateEntity(DataSource source, DataSourceUpdateRequest request) {
-        if (request.getName() != null) {
-            source.setName(request.getName());
+        if (request.name() != null) {
+            source.setName(request.name());
         }
-        if (request.getUrl() != null) {
-            source.setUrl(request.getUrl());
+        if (request.url() != null) {
+            source.setUrl(request.url());
         }
-        if (request.getIsActive() != null) {
-            source.setIsActive(request.getIsActive());
+        if (request.isActive() != null) {
+            source.setIsActive(request.isActive());
         }
-        if (request.getCollectionFrequency() != null) {
-            source.setCollectionFrequency(request.getCollectionFrequency());
+        if (request.collectionFrequency() != null) {
+            source.setCollectionFrequency(request.collectionFrequency());
         }
-        if (request.getMetadata() != null) {
-            source.setMetadataJson(toJson(request.getMetadata()));
+        if (request.metadata() != null) {
+            source.setMetadataJson(toJson(request.metadata()));
         }
     }
 
@@ -115,14 +123,14 @@ public class EntityMapper {
         updateEntity(source, request);
     }
 
-    @SuppressWarnings("unchecked")
     private Map<String, Object> parseJson(String json) {
         if (json == null || json.isBlank()) {
             return Collections.emptyMap();
         }
         try {
-            return objectMapper.readValue(json, Map.class);
+            return objectMapper.readValue(json, MAP_TYPE);
         } catch (JsonProcessingException e) {
+            log.warn("Failed to parse metadata JSON. Returning empty map. Data: {}", json, e);
             return Collections.emptyMap();
         }
     }
@@ -134,6 +142,7 @@ public class EntityMapper {
         try {
             return objectMapper.writeValueAsString(map);
         } catch (JsonProcessingException e) {
+            log.warn("Failed to serialize metadata map. Returning null. Data: {}", map, e);
             return null;
         }
     }

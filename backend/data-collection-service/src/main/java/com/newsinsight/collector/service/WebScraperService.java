@@ -27,7 +27,7 @@ public class WebScraperService {
     private final ObjectMapper objectMapper;
 
     /**
-     * Normalize text by removing extra whitespace
+     * 공백을 정리하여 텍스트를 정규화
      */
     private String normalizeText(String text) {
         if (text == null || text.isBlank()) {
@@ -37,7 +37,7 @@ public class WebScraperService {
     }
 
     /**
-     * Fetch and scrape web page
+     * 웹 페이지를 가져와 스크랩
      */
     public List<CollectedData> scrapeWebPage(DataSource source) {
         List<CollectedData> results = new ArrayList<>();
@@ -45,7 +45,7 @@ public class WebScraperService {
         try {
             log.info("Scraping web page: {}", source.getUrl());
             
-            // Fetch HTML content using WebClient
+            // WebClient로 HTML 가져오기
             String html = webClient.get()
                     .uri(source.getUrl())
                     .retrieve()
@@ -62,46 +62,46 @@ public class WebScraperService {
                 return results;
             }
             
-            // Parse HTML with Jsoup
+            // Jsoup으로 HTML 파싱
             Document doc = Jsoup.parse(html);
             
-            // Remove script and style tags
+            // script/style/nav/footer/aside 제거
             doc.select("script, style, nav, footer, aside").remove();
             
-            // Extract text content
+            // 본문 텍스트 추출
             String textContent = doc.body().text();
             String normalizedContent = normalizeText(textContent);
             
-            // Skip if content is too short
+            // 내용이 너무 짧으면 건너뜀
             if (normalizedContent.length() < 100) {
                 log.debug("Skipping page with too short content: {}", source.getUrl());
                 return results;
             }
             
-            // Extract title
+            // 제목 추출
             String title = doc.title();
             if (title == null || title.isBlank()) {
                 title = source.getName();
             }
             
-            // Compute content hash
+            // 콘텐츠 해시 계산
             String contentHash = collectedDataService.computeContentHash(
                     source.getUrl(), title, normalizedContent);
             
-            // Check for duplicates
+            // 중복 확인
             if (collectedDataService.isDuplicate(contentHash)) {
                 log.debug("Duplicate page detected: {}", source.getUrl());
                 return results;
             }
             
-            // Build metadata
+            // 메타데이터 구성
             Map<String, Object> metadata = Map.of(
                 "adapter", "web",
                 "source_name", source.getName(),
                 "scrape_method", "jsoup"
             );
             
-            // Convert metadata to JSON string
+            // 메타데이터를 JSON 문자열로 변환
             String metadataJson;
             try {
                 metadataJson = objectMapper.writeValueAsString(metadata);
@@ -110,13 +110,13 @@ public class WebScraperService {
                 metadataJson = "{}";
             }
             
-            // Create CollectedData entity
+            // CollectedData 엔티티 생성
             CollectedData data = CollectedData.builder()
                     .sourceId(source.getId())
                     .title(title)
                     .content(normalizedContent)
                     .url(source.getUrl())
-                    .publishedDate(null) // Web pages don't have published date
+                    .publishedDate(null) // 웹 페이지는 게시일 정보가 없음
                     .contentHash(contentHash)
                     .metadataJson(metadataJson)
                     .processed(false)
@@ -136,7 +136,7 @@ public class WebScraperService {
     }
 
     /**
-     * Extract specific content using CSS selector (if provided in metadata)
+     * CSS 셀렉터로 특정 콘텐츠 추출 (메타데이터에 제공된 경우)
      */
     public String extractWithSelector(Document doc, String cssSelector) {
         if (cssSelector == null || cssSelector.isBlank()) {
@@ -146,7 +146,7 @@ public class WebScraperService {
         try {
             return doc.select(cssSelector).text();
         } catch (Exception e) {
-            log.warn("Error using CSS selector {}: {}", cssSelector, e.getMessage());
+            log.warn("CSS 셀렉터 사용 오류 {}: {}", cssSelector, e.getMessage());
             return doc.body().text();
         }
     }

@@ -22,7 +22,7 @@ public class CollectedDataService {
     private final CollectedDataRepository collectedDataRepository;
 
     /**
-     * Compute SHA-256 content hash for deduplication
+     * 중복 제거를 위한 SHA-256 콘텐츠 해시 계산
      */
     public String computeContentHash(String url, String title, String content) {
         try {
@@ -45,24 +45,24 @@ public class CollectedDataService {
     }
 
     /**
-     * Check if content already exists by hash
+     * 해시값으로 콘텐츠 존재 여부 확인
      */
     public boolean isDuplicate(String contentHash) {
         return collectedDataRepository.findByContentHash(contentHash).isPresent();
     }
 
     /**
-     * Save collected data item
+     * 수집된 데이터 저장
      */
     @Transactional
     public CollectedData save(CollectedData data) {
-        // Compute content hash if not set
+        // 콘텐츠 해시가 비어있으면 계산하여 설정
         if (data.getContentHash() == null) {
             String hash = computeContentHash(data.getUrl(), data.getTitle(), data.getContent());
             data.setContentHash(hash);
         }
         
-        // Check if duplicate
+        // 중복 여부 확인
         if (isDuplicate(data.getContentHash())) {
             log.debug("Duplicate content detected: {}", data.getContentHash());
             data.setDuplicate(true);
@@ -72,35 +72,35 @@ public class CollectedDataService {
     }
 
     /**
-     * Get collected data by ID
+     * 수집된 데이터 단건 조회 (ID)
      */
     public Optional<CollectedData> findById(Long id) {
         return collectedDataRepository.findById(id);
     }
 
     /**
-     * Get all collected data with pagination
+     * 수집된 데이터 전체 조회 (페이지네이션)
      */
     public Page<CollectedData> findAll(Pageable pageable) {
         return collectedDataRepository.findAll(pageable);
     }
 
     /**
-     * Get unprocessed data
+     * 미처리 데이터 조회
      */
     public Page<CollectedData> findUnprocessed(Pageable pageable) {
         return collectedDataRepository.findByProcessedFalse(pageable);
     }
 
     /**
-     * Get data by source ID
+     * 소스 ID 기준 데이터 조회
      */
     public Page<CollectedData> findBySourceId(Long sourceId, Pageable pageable) {
         return collectedDataRepository.findBySourceId(sourceId, pageable);
     }
 
     /**
-     * Mark data as processed
+     * 데이터 처리 완료로 마킹
      */
     @Transactional
     public boolean markAsProcessed(Long id) {
@@ -116,21 +116,21 @@ public class CollectedDataService {
     }
 
     /**
-     * Count total collected items
+     * 전체 수집 건수 카운트
      */
     public long countTotal() {
         return collectedDataRepository.count();
     }
 
     /**
-     * Count unprocessed items
+     * 미처리 건수 카운트
      */
     public long countUnprocessed() {
         return collectedDataRepository.countByProcessedFalse();
     }
 
     /**
-     * Calculate quality score based on QA metrics
+     * QA 지표 기반 품질 점수 계산
      */
     public double calculateQualityScore(
             Boolean httpOk,
@@ -152,7 +152,7 @@ public class CollectedDataService {
     }
 
     /**
-     * Calculate trust score based on URL domain
+     * URL 도메인 기반 신뢰도 점수 계산
      */
     public double calculateTrustScore(String url, Boolean httpOk, boolean inWhitelist) {
         double base = inWhitelist ? 0.9 : 0.5;

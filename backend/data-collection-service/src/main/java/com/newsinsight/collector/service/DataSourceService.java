@@ -25,6 +25,9 @@ public class DataSourceService {
     private final DataSourceRepository dataSourceRepository;
     private final EntityMapper entityMapper;
 
+    /**
+     * 모든 데이터 소스 목록 조회
+     */
     @Transactional(readOnly = true)
     public List<DataSourceDTO> getAllSources() {
         return dataSourceRepository.findAll().stream()
@@ -32,6 +35,9 @@ public class DataSourceService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 활성화된 데이터 소스 목록 조회
+     */
     @Transactional(readOnly = true)
     public List<DataSourceDTO> getActiveSources() {
         return dataSourceRepository.findByIsActiveTrue().stream()
@@ -39,6 +45,9 @@ public class DataSourceService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 소스 타입별 데이터 소스 조회
+     */
     @Transactional(readOnly = true)
     public List<DataSourceDTO> getSourcesByType(SourceType sourceType) {
         return dataSourceRepository.findBySourceType(sourceType).stream()
@@ -46,6 +55,9 @@ public class DataSourceService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 데이터 소스 단건 조회 (ID)
+     */
     @Transactional(readOnly = true)
     public DataSourceDTO getSource(Long id) {
         return dataSourceRepository.findById(id)
@@ -53,12 +65,15 @@ public class DataSourceService {
                 .orElse(null);
     }
 
-    // Alias method for findById returning Optional<DataSource>
+    // findById의 Optional<DataSource> 반환 버전
     @Transactional(readOnly = true)
     public Optional<DataSource> findById(Long id) {
         return dataSourceRepository.findById(id);
     }
 
+    /**
+     * 데이터 소스 생성 (DTO 요청 기반)
+     */
     @Transactional
     public DataSourceDTO createSource(DataSourceCreateRequest request) {
         DataSource source = entityMapper.toEntity(request);
@@ -68,7 +83,7 @@ public class DataSourceService {
         return entityMapper.toDTO(saved);
     }
 
-    // Alias method returning DataSource entity
+    // 엔티티 직접 저장/반환 버전
     @Transactional
     public DataSource create(DataSource source) {
         DataSource saved = dataSourceRepository.save(source);
@@ -77,6 +92,9 @@ public class DataSourceService {
         return saved;
     }
 
+    /**
+     * 데이터 소스 수정 (DTO 요청 기반)
+     */
     @Transactional
     public DataSourceDTO updateSource(Long id, DataSourceUpdateRequest request) {
         DataSource source = dataSourceRepository.findById(id)
@@ -88,7 +106,7 @@ public class DataSourceService {
         return entityMapper.toDTO(saved);
     }
 
-    // Alias method for update returning DataSource entity
+    // 엔티티 직접 수정/반환 버전
     @Transactional
     public DataSource update(Long id, DataSourceUpdateRequest request) {
         DataSource source = dataSourceRepository.findById(id)
@@ -100,6 +118,9 @@ public class DataSourceService {
         return saved;
     }
 
+    /**
+     * 데이터 소스 삭제 (예외 발생)
+     */
     @Transactional
     public void deleteSource(Long id) {
         if (!dataSourceRepository.existsById(id)) {
@@ -109,7 +130,7 @@ public class DataSourceService {
         log.info("Deleted data source: id={}", id);
     }
 
-    // Alias method returning boolean
+    // 삭제 결과를 boolean으로 반환하는 버전
     @Transactional
     public boolean delete(Long id) {
         if (!dataSourceRepository.existsById(id)) {
@@ -120,6 +141,9 @@ public class DataSourceService {
         return true;
     }
 
+    /**
+     * 마지막 수집 시각 업데이트
+     */
     @Transactional
     public void updateLastCollected(Long id, LocalDateTime timestamp) {
         DataSource source = dataSourceRepository.findById(id)
@@ -128,40 +152,61 @@ public class DataSourceService {
         dataSourceRepository.save(source);
     }
 
+    /**
+     * 수집 대상(기한 도래) 소스 조회
+     */
     @Transactional(readOnly = true)
     public List<DataSource> findDueForCollection() {
         LocalDateTime threshold = LocalDateTime.now().minusSeconds(3600); // Default 1 hour
         return dataSourceRepository.findDueForCollection(threshold);
     }
 
+    /**
+     * 활성화된 소스 목록 조회
+     */
     @Transactional(readOnly = true)
     public List<DataSource> findActiveSources() {
         return dataSourceRepository.findByIsActiveTrue();
     }
 
-    // Additional paginated methods
+    // 페이징 지원 메서드
+    /**
+     * 모든 소스 페이징 조회
+     */
     @Transactional(readOnly = true)
     public Page<DataSource> findAll(Pageable pageable) {
         return dataSourceRepository.findAll(pageable);
     }
 
+    /**
+     * 활성 소스 페이징 조회 (주의: null 포함 가능)
+     */
     @Transactional(readOnly = true)
     public Page<DataSource> findAllActive(Pageable pageable) {
         return dataSourceRepository.findAll(pageable)
                 .map(source -> source.getIsActive() ? source : null);
     }
 
+    /**
+     * 전체 소스 개수 조회
+     */
     @Transactional(readOnly = true)
     public long countAll() {
         return dataSourceRepository.count();
     }
 
+    /**
+     * 활성 소스 개수 조회
+     */
     @Transactional(readOnly = true)
     public long countActive() {
         return dataSourceRepository.findByIsActiveTrue().size();
     }
 
-    // Method to save/update entity directly
+    // 엔티티 직접 저장/업데이트
+    /**
+     * 데이터 소스 저장/업데이트 (엔티티 직접 전달)
+     */
     @Transactional
     public DataSource save(DataSource source) {
         return dataSourceRepository.save(source);

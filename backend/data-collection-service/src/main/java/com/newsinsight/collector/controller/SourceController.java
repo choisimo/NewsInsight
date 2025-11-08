@@ -23,7 +23,7 @@ public class SourceController {
     private final EntityMapper entityMapper;
 
     /**
-     * GET /api/v1/sources - List all data sources
+     * GET /api/v1/sources - 모든 데이터 소스 목록 조회 (페이징/정렬 지원)
      */
     @GetMapping
     public ResponseEntity<Page<DataSourceDTO>> listSources(
@@ -42,7 +42,7 @@ public class SourceController {
     }
 
     /**
-     * GET /api/v1/sources/active - List active data sources
+     * GET /api/v1/sources/active - 활성 데이터 소스 목록 조회
      */
     @GetMapping("/active")
     public ResponseEntity<Page<DataSourceDTO>> listActiveSources(
@@ -57,7 +57,7 @@ public class SourceController {
     }
 
     /**
-     * GET /api/v1/sources/{id} - Get data source by ID
+     * GET /api/v1/sources/{id} - ID로 데이터 소스 조회
      */
     @GetMapping("/{id}")
     public ResponseEntity<DataSourceDTO> getSource(@PathVariable Long id) {
@@ -68,7 +68,7 @@ public class SourceController {
     }
 
     /**
-     * POST /api/v1/sources - Create new data source
+     * POST /api/v1/sources - 새로운 데이터 소스 등록
      */
     @PostMapping
     public ResponseEntity<DataSourceDTO> createSource(@Valid @RequestBody DataSourceCreateRequest request) {
@@ -80,7 +80,7 @@ public class SourceController {
     }
 
     /**
-     * PUT /api/v1/sources/{id} - Update data source
+     * PUT /api/v1/sources/{id} - 데이터 소스 수정
      */
     @PutMapping("/{id}")
     public ResponseEntity<DataSourceDTO> updateSource(
@@ -97,7 +97,7 @@ public class SourceController {
     }
 
     /**
-     * DELETE /api/v1/sources/{id} - Delete data source
+     * DELETE /api/v1/sources/{id} - 데이터 소스 삭제
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteSource(@PathVariable Long id) {
@@ -106,7 +106,7 @@ public class SourceController {
     }
 
     /**
-     * POST /api/v1/sources/{id}/activate - Activate data source
+     * POST /api/v1/sources/{id}/activate - 데이터 소스 활성화
      */
     @PostMapping("/{id}/activate")
     public ResponseEntity<DataSourceDTO> activateSource(@PathVariable Long id) {
@@ -120,7 +120,7 @@ public class SourceController {
     }
 
     /**
-     * POST /api/v1/sources/{id}/deactivate - Deactivate data source
+     * POST /api/v1/sources/{id}/deactivate - 데이터 소스 비활성화
      */
     @PostMapping("/{id}/deactivate")
     public ResponseEntity<DataSourceDTO> deactivateSource(@PathVariable Long id) {

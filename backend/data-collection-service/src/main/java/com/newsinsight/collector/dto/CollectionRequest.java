@@ -1,19 +1,13 @@
 package com.newsinsight.collector.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 import java.util.List;
 
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class CollectionRequest {
-    private List<Long> sourceIds;
-    
-    @Builder.Default
-    private Boolean force = false;
+public record CollectionRequest(List<Long> sourceIds, boolean force) {
+    public CollectionRequest {
+        sourceIds = sourceIds == null ? List.of() : List.copyOf(sourceIds);
+    }
+
+    public CollectionRequest(List<Long> sourceIds) {
+        this(sourceIds, false);
+    }
 }

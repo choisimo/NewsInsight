@@ -21,7 +21,7 @@ public class DataController {
     private final EntityMapper entityMapper;
 
     /**
-     * GET /api/v1/data - List collected data
+     * GET /api/v1/data - 수집된 데이터 목록 조회 (소스/처리상태 필터링 지원)
      */
     @GetMapping
     public ResponseEntity<Page<CollectedDataDTO>> listData(
@@ -34,7 +34,7 @@ public class DataController {
         
         Page<CollectedData> data;
         if (sourceId != null && processed != null) {
-            // Filter by both source and processed status - would need custom query
+            // 소스 + 처리상태 동시 필터링은 별도의 커스텀 쿼리 필요 (현재는 소스 기준 필터만 수행)
             data = collectedDataService.findBySourceId(sourceId, pageable);
         } else if (sourceId != null) {
             data = collectedDataService.findBySourceId(sourceId, pageable);
@@ -50,7 +50,7 @@ public class DataController {
     }
 
     /**
-     * GET /api/v1/data/unprocessed - List unprocessed data
+     * GET /api/v1/data/unprocessed - 미처리 데이터 목록 조회
      */
     @GetMapping("/unprocessed")
     public ResponseEntity<Page<CollectedDataDTO>> listUnprocessedData(
@@ -65,7 +65,7 @@ public class DataController {
     }
 
     /**
-     * GET /api/v1/data/{id} - Get collected data by ID
+     * GET /api/v1/data/{id} - 수집된 데이터 단건 조회 (ID)
      */
     @GetMapping("/{id}")
     public ResponseEntity<CollectedDataDTO> getData(@PathVariable Long id) {
@@ -76,7 +76,7 @@ public class DataController {
     }
 
     /**
-     * POST /api/v1/data/{id}/processed - Mark data as processed
+     * POST /api/v1/data/{id}/processed - 데이터 처리 완료 마킹
      */
     @PostMapping("/{id}/processed")
     public ResponseEntity<Void> markAsProcessed(@PathVariable Long id) {
@@ -85,7 +85,7 @@ public class DataController {
     }
 
     /**
-     * GET /api/v1/data/stats - Get data statistics
+     * GET /api/v1/data/stats - 데이터 통계 조회 (전체/미처리/처리완료)
      */
     @GetMapping("/stats")
     public ResponseEntity<DataStatsResponse> getDataStats() {
@@ -97,7 +97,7 @@ public class DataController {
     }
 
     /**
-     * Simple stats response class
+     * 간단한 통계 응답 구조체
      */
     public record DataStatsResponse(long total, long unprocessed, long processed) {}
 }
