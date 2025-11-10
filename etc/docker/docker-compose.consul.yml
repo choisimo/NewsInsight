@@ -1,12 +1,10 @@
-version: "3.9"
-
 # Unified stack with Consul KV and all present services
 services:
   consul:
     image: hashicorp/consul:1.18
     command: ["agent", "-dev", "-client", "0.0.0.0", "-ui"]
     ports:
-      - "8500:8500"  # Consul UI/API
+      - "8505:8500"  # Consul UI/API
     environment:
       # Optional: advertise container hostname in logs
       - CONSUL_BIND_INTERFACE=eth0
@@ -58,7 +56,7 @@ services:
       # Service port
       - PORT=${API_GATEWAY_PORT:-8000}
     ports:
-      - "8000:8000"
+      - "8112:8000"  # keep gateway reachable from host
 
   collector-service:
     build:
@@ -77,6 +75,17 @@ services:
       - CONSUL_HOST=${CONSUL_HOST:-consul}
       - CONSUL_PORT=${CONSUL_PORT:-8500}
       - CONSUL_ENABLED=${CONSUL_ENABLED:-true}
+      - "SPRING_CONFIG_IMPORT=consul:"
+      - SPRING_CLOUD_CONSUL_CONFIG_ENABLED=true
+      - SPRING_CLOUD_CONSUL_CONFIG_PREFIX=config
+      - SPRING_CLOUD_CONSUL_CONFIG_DEFAULT_CONTEXT=collector-service
+      - SPRING_CLOUD_CONSUL_CONFIG_FORMAT=YAML
+      - SPRING_CLOUD_CONSUL_CONFIG_FAIL_FAST=true
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - SPRING_DATA_REDIS_HOST=${REDIS_HOST:-redis}
+      - SPRING_DATA_REDIS_PORT=${REDIS_PORT:-6379}
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=validate
       # Database configuration
       - DB_HOST=${DB_HOST:-postgres}
       - DB_PORT=${DB_PORT:-5432}
@@ -85,8 +94,8 @@ services:
       - DB_PASSWORD=${DB_PASSWORD:-postgres}
       # Service port
       - SERVER_PORT=${COLLECTOR_PORT:-8081}
-    ports:
-      - "8081:8081"
+    expose:
+      - "8081"
 
   # PostgreSQL database
   postgres:
@@ -95,8 +104,8 @@ services:
       - POSTGRES_DB=${DB_NAME:-newsinsight}
       - POSTGRES_USER=${DB_USER:-postgres}
       - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -108,8 +117,8 @@ services:
   # Redis for API Gateway rate limiting
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     command: redis-server --appendonly yes
     volumes:
       - redis-data:/data

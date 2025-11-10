@@ -1,6 +1,8 @@
 spring:
   application:
     name: collector-service
+  config:
+    import: "consul:"
   
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:newsinsight}
@@ -43,9 +45,9 @@ spring:
       config:
         enabled: true
         prefix: config
-        default-context: application
+        default-context: ${spring.application.name}
         profile-separator: '::'
-        format: yaml
+        format: PROPERTIES
   
   task:
     execution:
