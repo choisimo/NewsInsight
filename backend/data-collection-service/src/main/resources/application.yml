@@ -57,6 +57,9 @@ spring:
         queue-capacity: 100
       thread-name-prefix: async-task-
 
+  flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:false}
+
 server:
   port: ${SERVER_PORT:8081}
   servlet:
@@ -125,3 +128,7 @@ collector:
     enable-network-checks: ${QA_ENABLE_NETWORK_CHECKS:false}
     domain-whitelist: ${QA_DOMAIN_WHITELIST:example.com,news.example.com}
     expected-keywords: ${QA_EXPECTED_KEYWORDS:news,article,report}
+
+  crawler:
+    enabled: ${COLLECTOR_SERVICE_CRAWLER_ENABLED:false}
+    base-url: ${COLLECTOR_SERVICE_CRAWLER_BASE_URL:http://web-crawler:11235}

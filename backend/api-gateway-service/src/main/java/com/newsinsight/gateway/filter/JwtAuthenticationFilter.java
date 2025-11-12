@@ -35,7 +35,9 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         "/health",
         "/actuator",
         "/api/v1/auth/login",
-        "/api/v1/auth/register"
+        "/api/v1/auth/register",
+        "/api/v1/articles",
+        "/api/v1/analysis"
     );
     
     @Value("${JWT_SECRET_KEY:default-secret-key-please-change-in-consul}")

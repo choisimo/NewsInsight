@@ -58,6 +58,23 @@ services:
     ports:
       - "8112:8000"  # keep gateway reachable from host
 
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ../../frontend:/app
+      - frontend-node-modules:/app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8112
+    command: >
+      sh -c "(npm ci --legacy-peer-deps || npm install --legacy-peer-deps) \
+      && npm run dev -- --host 0.0.0.0 --port 8080"
+    ports:
+      - "8810:8080"
+    depends_on:
+      api-gateway:
+        condition: service_started
+
   collector-service:
     build:
       context: ../../
@@ -70,6 +87,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      web-crawler:
+        condition: service_started
     environment:
       # Consul configuration
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -97,6 +116,20 @@ services:
     expose:
       - "8081"
 
+  # Crawl4AI web-crawler service
+  web-crawler:
+    image: unclecode/crawl4ai:latest
+    shm_size: 1g
+    environment:
+      - LOG_LEVEL=${WEB_CRAWLER_LOG_LEVEL:-INFO}
+    ports:
+      - "11235:11235"  # playground and API
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:11235/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   # PostgreSQL database
   postgres:
     image: postgres:15-alpine
@@ -108,6 +141,7 @@ services:
       - "5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -131,6 +165,7 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  frontend-node-modules:
 
 networks:
   default:

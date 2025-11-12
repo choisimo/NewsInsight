@@ -62,6 +62,26 @@ spring:
                 redis-rate-limiter.replenishRate: 100
                 redis-rate-limiter.burstCapacity: 150
       
+        - id: articles-root
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/articles
+          filters:
+            - SetPath=/api/v1/data
+
+        - id: articles-alias
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/articles/**
+          filters:
+            - RewritePath=/api/v1/articles/(?<segment>.*), /api/v1/data/${segment}
+
+        - id: analysis-alias
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/analysis/**
+          filters:
+            - SetPath=/api/v1/data/stats
       # 전역 CORS 설정
       globalcors:
         cors-configurations:
