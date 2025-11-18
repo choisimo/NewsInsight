@@ -35,5 +35,16 @@ public interface CollectedDataRepository extends JpaRepository<CollectedData, Lo
     @Query("SELECT COUNT(cd) FROM CollectedData cd WHERE cd.sourceId = :sourceId")
     long countBySourceId(@Param("sourceId") Long sourceId);
 
+    @Query("SELECT cd FROM CollectedData cd " +
+           "WHERE (:query IS NULL OR LOWER(cd.title) LIKE LOWER(CONCAT('%', :query, '%')) " +
+           "   OR LOWER(cd.content) LIKE LOWER(CONCAT('%', :query, '%'))) " +
+           "AND (:since IS NULL OR (" +
+           "     (cd.publishedDate IS NOT NULL AND cd.publishedDate >= :since) " +
+           "  OR (cd.publishedDate IS NULL AND cd.collectedAt >= :since)" +
+           "))")
+    Page<CollectedData> searchByQueryAndWindow(@Param("query") String query,
+                                              @Param("since") LocalDateTime since,
+                                              Pageable pageable);
+
     boolean existsByContentHash(String contentHash);
 }
