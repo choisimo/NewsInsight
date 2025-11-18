@@ -13,7 +13,7 @@ import java.util.Map;
 @RequestMapping("/api/v1/config")
 public class FrontendConfigController {
 
-    @Value("${FRONTEND_API_BASE_URL:http://localhost:8112}")
+    @Value("${FRONTEND_API_BASE_URL:${API_GATEWAY_FRONTEND_API_BASE_URL:http://localhost:8112}}")
     private String frontendApiBaseUrl;
 
     @GetMapping("/frontend")

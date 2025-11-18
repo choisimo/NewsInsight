@@ -50,7 +50,8 @@ public class AnalysisService {
             }
         }
 
-        Page<CollectedData> page = collectedDataRepository.searchByQueryAndWindow(query, since, Pageable.unpaged());
+        String normalizedQuery = (query != null && !query.isBlank()) ? query : null;
+        Page<CollectedData> page = collectedDataRepository.searchByQueryAndWindow(normalizedQuery, since, Pageable.unpaged());
         long articleCount = page.getTotalElements();
 
         List<CollectedData> documents = page.getContent();
@@ -89,7 +90,8 @@ public class AnalysisService {
         PageRequest pageRequest = PageRequest.of(0, pageSize,
                 Sort.by(Sort.Direction.DESC, "publishedDate")
                         .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
-        Page<CollectedData> page = collectedDataRepository.searchByQueryAndWindow(query, null, pageRequest);
+        String normalizedQuery = (query != null && !query.isBlank()) ? query : null;
+        Page<CollectedData> page = collectedDataRepository.searchByQueryAndWindow(normalizedQuery, null, pageRequest);
 
         List<ArticleDto> articles = page.getContent().stream()
                 .map(this::toArticleDto)
@@ -196,8 +198,9 @@ public class AnalysisService {
             return text;
         }
 
+        int startIdx = Math.min(SNIPPET_MAX_LENGTH - 1, text.length() - 1);
         int cut = SNIPPET_MAX_LENGTH;
-        for (int i = SNIPPET_MAX_LENGTH; i > SNIPPET_MAX_LENGTH * 0.6 && i > 0; i--) {
+        for (int i = startIdx; i > SNIPPET_MAX_LENGTH * 0.6 && i >= 0; i--) {
             if (Character.isWhitespace(text.charAt(i))) {
                 cut = i;
                 break;
