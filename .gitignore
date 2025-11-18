@@ -23,3 +23,38 @@ SourceDev/**
 
 # Logs
 *.log
+
+# Additional build outputs
+**/target/
+**/bin/
+**/dist/
+**/coverage/
+site/
+
+# Node.js
+**/node_modules/
+
+# IDE and project files
+.vscode/
+.project
+.classpath
+.settings/
+.factorypath
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editor swap/backup
+*.swp
+*.swo
+*~
+
+# JVM crash logs
+hs_err_pid*
+replay_pid*

@@ -26,62 +26,79 @@ spring:
 
     gateway:
       routes:
-        # Collector 서비스 - 소스 관리
+        # Collector 서비스 - 데이터 API (DataController)
+        - id: collector-data
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/data/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 150
+
+        # Collector 서비스 - 소스 관리 (SourceController)
         - id: collector-sources
           uri: lb://collector-service
           predicates:
-            - Path=/api/v1/collector/sources/**
+            - Path=/api/v1/sources/**
           filters:
-            - StripPrefix=2
             - name: RequestRateLimiter
               args:
                 redis-rate-limiter.replenishRate: 100
                 redis-rate-limiter.burstCapacity: 150
 
-        # Collector 서비스 - 수집 작업
+        # Collector 서비스 - 수집 작업 (CollectionController)
         - id: collector-collections
           uri: lb://collector-service
           predicates:
-            - Path=/api/v1/collector/collections/**
+            - Path=/api/v1/collections/**
           filters:
-            - StripPrefix=2
             - name: RequestRateLimiter
               args:
                 redis-rate-limiter.replenishRate: 100
                 redis-rate-limiter.burstCapacity: 150
 
-        # Collector 서비스 - RSS 피드
-        - id: collector-feeds
-          uri: lb://collector-service
-          predicates:
-            - Path=/api/v1/collector/feeds/**
-          filters:
-            - StripPrefix=2
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 100
-                redis-rate-limiter.burstCapacity: 150
-      
+        # Articles & Analysis - 프론트엔드 API
         - id: articles-root
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/articles
           filters:
-            - SetPath=/api/v1/data
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 150
 
         - id: articles-alias
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/articles/**
           filters:
-            - RewritePath=/api/v1/articles/(?<segment>.*), /api/v1/data/${segment}
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 150
+
+        - id: analysis-root
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/analysis
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 150
 
         - id: analysis-alias
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/analysis/**
           filters:
-            - SetPath=/api/v1/data/stats
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 150
       # 전역 CORS 설정
       globalcors:
         cors-configurations:
