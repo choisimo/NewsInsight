@@ -3,6 +3,11 @@ spring:
     name: collector-service
   config:
     import: "consul:"
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/newsinsight}
   
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:newsinsight}
@@ -128,6 +133,13 @@ collector:
     enable-network-checks: ${QA_ENABLE_NETWORK_CHECKS:false}
     domain-whitelist: ${QA_DOMAIN_WHITELIST:example.com,news.example.com}
     expected-keywords: ${QA_EXPECTED_KEYWORDS:news,article,report}
+
+  ai:
+    topic:
+      request: ${COLLECTOR_AI_REQUEST_TOPIC:newsinsight.ai.requests}
+      response: ${COLLECTOR_AI_RESPONSE_TOPIC:newsinsight.ai.responses}
+    default-provider-id: ${COLLECTOR_AI_PROVIDER_ID:openai}
+    default-model-id: ${COLLECTOR_AI_MODEL_ID:gpt-4.1}
 
   crawler:
     enabled: ${COLLECTOR_SERVICE_CRAWLER_ENABLED:false}

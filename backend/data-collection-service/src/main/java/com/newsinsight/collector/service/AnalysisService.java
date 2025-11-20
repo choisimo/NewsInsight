@@ -35,6 +35,7 @@ public class AnalysisService {
 
     private final CollectedDataRepository collectedDataRepository;
     private final DataSourceRepository dataSourceRepository;
+    private final AiMessagingService aiMessagingService;
 
     public AnalysisResponseDto analyze(String query, String window) {
         LocalDateTime now = LocalDateTime.now();
@@ -51,6 +52,8 @@ public class AnalysisService {
         }
 
         String normalizedQuery = (query != null && !query.isBlank()) ? query : null;
+        String message = normalizedQuery != null ? normalizedQuery : "";
+        aiMessagingService.sendAnalysisRequest(normalizedQuery, window, message, Map.of());
         Page<CollectedData> page = collectedDataRepository.searchByQueryAndWindow(normalizedQuery, since, Pageable.unpaged());
         long articleCount = page.getTotalElements();
 
