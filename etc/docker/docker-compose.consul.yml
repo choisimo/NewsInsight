@@ -111,6 +111,7 @@ services:
       - DB_NAME=${DB_NAME:-newsinsight}
       - DB_USER=${DB_USER:-postgres}
       - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
       # Service port
       - SERVER_PORT=${COLLECTOR_PORT:-8081}
     expose:
@@ -148,6 +149,17 @@ services:
       timeout: 3s
       retries: 5
 
+  # MongoDB for AI response storage
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_DATABASE=${DB_NAME:-newsinsight}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
   # Redis for API Gateway rate limiting
   redis:
     image: redis:7-alpine
@@ -166,6 +178,7 @@ volumes:
   postgres-data:
   redis-data:
   frontend-node-modules:
+  mongo-data:
 
 networks:
   default:
