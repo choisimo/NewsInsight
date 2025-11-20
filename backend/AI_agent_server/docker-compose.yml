@@ -1,0 +1,118 @@
+services:
+  opencode:
+    build:
+      context: .
+      dockerfile: ai-serve.Dockerfile
+    image: opencode-serve:latest
+    restart: unless-stopped
+    ports:
+      - "7015:7012"
+    environment:
+      NODE_ENV: production
+      OPENCODE_HOST: 0.0.0.0
+      OPENCODE_PORT: 7012
+      VECTOR_DB_HOST: chromadb
+      VECTOR_DB_PORT: 8000
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GH_TOKEN: ${GH_TOKEN}
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        if [ -f /home/appuser/.config/opencode/secrets.sh ]; then
+          if [ -z "${GITHUB_TOKEN:-}" ] || [ -z "${GH_TOKEN:-}" ]; then
+            . /home/appuser/.config/opencode/secrets.sh
+          fi
+        fi
+        exec "$0" "$@"
+    command:
+      - /app/node_modules/.bin/opencode
+      - serve
+      - --hostname
+      - 0.0.0.0
+      - --port
+      - "7012"
+    volumes:
+      - opencode-data:/var/lib/opencode
+      - opencode-logs:/var/log/opencode
+      - opencode-config:/home/appuser/.config/opencode
+    healthcheck:
+      # 서버가 실제로 요청에 응답하는지 /app 경로로 확인합니다.
+      test: ["CMD-SHELL", "node -e \"const http=require('http'); http.get('http://localhost:7012/app', ()=>process.exit(0)).on('error', ()=>process.exit(1));\" "]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - embedding-server
+      - chromadb
+
+  embedding-server:
+    # CPU 환경 기본 이미지 (GPU 사용 시 아래 주석 참고)
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    restart: unless-stopped
+    # deploy:
+    #   # GPU 환경: 이미지 태그를 `1.8` 계열 GPU 전용 버전으로 교체 후 아래 설정 사용
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    ports:
+      # 외부 테스트를 위한 5680 포트 매핑 (내부 통신은 80 포트 사용)
+      - "5680:80"
+    volumes:
+      # Hugging Face 모델 캐시 볼륨
+      - embedding-data:/data
+    command: --model-id sentence-transformers/all-MiniLM-L6-v2
+    security_opt:
+      - no-new-privileges:true
+
+  chromadb:
+    image: chromadb/chroma
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/.chroma/index
+    security_opt:
+      - no-new-privileges:true
+
+  proxy-admin:
+    build:
+      context: ./go-proxy-admin
+      dockerfile: Dockerfile
+    image: opencode-proxy-admin:latest
+    restart: unless-stopped
+    ports:
+      - "7080:7080"
+    environment:
+      OPENCODE_BASE: http://opencode:7012
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-change-me}
+      ADMIN_PORT: 7080
+      ADMIN_DB_PATH: /app/data/proxy-admin.db
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    volumes:
+      - proxy-admin-data:/app/data
+    depends_on:
+      - opencode
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  opencode-data:
+    driver: local
+  opencode-logs:
+    driver: local
+  chroma-data:
+    driver: local
+  embedding-data:
+    driver: local
+  opencode-config:
+    driver: local
+  proxy-admin-data:
+    driver: local
