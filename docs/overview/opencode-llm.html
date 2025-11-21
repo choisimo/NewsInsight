@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenCode LLM 서버 연동 문서 (opencode-ai serve)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 0; background: #f9fafb; color: #111827; }
+    header { background: #111827; color: white; padding: 1.5rem 2rem; }
+    header h1 { margin: 0; font-size: 1.6rem; }
+    header p { margin: 0.25rem 0 0; font-size: 0.9rem; color: #e5e7eb; }
+    main { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem 3rem; }
+    h2 { margin-top: 2rem; font-size: 1.4rem; border-left: 4px solid #4f46e5; padding-left: 0.5rem; }
+    h3 { margin-top: 1.5rem; font-size: 1.1rem; color: #111827; }
+    h4 { margin-top: 1.1rem; font-size: 1rem; color: #111827; }
+    p { line-height: 1.6; font-size: 0.95rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.88rem; background: #e5e7eb; padding: 0.1rem 0.25rem; border-radius: 3px; }
+    pre { background: #111827; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; }
+    pre code { background: none; padding: 0; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+    th, td { border: 1px solid #e5e7eb; padding: 0.45rem 0.55rem; text-align: left; vertical-align: top; }
+    th { background: #f3f4f6; font-weight: 600; }
+    .tag { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; background: #eef2ff; color: #4f46e5; margin-right: 0.4rem; }
+    .badge { display: inline-block; padding: 0.12rem 0.4rem; border-radius: 999px; font-size: 0.72rem; background: #e5e7eb; color: #374151; margin-right: 0.25rem; }
+    .http-get { background: #dcfce7; color: #166534; }
+    .http-post { background: #dbeafe; color: #1d4ed8; }
+    .http-delete { background: #fee2e2; color: #b91c1c; }
+    .http-patch { background: #fef3c7; color: #92400e; }
+    .section-card { background: white; border-radius: 10px; padding: 1.25rem 1.5rem; box-shadow: 0 1px 2px rgba(15,23,42,0.06); border: 1px solid #e5e7eb; margin-bottom: 1.5rem; }
+    .small { font-size: 0.85rem; color: #6b7280; }
+    .anchor { color: #4f46e5; text-decoration: none; }
+    .anchor:hover { text-decoration: underline; }
+    ol { padding-left: 1.1rem; }
+    li { margin: 0.2rem 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>OpenCode LLM 서버 연동 문서 (opencode-ai serve)</h1>
+    <p>NewsInsight · AI_agent_server(go-proxy-admin) · OpenCode <code>opencode serve</code> HTTP/이벤트 연동 정리</p>
+  </header>
+  <main>
+    <section class="section-card">
+      <h2>1. 전체 개요</h2>
+      <p>
+        NewsInsight에서는 <strong>OpenCode LLM</strong>과의 통신을 직접 Java에서 하지 않고,
+        <code>AI_agent_server</code> (Go 기반 <code>go-proxy-admin</code>)를 통해 간접적으로 연동합니다.
+        이 서버는 Kafka에서 AI 요청을 소비한 뒤, <code>opencode serve</code> HTTP 서버로 요청을 보내고,
+        응답을 가공하여 다시 Kafka로 전송합니다.
+      </p>
+      <h3>1.1 핵심 컴포넌트</h3>
+      <ul class="small">
+        <li><strong>Collector Service (Java)</strong> &ndash; <code>AiMessagingService</code>가 <code>AiRequestMessage</code>를 Kafka 토픽 <code>newsinsight.ai.requests</code>로 발행</li>
+        <li><strong>AI_agent_server (Go)</strong> &ndash; <code>startKafkaWorker</code>가 해당 토픽을 소비하고,<br />
+          OpenCode 서버(<code>OPENCODE_BASE</code>, 기본 <code>http://opencode:7012</code>)의 <code>/session</code> 및 <code>/session/:id/message</code> 엔드포인트를 호출</li>
+        <li><strong>OpenCode LLM 서버</strong> &ndash; <code>opencode serve</code> 명령으로 구동되는 HTTP 서버.<br />
+          여러 엔드포인트(<code>/app</code>, <code>/config</code>, <code>/session</code>, <code>/file</code> 등)를 제공하며 OpenAPI 3.1 스펙을 <code>/doc</code>으로 노출</li>
+        <li><strong>AI 응답 파이프라인</strong> &ndash; AI_agent_server가 OpenCode 응답을 <code>AiResponseMessage</code> 형태로 Kafka
+          <code>newsinsight.ai.responses</code> 토픽에 기록하고, Collector의 <code>AiResultConsumerService</code>가 MongoDB에 저장</li>
+      </ul>
+    </section>
+
+    <section class="section-card">
+      <h2>2. OpenCode 서버 구동 및 기본 프로토콜</h2>
+      <h3>2.1 서버 기동 명령</h3>
+      <pre><code>opencode serve [--port &lt;number&gt;] [--hostname &lt;string&gt;]</code></pre>
+      <p class="small">
+        기본값은 포트 <code>4096</code>, 호스트 <code>127.0.0.1</code>입니다.
+        NewsInsight 환경에서는 Docker/Compose 설정을 통해 <code>OPENCODE_BASE</code> 환경변수로
+        <code>http://opencode:7012</code> 와 같이 내부 DNS/포트를 지정해 두고, AI_agent_server가 이를 사용합니다.
+      </p>
+      <h3>2.2 OpenAPI 스펙</h3>
+      <p>
+        OpenCode 서버는 OpenAPI 3.1 스펙을 다음 엔드포인트로 제공합니다.
+      </p>
+      <pre><code>GET http://&lt;hostname&gt;:&lt;port&gt;/doc</code></pre>
+      <p class="small">
+        예: <code>http://localhost:4096/doc</code>. 이 스펙을 사용하여 클라이언트 SDK를 생성하거나,
+        요청/응답 타입을 Swagger와 같은 도구에서 검토할 수 있습니다.
+      </p>
+      <h3>2.3 공통 HTTP 규칙</h3>
+      <ul class="small">
+        <li><strong>프로토콜</strong>: HTTP/1.1, JSON 기반 요청/응답</li>
+        <li><strong>헤더</strong>: <code>Content-Type: application/json</code> (POST/PATCH 시)</li>
+        <li><strong>인증</strong>:
+          <ul>
+            <li>OpenCode 서버 자체는 Opencode 인증 구성을 사용할 수 있습니다.</li>
+            <li>AI_agent_server의 <code>Upstream.AuthMode</code>는 <code>passthrough</code>, <code>strip</code>, <code>custom</code> 중 하나이며,
+              <code>custom</code> 인 경우 <code>CustomAuthHeader</code> 값을 그대로 <code>Authorization</code> 헤더로 설정합니다.</li>
+          </ul>
+        </li>
+        <li><strong>에러 처리</strong>: 2xx가 아닌 상태 코드는 모두 에러로 취급되며, AI_agent_server에서 메시지와 함께 래핑됩니다.</li>
+      </ul>
+    </section>
+
+    <section class="section-card">
+      <h2>3. 세션 및 메시지 API (NewsInsight가 실제 사용하는 부분)</h2>
+      <p>
+        AI_agent_server의 <code>processAiRequest</code> 및 <code>handleProxyAutoChat</code> 함수는
+        OpenCode 서버의 <strong>세션(Session)</strong> 관련 API를 이용하여 LLM 호출을 수행합니다.
+      </p>
+
+      <h3>3.1 세션 생성 - <span class="badge http-post">POST</span> <code>/session</code></h3>
+      <p class="small">새 LLM 세션을 생성합니다.</p>
+      <table>
+        <tr><th>요청 URL</th><td><code>POST /session</code></td></tr>
+        <tr><th>요청 헤더</th><td><code>Content-Type: application/json</code><br />필요 시 <code>Authorization: Bearer ...</code></td></tr>
+        <tr><th>요청 바디</th><td>
+          <pre><code>{
+  "title": "Auto Session"   // 옵션, 세션 제목
+}</code></pre>
+        </td></tr>
+        <tr><th>응답</th><td>
+          <p class="small">
+            JSON <code>Session</code> 객체를 반환합니다. NewsInsight에서는 최소한 <code>id</code> 필드를 사용하며,
+            전체 구조는 OpenCode SDK의 <code>Session</code> 타입과 동일합니다.
+          </p>
+        </td></tr>
+      </table>
+
+      <h3>3.2 세션 상세 조회 - <span class="badge http-get">GET</span> <code>/session/:id</code></h3>
+      <p class="small">특정 세션의 메타데이터와 메시지 요약을 조회합니다.</p>
+      <table>
+        <tr><th>요청 URL</th><td><code>GET /session/{sessionId}</code></td></tr>
+        <tr><th>응답</th><td><code>Session</code> JSON 객체 (id, title 등). AI_agent_server는 필요 시 응답 텍스트를 추출하기 위해 이 엔드포인트를 호출합니다.</td></tr>
+      </table>
+
+      <h3>3.3 세션 메시지 전송 - <span class="badge http-post">POST</span> <code>/session/:id/message</code></h3>
+      <p class="small">
+        생성된 세션에 사용자 메시지를 전송하여 LLM 응답을 생성합니다.
+      </p>
+      <table>
+        <tr><th>요청 URL</th><td><code>POST /session/{sessionId}/message</code></td></tr>
+        <tr><th>요청 헤더</th><td><code>Content-Type: application/json</code></td></tr>
+        <tr><th>요청 바디 (NewsInsight에서 사용)</th><td>
+          <pre><code>{
+  "providerID": "openai",        // 또는 기타 프로바이더 ID
+  "modelID":   "gpt-4.1",       // 또는 config.AllowedModels[0]
+  "parts": [                      // 메시지는 parts 배열로 전달
+    {
+      "type": "text",
+      "text": "사용자 프롬프트 내용..."
+    }
+  ]
+}</code></pre>
+          <p class="small">
+            <code>handleProxyAutoChat</code>에서는 입력 JSON에서 <code>message</code>, <code>text</code>, <code>content</code>, <code>parts</code> 중 하나를 사용하여
+            위와 같은 <code>parts</code> 구조를 조립합니다.
+          </p>
+        </td></tr>
+        <tr><th>응답</th><td>
+          <p class="small">
+            OpenCode 서버는 LLM 응답이 포함된 <code>Message</code> / 세션 상태 JSON을 반환합니다.
+            AI_agent_server는 <code>extractResponseText</code> 함수로 <code>message</code>, <code>text</code>, <code>parts[].text</code>,
+            <code>messages[].content</code 등을 스캔하여 최종 요약 텍스트를 추출합니다.
+          </p>
+        </td></tr>
+      </table>
+
+      <h3>3.4 기타 세션 관련 엔드포인트 (참고)</h3>
+      <p class="small">
+        OpenCode 서버는 세션 관리용으로 다음과 같은 추가 엔드포인트를 제공합니다 (현재 NewsInsight에서는 직접 사용하지 않지만,
+        필요 시 확장 가능).
+      </p>
+      <table>
+        <tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+        <tr><td><span class="badge http-get">GET</span></td><td><code>/session</code></td><td>모든 세션 목록 반환 (<code>Session[]</code>)</td></tr>
+        <tr><td><span class="badge http-get">GET</span></td><td><code>/session/:id/children</code></td><td>하위 세션 목록 반환</td></tr>
+        <tr><td><span class="badge http-delete">DELETE</span></td><td><code>/session/:id</code></td><td>세션 삭제</td></tr>
+        <tr><td><span class="badge http-patch">PATCH</span></td><td><code>/session/:id</code></td><td><code>{ title? }</code>로 제목 수정</td></tr>
+        <tr><td><span class="badge http-post">POST</span></td><td><code>/session/:id/abort</code></td><td>진행 중인 작업 중단</td></tr>
+        <tr><td><span class="badge http-post">POST</span></td><td><code>/session/:id/share</code></td><td>세션 공유 링크 생성 (반환: <code>Session</code>)</td></tr>
+        <tr><td><span class="badge http-delete">DELETE</span></td><td><code>/session/:id/share</code></td><td>세션 공유 해제</td></tr>
+        <tr><td><span class="badge http-post">POST</span></td><td><code>/session/:id/summarize</code></td><td>세션 요약 생성</td></tr>
+        <tr><td><span class="badge http-get">GET</span></td><td><code>/session/:id/message</code></td><td>세션의 모든 메시지 + 파트 목록 반환</td></tr>
+        <tr><td><span class="badge http-get">GET</span></td><td><code>/session/:id/message/:messageID</code></td><td>특정 메시지 상세 조회</td></tr>
+        <tr><td><span class="badge http-post">POST</span></td><td><code>/session/:id/shell</code></td><td>셸 커맨드 실행 요청 (<code>CommandInput</code>)</td></tr>
+        <tr><td><span class="badge http-post">POST</span></td><td><code>/session/:id/revert</code></td><td><code>{ messageID }</code> 기준으로 롤백</td></tr>
+        <tr><td><span class="badge http-post">POST</span></td><td><code>/session/:id/unrevert</code></td><td>롤백 취소</td></tr>
+        <tr><td><span class="badge http-post">POST</span></td><td><code>/session/:id/permissions/:permissionID</code></td><td><code>{ response }</code> 형태로 권한 응답</td></tr>
+      </table>
+    </section>
+
+    <section class="section-card">
+      <h2>4. 기타 OpenCode 서버 API 요약</h2>
+      <p class="small">
+        아래 내용은 <a href="https://opencode.ai/docs/server/" class="anchor" target="_blank">공식 OpenCode Server 문서</a>에서 발췌한 것으로,
+        NewsInsight에서 아직 직접 사용하지 않는 부분도 포함되어 있습니다.
+      </p>
+
+      <h3>4.1 App / Config</h3>
+      <table>
+        <tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+        <tr><td><span class="badge http-get">GET</span></td><td><code>/app</code></td><td>현재 앱 상태(<code>App</code> 타입)를 조회</td></tr>
+        <tr><td><span class="badge http-post">POST</span></td><td><code>/app/init</code></td><td>앱 초기화, 성공 시 <code>boolean</code></td></tr>
+        <tr><td><span class="badge http-get">GET</span></td><td><code>/config</code></td><td>현재 서버 설정(<code>Config</code>) 조회</td></tr>
+        <tr><td><span class="badge http-get">GET</span></td><td><code>/config/providers</code></td><td>
+          사용 가능한 Provider 목록(<code>Provider[]</code>)과 기본 설정 키/값 반환
+        </td></tr>
+      </table>
+
+      <h3>4.2 Files API</h3>
+      <p class="small">코드 검색/조회에 사용되는 파일 시스템 관련 API입니다.</p>
+      <table>
+        <tr><th>메서드</th><th>경로</th><th>요청</th><th>응답</th></tr>
+        <tr>
+          <td><span class="badge http-get">GET</span></td>
+          <td><code>/find?pattern=&lt;pat&gt;</code></td>
+          <td class="small">쿼리 파라미터 <code>pattern</code></td>
+          <td class="small">파일 경로, 매칭 라인/오프셋, submatches 등을 포함한 구조체 배열</td>
+        </tr>
+        <tr>
+          <td><span class="badge http-get">GET</span></td>
+          <td><code>/find/file?query=&lt;q&gt;</code></td>
+          <td class="small">쿼리 <code>q</code></td>
+          <td class="small"><code>string[]</code> (파일 경로 목록)</td>
+        </tr>
+        <tr>
+          <td><span class="badge http-get">GET</span></td>
+          <td><code>/find/symbol?query=&lt;q&gt;</code></td>
+          <td class="small">쿼리 <code>q</code></td>
+          <td class="small"><code>Symbol[]</code> (심볼 정보 배열)</td>
+        </tr>
+        <tr>
+          <td><span class="badge http-get">GET</span></td>
+          <td><code>/file?path=&lt;path&gt;</code></td>
+          <td class="small">경로 <code>path</code></td>
+          <td class="small"><code>{ type: "raw" | "patch", content: string }</code></td>
+        </tr>
+        <tr>
+          <td><span class="badge http-get">GET</span></td>
+          <td><code>/file/status</code></td>
+          <td class="small">-</td>
+          <td class="small"><code>File[]</code> (파일 상태 목록)</td>
+        </tr>
+      </table>
+
+      <h3>4.3 Logging / Agents / TUI / Auth / Events / Docs</h3>
+      <table>
+        <tr><th>카테고리</th><th>엔드포인트</th><th>설명</th></tr>
+        <tr>
+          <td>Logging</td>
+          <td><code>POST /log</code></td>
+          <td class="small"><code>{ service, level, message, extra? }</code> 형식 로그 기록, 응답은 <code>boolean</code></td>
+        </tr>
+        <tr>
+          <td>Agents</td>
+          <td><code>GET /agent</code></td>
+          <td class="small">등록된 Agent 목록(<code>Agent[]</code>) 조회</td>
+        </tr>
+        <tr>
+          <td>TUI</td>
+          <td class="small">
+            <code>POST /tui/append-prompt</code>, <code>/tui/open-help</code>, <code>/tui/open-sessions</code>,<br />
+            <code>/tui/open-themes</code>, <code>/tui/open-models</code>, <code>/tui/submit-prompt</code>,<br />
+            <code>/tui/clear-prompt</code>, <code>/tui/execute-command</code>, <code>/tui/show-toast</code>,<br />
+            <code>GET /tui/control/next</code>, <code>POST /tui/control/response</code>
+          </td>
+          <td class="small">Opencode TUI를 원격 제어하기 위한 엔드포인트, 대부분 <code>boolean</code> 응답</td>
+        </tr>
+        <tr>
+          <td>Auth</td>
+          <td><code>PUT /auth/:id</code></td>
+          <td class="small">인증 관련 설정 업데이트, 응답은 <code>boolean</code></td>
+        </tr>
+        <tr>
+          <td>Events</td>
+          <td><code>GET /event</code></td>
+          <td class="small">서버 이벤트 스트림 (예: <code>server.connected</code>)</td>
+        </tr>
+        <tr>
+          <td>Docs</td>
+          <td><code>GET /doc</code></td>
+          <td class="small">OpenAPI 스펙 문서(JSON)</td>
+        </tr>
+      </table>
+    </section>
+
+    <section class="section-card">
+      <h2>5. NewsInsight 통합 요약</h2>
+      <ol class="small">
+        <li><strong>Collector</strong>가 <code>AiMessagingService.sendAnalysisRequest</code>를 통해 <code>AiRequestMessage</code>를 Kafka 토픽 <code>newsinsight.ai.requests</code>로 전송합니다.</li>
+        <li><strong>AI_agent_server</strong>의 Kafka 워커(<code>startKafkaWorker</code>)가 이를 소비하고, OpenCode 서버의 <code>/session</code> 및 <code>/session/:id/message</code> 엔드포인트를 순차적으로 호출합니다.</li>
+        <li>OpenCode 서버는 LLM 응답을 포함한 JSON을 반환하고, AI_agent_server는 이를 <code>AiResponseMessage</code>로 래핑하여 <code>newsinsight.ai.responses</code> 토픽에 기록합니다.</li>
+        <li>Collector의 <code>AiResultConsumerService</code>가 해당 응답을 MongoDB <code>ai_responses</code> 컬렉션(<code>AiResponseDocument</code>)에 저장합니다.</li>
+      </ol>
+      <p class="small">
+        이 문서는 OpenCode LLM 서버와의 HTTP 통신 규약을 한 곳에 모아 정리한 것으로,
+        추가로 필드 수준 정의가 필요할 경우 <code>/doc</code> OpenAPI 스펙과 공식 문서를 함께 참고하면 됩니다.
+      </p>
+    </section>
+  </main>
+</body>
+</html>

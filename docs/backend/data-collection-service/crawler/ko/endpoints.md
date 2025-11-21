@@ -1,5 +1,12 @@
 # 크롤링 서비스 API 엔드포인트
 
+> ⚠️ **주의 (2025-11-20 기준)**
+>
+> 이 문서는 changedetection.io 기반 크롤링 서비스의 HTTP 엔드포인트를 설명합니다.
+> 현재 `data-collection-service` 구현은 Crawl4AI의 `/crawl` 엔드포인트만 호출하며,
+> 아래에 정의된 watch/tag/notification API를 직접 사용하지 않습니다.
+> 대체/레거시 설계 참고용으로 활용해 주세요.
+
 모든 엔드포인트는 기본 경로 `/api/v1/` 하위에서 제공되며, 별도 안내가 없는 한 유효한 API 키를 담은 `x-api-key` 헤더가 필요합니다.
 
 ## 워치 관리

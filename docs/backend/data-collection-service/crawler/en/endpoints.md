@@ -1,5 +1,12 @@
 # Crawling Service API Endpoints
 
+> ⚠️ **Note (as of 2025-11-20)**
+>
+> This document describes the HTTP API of a changedetection.io-based crawler service
+> (watch/tag/notification endpoints). The current `data-collection-service` implementation
+> integrates with Crawl4AI via a simple `/crawl` HTTP call (`Crawl4aiClient`), and does **not**
+> call these endpoints directly. Treat this file as reference for an alternative/legacy design.
+
 All endpoints are served under the base path `/api/v1/` and require the header `x-api-key` containing a valid API key unless stated otherwise.
 
 ## Watch Management

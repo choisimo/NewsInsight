@@ -2,6 +2,8 @@ package com.newsinsight.collector.config;
 
 import com.newsinsight.collector.dto.AiRequestMessage;
 import com.newsinsight.collector.dto.AiResponseMessage;
+import com.newsinsight.collector.dto.CrawlCommandMessage;
+import com.newsinsight.collector.dto.CrawlResultMessage;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -38,6 +40,34 @@ public class KafkaConfig {
     }
 
     @Bean
+    public ProducerFactory<String, CrawlCommandMessage> crawlCommandProducerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        return new DefaultKafkaProducerFactory<>(props);
+    }
+
+    @Bean
+    public KafkaTemplate<String, CrawlCommandMessage> crawlCommandKafkaTemplate() {
+        return new KafkaTemplate<>(crawlCommandProducerFactory());
+    }
+
+    @Bean
+    public ProducerFactory<String, CrawlResultMessage> crawlResultProducerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        return new DefaultKafkaProducerFactory<>(props);
+    }
+
+    @Bean
+    public KafkaTemplate<String, CrawlResultMessage> crawlResultKafkaTemplate() {
+        return new KafkaTemplate<>(crawlResultProducerFactory());
+    }
+
+    @Bean
     public ConsumerFactory<String, AiResponseMessage> aiResponseConsumerFactory() {
         Map<String, Object> props = new HashMap<>();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
@@ -57,6 +87,52 @@ public class KafkaConfig {
         ConcurrentKafkaListenerContainerFactory<String, AiResponseMessage> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(aiResponseConsumerFactory());
+        return factory;
+    }
+
+    @Bean
+    public ConsumerFactory<String, CrawlCommandMessage> crawlCommandConsumerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "collector-service-crawl");
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        props.put(JsonDeserializer.TRUSTED_PACKAGES, "com.newsinsight.collector.dto");
+        return new DefaultKafkaConsumerFactory<>(
+                props,
+                new StringDeserializer(),
+                new JsonDeserializer<>(CrawlCommandMessage.class)
+        );
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, CrawlCommandMessage> crawlCommandKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, CrawlCommandMessage> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(crawlCommandConsumerFactory());
+        return factory;
+    }
+
+    @Bean
+    public ConsumerFactory<String, CrawlResultMessage> crawlResultConsumerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "collector-service-crawl-result");
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        props.put(JsonDeserializer.TRUSTED_PACKAGES, "com.newsinsight.collector.dto");
+        return new DefaultKafkaConsumerFactory<>(
+                props,
+                new StringDeserializer(),
+                new JsonDeserializer<>(CrawlResultMessage.class)
+        );
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, CrawlResultMessage> crawlResultKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, CrawlResultMessage> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(crawlResultConsumerFactory());
         return factory;
     }
 }

@@ -6,6 +6,14 @@
 - **Created:** 2025-10-29
 - **Last Updated:** 2025-10-29
 
+> **Implementation Note (as of 2025-11-20)**
+>
+> This document describes a planned Python/Scrapy/Celery-based "News Crawling Service" microservice.
+> The current implementation in this repository uses the Spring Boot
+> `backend/data-collection-service` to collect news via RSS, generic web scraping,
+> and Crawl4AI (`web-crawler` container). Treat this spec as a roadmap / alternative
+> design rather than a description of the running code.
+
 ## 2. Service Summary
 - **Role:**
   - Collects and normalizes the latest news articles based on submitted keywords, then hands structured data to the analytics pipeline.
@@ -16,6 +24,14 @@
   - Provides reliable, near-real-time data feeds for sentiment and insight dashboards.
 - **In Scope:** Keyword-driven article fetch, normalization, deduplication, result storage, monitoring APIs.
 - **Out of Scope:** Sentiment analysis, keyword ranking, UI delivery, paid API billing management.
+
+> **Implementation Note (as of 2025-11-20)**
+>
+> This document describes a planned Python/Scrapy/Celery-based "News Crawling Service" microservice.
+> The current implementation in this repository uses the Spring Boot
+> `backend/data-collection-service` to collect news via RSS, generic web scraping,
+> and Crawl4AI (`web-crawler` container). Treat this spec as a roadmap / alternative
+> design rather than a description of the running code.
 
 ## 3. Technology Stack
 - Frameworks: Scrapy, Flask (admin API), Celery

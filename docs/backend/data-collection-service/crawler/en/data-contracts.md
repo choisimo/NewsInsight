@@ -1,5 +1,12 @@
 # Crawling Service Data Contracts
 
+> ⚠️ **Note (as of 2025-11-20)**
+>
+> The schemas in this file (`WatchBase`, `CreateWatch`, `Watch`, etc.) come from the
+> changedetection.io watch service. The current NewsInsight collector only calls
+> Crawl4AI's `/crawl` endpoint and does not persist these watch objects.
+> Use this as reference material for a potential future integration.
+
 ## Watch Schemas
 
 ### WatchBase

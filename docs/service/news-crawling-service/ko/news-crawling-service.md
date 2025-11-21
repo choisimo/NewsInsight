@@ -22,10 +22,10 @@
 
 > ### 💡 구현 참고 (Implementation Note)
 >
-> 본 문서는 Scrapy 및 Celery 기반의 아키텍처를 로드맵으로 제시하고 있으나, **현재 구현체(`BACKEND-COLLECTOR-SERVICE`)**는 FastAPI를 기반으로 하는 경량화된 수집 및 연동 관리 API 중심으로 구성되어 있습니다.
->
-> * **Current:** FastAPI 기반 API (수집 타겟 관리, 상태 조회)
-> * **Roadmap:** Scrapy/Celery 기반의 대규모 분산 크롤링 도입 (향후 정합화 예정)
+> 본 문서는 **별도 Python(Scrapy/Celery) 기반 뉴스 크롤링 마이크로서비스**에 대한 로드맵을 설명합니다.
+> 2025-11-20 기준 실제 구현은 **`backend/data-collection-service` (Spring Boot, Java)** 가
+> RSS, 일반 웹 페이지, Crawl4AI(`web-crawler` 컨테이너)를 통해 뉴스를 수집·정규화하는 구조이며,
+> 이 문서는 향후 확장/대체 아키텍처 참고용으로 유지됩니다.
 
 ## 3. 기술 스택
 

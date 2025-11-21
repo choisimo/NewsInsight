@@ -141,6 +141,11 @@ collector:
     default-provider-id: ${COLLECTOR_AI_PROVIDER_ID:openai}
     default-model-id: ${COLLECTOR_AI_MODEL_ID:gpt-4.1}
 
+  crawl:
+    topic:
+      command: ${COLLECTOR_CRAWL_COMMAND_TOPIC:newsinsight.crawl.commands}
+      result: ${COLLECTOR_CRAWL_RESULT_TOPIC:newsinsight.crawl.results}
+
   crawler:
     enabled: ${COLLECTOR_SERVICE_CRAWLER_ENABLED:false}
     base-url: ${COLLECTOR_SERVICE_CRAWLER_BASE_URL:http://web-crawler:11235}

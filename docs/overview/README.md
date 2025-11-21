@@ -2,17 +2,20 @@
 
 ### 1.1 모듈 구성
 
-| 모듈                        | 설명                            | 핵심 책임                                        | 주요 참조                |
-| --------------------------- | ------------------------------- | ------------------------------------------------ | ------------------------ |
-| `api-gateway-service`     | Spring Cloud Gateway 기반 BFF   | 라우팅, JWT 인증, RBAC, Rate Limiting            | 참조[^api-gateway-files] |
-| `data-collection-service` | Spring Boot 수집 마이크로서비스 | 소스 관리, 수집 작업 오케스트레이션, 데이터 저장 | 참조[^collector-files]   |
-| `shared-libs`             | 공용 Java Library 모듈          | 공통 DTO·검증·Consul 연동 의존성 제공          | 참조[^shared-libs-files] |
+| 모듈                        | 설명                            | 핵심 책임                                         | 주요 참조                                   |
+| --------------------------- | ------------------------------- | ------------------------------------------------- | ------------------------------------------- |
+| `api-gateway-service`     | Spring Cloud Gateway 기반 BFF   | 라우팅, JWT 인증, RBAC, Rate Limiting             | 참조[^api-gateway-files]                    |
+| `data-collection-service` | Spring Boot 수집 마이크로서비스 | 소스 관리, 수집 작업 오케스트레이션, 데이터 저장  | 참조[^collector-files]                      |
+| `AI_agent_server`         | Go 기반 AI 에이전트/워커        | Kafka 기반 AI 분석 요청 처리 및 OpenCode LLM 연동 | `backend/AI_agent_server/go-proxy-admin/` |
+| `shared-libs`             | 공용 Java Library 모듈          | 공통 DTO·검증·Consul 연동 의존성 제공           | 참조[^shared-libs-files]                    |
 
 ### 1.2 인프라 및 의존성
 
 - **Consul**: 모든 서비스에서 구성 및 서비스 디스커버리를 담당합니다 (참조: [^consul-config]).
 - **PostgreSQL**: 수집된 뉴스 데이터와 소스 메타데이터를 저장합니다 (참조: [^postgres-config]).
 - **Redis**: Gateway의 Redis Rate Limiter 백엔드로 사용됩니다(자격은 환경 변수/Consul 설정 필요) (참조: [^redis-config]).
+- **Kafka**: Collector 서비스의 크롤링 파이프라인(`CrawlCommandMessage`, `CrawlResultMessage`)과 AI_agent_server와의 AI 분석 파이프라인(`AiRequestMessage`, `AiResponseMessage`)을 위한 이벤트 브로커 역할을 합니다.
+- **MongoDB**: AI 분석 응답(`AiResponseDocument`)을 TTL 인덱스로 단기 저장하는 캐시/로그 스토어로 사용합니다.
 
 ### 1.3 요청-응답 흐름
 
@@ -29,7 +32,21 @@ flowchart LR
     Gateway -->|Routes & Filters| CollectorAPI["Collector Service\n(Spring Boot)"]
     CollectorAPI -->|JPA| PostgreSQL[(PostgreSQL)]
     Gateway --> Redis[(Redis Rate Limiter)]
-    CollectorAPI -->|Async Fetch| ExternalSources["뉴스 및 웹 Information 소스\n(RSS/Web/API)"]
+
+    %% 크롤링 비동기 파이프라인 (Kafka 기반)
+    CollectorAPI -.->|Crawl Command| Kafka[(Kafka)]
+    Kafka -->|Consume Command| CrawlerWorker["Crawler Worker\n(RSS/Web Scraping)"]
+    CrawlerWorker -->|Async Fetch| ExternalSources["External Sources\n(RSS/Web/API)"]
+    CrawlerWorker -->|Crawl Result| Kafka
+    Kafka -->|Consume Result| CrawlResultConsumer["Crawl Result Consumer\n(Persistence)"]
+    CrawlResultConsumer -->|store| PostgreSQL
+
+    %% AI 분석 비동기 파이프라인
+    CollectorAPI -->|AI Request| Kafka
+    Kafka -->|consume| AIAgent["AI Agent Server\n(Go, OpenCode)"]
+    AIAgent -->|AI Response| Kafka
+    Kafka -->|consume| AiConsumer["AI Result Consumer\n(Collector)"]
+    AiConsumer -->|store| Mongo[(MongoDB\nAI Responses)]
 ```
 
 ### 1.4 기술 스택 요약
@@ -41,6 +58,56 @@ flowchart LR
 | Spring Data JPA & Hibernate   | PostgreSQL ORM/트랜잭션 처리.@backend/data-collection-service/src/main/java/com/newsinsight/collector/entity/DataSource.java#13-58                                                                                                                             |
 | Lombok & Jackson              | DTO/엔티티 보일러플레이트 제거 및 JSON 직렬화.@backend/data-collection-service/src/main/java/com/newsinsight/collector/entity/CollectionJob.java#18-58 @backend/data-collection-service/src/main/java/com/newsinsight/collector/mapper/EntityMapper.java#5-148 |
 | Rome (SyndFeed)               | RSS 피드 파싱 유틸리티.@backend/data-collection-service/src/main/java/com/newsinsight/collector/service/RssFeedService.java#3-147                                                                                                                              |
+
+### 1.5 비동기 타임라인 예시
+
+- **크롤링 파이프라인 (CrawlCommand → CrawlResult → CollectedData)**
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Gateway
+    participant Collector as Collector Service
+    participant Kafka as Kafka
+    participant Crawler as Crawler Worker
+    participant ResultConsumer as Crawl Result Consumer
+    participant DB as PostgreSQL
+
+    Client->>Gateway: POST /api/v1/collections/start
+    Gateway->>Collector: /api/v1/collections/start
+    Collector->>Collector: CollectionJob 생성 (PENDING)
+    Collector->>Kafka: Produce CrawlCommandMessage
+    Kafka-->>Crawler: Consume CrawlCommandMessage
+    Crawler->>External: RSS/Web Fetch
+    Crawler->>Kafka: Produce CrawlResultMessage
+    Kafka-->>ResultConsumer: Consume CrawlResultMessage
+    ResultConsumer->>DB: save CollectedData
+```
+
+- **AI 분석 파이프라인 (Analysis API → AiRequest/AiResponse → MongoDB)**
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Gateway
+    participant Collector as Collector Service
+    participant Kafka as Kafka
+    participant AIAgent as AI Agent Server
+    participant LLM as OpenCode API
+    participant Mongo as MongoDB
+
+    Client->>Gateway: GET /api/v1/analysis?query=...
+    Gateway->>Collector: /api/v1/analysis
+    Collector->>Collector: PostgreSQL에서 집계 (동기)
+    Collector->>Kafka: Produce AiRequestMessage
+    Collector-->>Client: AnalysisResponseDto 반환 (AI 완료 대기 없음)
+    Kafka-->>AIAgent: Consume AiRequestMessage
+    AIAgent->>LLM: 세션/메시지 API 호출
+    LLM-->>AIAgent: AI 응답 텍스트
+    AIAgent->>Kafka: Produce AiResponseMessage
+    Kafka-->>Collector: AiResultConsumer consumes
+    Collector->>Mongo: Save AiResponseDocument
+```
 
 ---
 
@@ -62,10 +129,13 @@ flowchart LR
   - `CollectionController`: 수집 작업 생성·조회·취소, 통계 API.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#34-120
   - `DataController`: 수집된 데이터 조회·처리 상태 변경 및 통계 API.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#24-102
 - **Service 층**:
-  - `CollectionService`: 소스별 비동기 수집 실행, 작업 상태 관리, 통계 집계.@backend/data-collection-service/src/main/java/com/newsinsight/collector/service/CollectionService.java#67-263
+  - `CollectionService`: Kafka 기반 크롤 명령 이벤트 발행, 작업 상태 관리, 통계 집계를 담당합니다.@backend/data-collection-service/src/main/java/com/newsinsight/collector/service/CollectionService.java#40-268
+  - `CrawlCommandConsumerService` / `CrawlResultConsumerService`: Kafka에서 크롤 명령(`CrawlCommandMessage`)과 결과(`CrawlResultMessage`) 이벤트를 소비하여 `executeCollection` 실행 및 `CollectedData` 저장을 담당합니다.@backend/data-collection-service/src/main/java/com/newsinsight/collector/service/CrawlCommandConsumerService.java @backend/data-collection-service/src/main/java/com/newsinsight/collector/service/CrawlResultConsumerService.java
   - `RssFeedService`: RSS 엔트리를 파싱하고 중복을 제거한 `CollectedData` 엔티티로 변환합니다.@backend/data-collection-service/src/main/java/com/newsinsight/collector/service/RssFeedService.java#44-147
   - `CollectedDataService`: 콘텐츠 해시 계산, 중복 검사, 처리 상태 업데이트를 담당합니다.@backend/data-collection-service/src/main/java/com/newsinsight/collector/service/CollectedDataService.java#22-162
   - `DataSourceService`: 소스 메타데이터 CRUD 및 페이징 조회, 마지막 수집 시간 업데이트.@backend/data-collection-service/src/main/java/com/newsinsight/collector/service/DataSourceService.java#31-213
+  - `AnalysisService`: 키워드(`query`)와 기간(`window`)에 따른 기사 집계/통계를 계산하고 분석 결과 DTO를 생성합니다.@backend/data-collection-service/src/main/java/com/newsinsight/collector/service/AnalysisService.java
+  - `AiMessagingService` / `AiResultConsumerService`: Kafka를 통해 AI 분석 요청(`AiRequestMessage`)을 발행하고, 응답(`AiResponseMessage`)을 MongoDB `ai_responses` 컬렉션에 저장합니다.@backend/data-collection-service/src/main/java/com/newsinsight/collector/service/AiMessagingService.java @backend/data-collection-service/src/main/java/com/newsinsight/collector/service/AiResultConsumerService.java
 - **Repository/Entity**: `CollectionJob`, `CollectedData`, `DataSource` 엔터티가 테이블 구조를 정의합니다.@backend/data-collection-service/src/main/java/com/newsinsight/collector/entity/CollectionJob.java#12-58 @backend/data-collection-service/src/main/java/com/newsinsight/collector/entity/CollectedData.java#12-81 @backend/data-collection-service/src/main/java/com/newsinsight/collector/entity/DataSource.java#13-58
 
 ### 2.3 Shared Libraries (`shared-libs`)
@@ -77,47 +147,54 @@ flowchart LR
 
 ## 3. API 엔드포인트 명세
 
-> **외부 호출 경로**는 Gateway 기준입니다. Gateway가 `/api/v1/collector/**` 요청을 내부 `/api/v1/**`로 변환함에 따라 서비스 내부 경로와 다를 수 있습니다.@backend/api-gateway-service/src/main/resources/application.yml#27-84
+> **외부 호출 경로**는 Gateway 기준입니다. Gateway가 `/api/v1/**` 요청을 Collector 서비스로 라우팅하며, `/api/v1/articles`, `/api/v1/analysis` 와 같은 별칭 라우트를 제공합니다.@backend/api-gateway-service/src/main/resources/application.yml#27-100
 
 ### 3.1 데이터 소스 관리 (Collector)
 
-| HTTP   | Endpoint                                      | 기능                                                                                                                                                                                      | 인증 |
-| ------ | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| GET    | `/api/v1/collector/sources`                 | 전체 소스 페이징 조회 (`page`, `size`, `sortBy`, `sortDirection`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#28-41 | 필요 |
-| GET    | `/api/v1/collector/sources/active`          | 활성 소스 페이징 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#47-57                                                     | 필요 |
-| GET    | `/api/v1/collector/sources/{id}`            | 소스 단건 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#62-68                                                            | 필요 |
-| POST   | `/api/v1/collector/sources`                 | 소스 생성 (`DataSourceCreateRequest`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#73-80                                   | 필요 |
-| PUT    | `/api/v1/collector/sources/{id}`            | 소스 수정 (`DataSourceUpdateRequest`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#82-97                                   | 필요 |
-| DELETE | `/api/v1/collector/sources/{id}`            | 소스 삭제.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#99-106                                                                | 필요 |
-| POST   | `/api/v1/collector/sources/{id}/activate`   | 소스 활성화 토글.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#108-118                                                        | 필요 |
-| POST   | `/api/v1/collector/sources/{id}/deactivate` | 소스 비활성화 토글.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#122-132                                                      | 필요 |
+| HTTP   | Endpoint                            | 기능                                                                                                                                                                                      | 인증 |
+| ------ | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| GET    | `/api/v1/sources`                 | 전체 소스 페이징 조회 (`page`, `size`, `sortBy`, `sortDirection`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#28-41 | 필요 |
+| GET    | `/api/v1/sources/active`          | 활성 소스 페이징 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#47-57                                                     | 필요 |
+| GET    | `/api/v1/sources/{id}`            | 소스 단건 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#62-68                                                            | 필요 |
+| POST   | `/api/v1/sources`                 | 소스 생성 (`DataSourceCreateRequest`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#73-80                                   | 필요 |
+| PUT    | `/api/v1/sources/{id}`            | 소스 수정 (`DataSourceUpdateRequest`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#82-97                                   | 필요 |
+| DELETE | `/api/v1/sources/{id}`            | 소스 삭제.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#99-106                                                                | 필요 |
+| POST   | `/api/v1/sources/{id}/activate`   | 소스 활성화 토글.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#108-118                                                        | 필요 |
+| POST   | `/api/v1/sources/{id}/deactivate` | 소스 비활성화 토글.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#122-132                                                      | 필요 |
 
 ### 3.2 수집 작업 관리 (Collector)
 
-| HTTP   | Endpoint                                           | 기능                                                                                                                                                                 | 인증 |
-| ------ | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| POST   | `/api/v1/collector/collections/start`            | 지정/전체 소스 수집 시작 (`CollectionRequest`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#35-63 | 필요 |
-| GET    | `/api/v1/collector/collections/jobs`             | 작업 목록 페이징 조회 (`status` 선택).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#68-80          | 필요 |
-| GET    | `/api/v1/collector/collections/jobs/{id}`        | 작업 단건 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#85-90                                   | 필요 |
-| POST   | `/api/v1/collector/collections/jobs/{id}/cancel` | 작업 취소.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#94-100                                       | 필요 |
-| GET    | `/api/v1/collector/collections/stats`            | 수집 통계 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#103-109                                 | 필요 |
-| DELETE | `/api/v1/collector/collections/jobs/cleanup`     | 완료된 오래된 작업 삭제 (`daysOld`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#112-120          | 필요 |
+| HTTP   | Endpoint                                 | 기능                                                                                                                                                                 | 인증 |
+| ------ | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| POST   | `/api/v1/collections/start`            | 지정/전체 소스 수집 시작 (`CollectionRequest`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#35-63 | 필요 |
+| GET    | `/api/v1/collections/jobs`             | 작업 목록 페이징 조회 (`status` 선택).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#68-80          | 필요 |
+| GET    | `/api/v1/collections/jobs/{id}`        | 작업 단건 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#85-90                                   | 필요 |
+| POST   | `/api/v1/collections/jobs/{id}/cancel` | 작업 취소.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#94-100                                       | 필요 |
+| GET    | `/api/v1/collections/stats`            | 수집 통계 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#103-109                                 | 필요 |
+| DELETE | `/api/v1/collections/jobs/cleanup`     | 완료된 오래된 작업 삭제 (`daysOld`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/CollectionController.java#112-120          | 필요 |
 
 ### 3.3 수집 데이터 조회 (Collector)
 
-| HTTP | Endpoint                                  | 기능                                                                                                                                                                                    | 인증 |
-| ---- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| GET  | `/api/v1/collector/data`                | 수집 데이터 페이징 조회 (`page`, `size`, `sourceId`, `processed`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#26-50 | 필요 |
-| GET  | `/api/v1/collector/data/unprocessed`    | 미처리 데이터만 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#55-64                                                      | 필요 |
-| GET  | `/api/v1/collector/data/{id}`           | 데이터 단건 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#68-75                                                          | 필요 |
-| POST | `/api/v1/collector/data/{id}/processed` | 처리 완료 표시.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#79-85                                                            | 필요 |
-| GET  | `/api/v1/collector/data/stats`          | 총/미처리/처리 건수 집계.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#88-97                                                  | 필요 |
+| HTTP | Endpoint                        | 기능                                                                                                                                                                                    | 인증 |
+| ---- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| GET  | `/api/v1/data`                | 수집 데이터 페이징 조회 (`page`, `size`, `sourceId`, `processed`).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#26-50 | 필요 |
+| GET  | `/api/v1/data/unprocessed`    | 미처리 데이터만 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#55-64                                                      | 필요 |
+| GET  | `/api/v1/data/{id}`           | 데이터 단건 조회.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#68-75                                                          | 필요 |
+| POST | `/api/v1/data/{id}/processed` | 처리 완료 표시.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#79-85                                                            | 필요 |
+| GET  | `/api/v1/data/stats`          | 총/미처리/처리 건수 집계.@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#88-97                                                  | 필요 |
 
 ### 3.4 퍼블릭 별칭 및 기타 라우트
 
-- `/api/v1/articles` 및 `/api/v1/articles/**` → Collector의 `/api/v1/data` 및 하위 경로로 Rewrite.@backend/api-gateway-service/src/main/resources/application.yml#65-78
-- `/api/v1/analysis/**` → Collector의 `/api/v1/data/stats`로 전달.@backend/api-gateway-service/src/main/resources/application.yml#79-84
+- `/api/v1/articles` 및 `/api/v1/articles/**` → Collector의 `/api/v1/articles` 및 하위 경로(분석용 기사 검색 API)로 전달.@backend/api-gateway-service/src/main/resources/application.yml#62-82 @backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/AnalysisController.java#28-34
+- `/api/v1/analysis` 및 `/api/v1/analysis/**` → Collector의 `/api/v1/analysis` 분석 요약 API로 전달.@backend/api-gateway-service/src/main/resources/application.yml#83-101 @backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/AnalysisController.java#20-26
 - `/actuator/**`, `/api/v1/auth/**` 등은 Gateway 필터에서 JWT 검증을 건너뜁니다.@backend/api-gateway-service/src/main/java/com/newsinsight/gateway/filter/JwtAuthenticationFilter.java#33-57
+
+### 3.5 분석 및 기사 검색 (Collector)
+
+| HTTP | Endpoint             | 기능                                                                                                      | 인증 |
+| ---- | -------------------- | --------------------------------------------------------------------------------------------------------- | ---- |
+| GET  | `/api/v1/analysis` | 키워드(`query`)와 기간(`window`) 기준으로 집계된 분석 결과(`AnalysisResponseDto`)를 반환합니다.     | 필요 |
+| GET  | `/api/v1/articles` | 키워드(`query`)와 `limit` 기준으로 관련 기사를 검색하여 프론트엔드에 제공할 요약 데이터를 반환합니다. | 필요 |
 
 ---
 
@@ -262,6 +339,175 @@ flowchart LR
 - Request Body 없음.
 - 성공 시 204, 미존재 ID 시 404 (빈 바디).@backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#79-85 @backend/data-collection-service/src/main/java/com/newsinsight/collector/service/CollectedDataService.java#102-116
 
+### 4.5 분석 결과 조회 (`GET /api/v1/analysis`)
+
+- Response Body (`AnalysisResponseDto`):@backend/data-collection-service/src/main/java/com/newsinsight/collector/dto/AnalysisResponseDto.java#7-14 @backend/data-collection-service/src/main/java/com/newsinsight/collector/dto/SentimentDataDto.java#3-3 @backend/data-collection-service/src/main/java/com/newsinsight/collector/dto/KeywordDataDto.java#3-3
+
+```json
+{
+  "query": "삼성전자",
+  "window": "7d",
+  "article_count": 120,
+  "sentiments": {
+    "pos": 0.42,
+    "neg": 0.31,
+    "neu": 0.27
+  },
+  "top_keywords": [
+    { "word": "반도체", "score": 0.89 },
+    { "word": "실적", "score": 0.74 }
+  ],
+  "analyzed_at": "2025-11-20T10:15:30Z"
+}
+```
+
+### 4.6 기사 검색 결과 (`GET /api/v1/articles`)
+
+- Response Body (`ArticlesResponseDto`):@backend/data-collection-service/src/main/java/com/newsinsight/collector/dto/ArticlesResponseDto.java#5-9 @backend/data-collection-service/src/main/java/com/newsinsight/collector/dto/ArticleDto.java
+
+```json
+{
+  "query": "삼성전자",
+  "articles": [
+    {
+      "id": "8801",
+      "title": "삼성전자, AI 투자 확대 발표",
+      "source": "Yonhap News",
+      "published_at": "2025-11-20T08:30:00Z",
+      "url": "https://news.example.com/articles/8801",
+      "snippet": "삼성전자가 차세대 AI 반도체에 대한 대규모 투자를 발표했다."
+    },
+    {
+      "id": "8802",
+      "title": "반도체 업황 회복 기대감",
+      "source": "Maeil Business",
+      "published_at": "2025-11-20T09:10:00Z",
+      "url": "https://news.example.com/articles/8802",
+      "snippet": "글로벌 반도체 수요 회복에 대한 기대가 커지고 있다."
+    }
+  ],
+  "total": 120
+}
+```
+
+### 4.7 AI 분석 요청 메시지 (Kafka `AiRequestMessage`)
+
+- Topic (기본값): `newsinsight.ai.requests`
+- Payload (`AiRequestMessage`):@backend/data-collection-service/src/main/java/com/newsinsight/collector/dto/AiRequestMessage.java#5-13
+
+```json
+{
+  "requestId": "9f8b7c1e-1234-4b5a-bcde-0123456789ab",
+  "type": "analysis",
+  "query": "삼성전자",
+  "window": "7d",
+  "message": "다음 쿼리에 대한 뉴스 요약과 키워드, 감성 분석을 제공해 주세요.",
+  "context": {
+    "article_count": 120,
+    "top_sources": ["Yonhap", "Maeil"],
+    "lang": "ko"
+  },
+  "providerId": "opencode",
+  "modelId": "gpt-4.1"
+}
+```
+
+### 4.8 AI 분석 응답 메시지 (Kafka `AiResponseMessage`)
+
+- Topic (기본값): `newsinsight.ai.responses`
+- Payload (`AiResponseMessage`):@backend/data-collection-service/src/main/java/com/newsinsight/collector/dto/AiResponseMessage.java#5-12
+
+```json
+{
+  "requestId": "9f8b7c1e-1234-4b5a-bcde-0123456789ab",
+  "status": "COMPLETED",
+  "completedAt": "2025-11-20T10:15:32Z",
+  "providerId": "opencode",
+  "modelId": "gpt-4.1",
+  "text": "요약: 삼성전자는 AI 반도체 투자 확대를 발표했고, 시장은 반도체 업황 회복에 대한 기대를 보이고 있습니다...",
+  "raw": {
+    "choices": [
+      {
+        "message": {
+          "role": "assistant",
+          "content": "요약: ..."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 1234,
+      "completion_tokens": 456,
+      "total_tokens": 1690
+    }
+  }
+}
+```
+
+### 4.9 AI 응답 MongoDB 도큐먼트 (`ai_responses` 컬렉션)
+
+- Document 클래스: `AiResponseDocument`@backend/data-collection-service/src/main/java/com/newsinsight/collector/mongo/AiResponseDocument.java#10-24
+
+```json
+{
+  "_id": "9f8b7c1e-1234-4b5a-bcde-0123456789ab",
+  "status": "COMPLETED",
+  "completedAt": "2025-11-20T10:15:32Z",
+  "providerId": "opencode",
+  "modelId": "gpt-4.1",
+  "text": "요약: 삼성전자는 AI 반도체 투자 확대를 발표했고, 시장은 반도체 업황 회복에 대한 기대를 보이고 있습니다...",
+  "raw": {
+    "choices": [
+      {
+        "message": {
+          "role": "assistant",
+          "content": "요약: ..."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 1234,
+      "completion_tokens": 456,
+      "total_tokens": 1690
+    }
+  },
+  "createdAt": "2025-11-20T10:15:32.500Z"
+}
+```
+
+### 4.10 크롤링 명령 메시지 (Kafka `CrawlCommandMessage`)
+
+- Topic (기본값): `newsinsight.crawl.commands`
+- Payload (`CrawlCommandMessage`):@backend/data-collection-service/src/main/java/com/newsinsight/collector/dto/CrawlCommandMessage.java
+
+```json
+{
+  "jobId": 1001,
+  "sourceId": 42,
+  "sourceType": "RSS",
+  "url": "https://news.example.com/rss/samsung.xml",
+  "sourceName": "Yonhap - Samsung"
+}
+```
+
+### 4.11 크롤링 결과 메시지 (Kafka `CrawlResultMessage`)
+
+- Topic (기본값): `newsinsight.crawl.results`
+- Payload (`CrawlResultMessage`):@backend/data-collection-service/src/main/java/com/newsinsight/collector/dto/CrawlResultMessage.java
+
+```json
+{
+  "jobId": 1001,
+  "sourceId": 42,
+  "title": "삼성전자, 3분기 실적 발표",
+  "content": "삼성전자가 3분기 실적을 발표했다...",
+  "url": "https://news.example.com/articles/12345",
+  "publishedAt": "2025-11-20T09:30:00",
+  "metadataJson": "{\"adapter\":\"rss\",\"source_name\":\"Yonhap RSS\"}"
+}
+```
+
 ---
 
 ## 5. 데이터 모델 요약
@@ -395,21 +641,21 @@ flowchart LR
 ---
 
 [^api-gateway-files]: @backend/api-gateway-service/src/main/java/com/newsinsight/gateway/GatewayApplication.java#8-24 · @backend/api-gateway-service/src/main/java/com/newsinsight/gateway/filter/JwtAuthenticationFilter.java#21-102 · @backend/api-gateway-service/src/main/java/com/newsinsight/gateway/filter/RbacFilter.java#17-72
-
+    
 [^collector-files]: @backend/data-collection-service/src/main/java/com/newsinsight/collector/CollectorApplication.java#9-27 · @backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/SourceController.java#26-133 · @backend/data-collection-service/src/main/java/com/newsinsight/collector/service/CollectionService.java#23-264
-
+    
 [^shared-libs-files]: @backend/shared-libs/build.gradle.kts#1-24
-
+    
 [^consul-config]: @backend/data-collection-service/src/main/resources/application.yml#33-51 · @backend/api-gateway-service/src/main/resources/application.yml#9-26
-
+    
 [^postgres-config]: @backend/data-collection-service/src/main/resources/application.yml#7-31
-
+    
 [^redis-config]: @backend/api-gateway-service/src/main/resources/application.yml#27-63 · @backend/api-gateway-service/src/main/resources/application.yml#100-106
-
+    
 [^jwt-rbac]: @backend/api-gateway-service/src/main/java/com/newsinsight/gateway/filter/JwtAuthenticationFilter.java#49-101 · @backend/api-gateway-service/src/main/java/com/newsinsight/gateway/filter/RbacFilter.java#44-67
-
+    
 [^gateway-routes]: @backend/api-gateway-service/src/main/resources/application.yml#27-84
-
+    
 [^collector-layers]: @backend/data-collection-service/src/main/java/com/newsinsight/collector/controller/DataController.java#24-102 · @backend/data-collection-service/src/main/java/com/newsinsight/collector/service/DataSourceService.java#31-213
-
+    
 [^async-collection]: @backend/data-collection-service/src/main/java/com/newsinsight/collector/service/CollectionService.java#67-176 · @backend/data-collection-service/src/main/java/com/newsinsight/collector/service/RssFeedService.java#24-147

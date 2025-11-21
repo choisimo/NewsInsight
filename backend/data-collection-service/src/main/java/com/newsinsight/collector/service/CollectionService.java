@@ -1,6 +1,8 @@
 package com.newsinsight.collector.service;
 
 import com.newsinsight.collector.dto.CollectionStatsDTO;
+import com.newsinsight.collector.dto.CrawlCommandMessage;
+import com.newsinsight.collector.dto.CrawlResultMessage;
 import com.newsinsight.collector.entity.CollectedData;
 import com.newsinsight.collector.entity.CollectionJob;
 import com.newsinsight.collector.entity.CollectionJob.JobStatus;
@@ -9,16 +11,16 @@ import com.newsinsight.collector.entity.SourceType;
 import com.newsinsight.collector.repository.CollectionJobRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +32,15 @@ public class CollectionService {
     private final RssFeedService rssFeedService;
     private final WebScraperService webScraperService;
     private final CollectedDataService collectedDataService;
+
+    private final KafkaTemplate<String, CrawlCommandMessage> crawlCommandKafkaTemplate;
+    private final KafkaTemplate<String, CrawlResultMessage> crawlResultKafkaTemplate;
+
+    @Value("${collector.crawl.topic.command:newsinsight.crawl.commands}")
+    private String crawlCommandTopic;
+
+    @Value("${collector.crawl.topic.result:newsinsight.crawl.results}")
+    private String crawlResultTopic;
 
     /**
      * 특정 소스에 대한 수집 작업 시작
@@ -59,7 +70,16 @@ public class CollectionService {
         
         // 수집 작업을 비동기로 실행
         final Long jobId = job.getId();
-        executeCollectionAsync(jobId, source);
+
+        CrawlCommandMessage command = new CrawlCommandMessage(
+                jobId,
+                sourceId,
+                source.getSourceType().name(),
+                source.getUrl(),
+                source.getName()
+        );
+
+        crawlCommandKafkaTemplate.send(crawlCommandTopic, jobId.toString(), command);
         
         return job;
     }
@@ -83,16 +103,6 @@ public class CollectionService {
         return activeSources.stream()
                 .map(source -> startCollection(source.getId()))
                 .toList();
-    }
-
-    /**
-     * 수집 작업 비동기 실행
-     */
-    @Async("taskExecutor")
-    public CompletableFuture<Void> executeCollectionAsync(Long jobId, DataSource source) {
-        return CompletableFuture.runAsync(() -> {
-            executeCollection(jobId, source);
-        });
     }
 
     /**
@@ -120,15 +130,29 @@ public class CollectionService {
             
             // 소스 타입에 따라 데이터 수집
             List<CollectedData> collectedItems = collectFromSource(source);
-            
-            // 수집된 데이터 저장
-            int savedCount = 0;
+
+            // 수집된 데이터 이벤트 발행
+            int eventCount = 0;
             for (CollectedData data : collectedItems) {
                 try {
-                    collectedDataService.save(data);
-                    savedCount++;
+                    String publishedAt = data.getPublishedDate() != null
+                            ? data.getPublishedDate().toString()
+                            : null;
+
+                    CrawlResultMessage message = new CrawlResultMessage(
+                            jobId,
+                            data.getSourceId(),
+                            data.getTitle(),
+                            data.getContent(),
+                            data.getUrl(),
+                            publishedAt,
+                            data.getMetadataJson()
+                    );
+
+                    crawlResultKafkaTemplate.send(crawlResultTopic, jobId.toString(), message);
+                    eventCount++;
                 } catch (Exception e) {
-                    log.error("Error saving collected data: {}", e.getMessage(), e);
+                    log.error("Error publishing crawl result event: {}", e.getMessage(), e);
                 }
             }
             
@@ -138,11 +162,11 @@ public class CollectionService {
             // 작업 상태를 COMPLETED로 변경
             job.setStatus(JobStatus.COMPLETED);
             job.setCompletedAt(LocalDateTime.now());
-            job.setItemsCollected(savedCount);
+            job.setItemsCollected(eventCount);
             collectionJobRepository.save(job);
             
-            log.info("Completed collection job {} for source: {} - collected {} items", 
-                    jobId, source.getName(), savedCount);
+            log.info("Completed collection job {} for source: {} - published {} crawl result events", 
+                    jobId, source.getName(), eventCount);
             
         } catch (Exception e) {
             log.error("Error executing collection job {}: {}", jobId, e.getMessage(), e);
