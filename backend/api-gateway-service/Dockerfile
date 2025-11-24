@@ -12,7 +12,6 @@ COPY backend/api-gateway-service/build.gradle.kts backend/api-gateway-service/
 RUN gradle :backend:api-gateway-service:dependencies --no-daemon
 
 # Copy source code
-COPY backend/shared-libs/src backend/shared-libs/src
 COPY backend/api-gateway-service/src backend/api-gateway-service/src
 
 # Build the application
