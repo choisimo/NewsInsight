@@ -57,6 +57,9 @@ services:
       - PORT=${API_GATEWAY_PORT:-8000}
     ports:
       - "8112:8000"  # keep gateway reachable from host
+    networks:
+      - default
+      - capstone-net
 
   frontend:
     image: node:20-alpine
@@ -87,7 +90,11 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      mongo:
+        condition: service_healthy
       web-crawler:
+        condition: service_started
+      redpanda-dev:
         condition: service_started
     environment:
       # Consul configuration
@@ -105,16 +112,27 @@ services:
       - SPRING_DATA_REDIS_HOST=${REDIS_HOST:-redis}
       - SPRING_DATA_REDIS_PORT=${REDIS_PORT:-6379}
       - SPRING_JPA_HIBERNATE_DDL_AUTO=validate
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
+      - PERPLEXITY_MODEL=sonar
+      - PERPLEXITY_BASE_URL=https://api.perplexity.ai
       # Database configuration
       - DB_HOST=${DB_HOST:-postgres}
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=${DB_NAME:-newsinsight}
       - DB_USER=${DB_USER:-postgres}
       - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      # Kafka configuration - connecting to redpanda-dev on capstone-net
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-redpanda-dev:9092}
       # Service port
       - SERVER_PORT=${COLLECTOR_PORT:-8081}
+      # Force Consul to register with newsinsight-net IP (not capstone-net IP)
+      - SPRING_CLOUD_INETUTILS_PREFERRED_NETWORKS=172.20
     expose:
       - "8081"
+    networks:
+      - default
+      - capstone-net
 
   # Crawl4AI web-crawler service
   web-crawler:
@@ -148,6 +166,32 @@ services:
       timeout: 3s
       retries: 5
 
+  # MongoDB for AI response storage
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_DATABASE=${DB_NAME:-newsinsight}
+    expose:
+      - "27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redpanda-dev:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    command: ["redpanda", "start", "--overprovisioned", "--smp", "1", "--memory", "1G", "--reserve-memory", "0M", "--node-id", "0", "--check=false"]
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    networks:
+      - default
+      - capstone-net
+
   # Redis for API Gateway rate limiting
   redis:
     image: redis:7-alpine
@@ -166,7 +210,11 @@ volumes:
   postgres-data:
   redis-data:
   frontend-node-modules:
+  mongo-data:
 
 networks:
   default:
     name: newsinsight-net
+  capstone-net:
+    external: true
+    name: compose_capstone-net

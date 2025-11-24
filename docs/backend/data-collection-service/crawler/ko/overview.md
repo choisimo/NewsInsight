@@ -1,5 +1,12 @@
 # 크롤링 서비스 개요
 
+> ⚠️ **주의 (2025-11-20 기준)**
+> 
+> 이 문서는 changedetection.io 기반 `BACKEND-WEB-CRAWLER` 아키텍처를 설명하는 참고용 자료입니다.
+> 현재 Collector 구현은 Docker `web-crawler` 서비스(Crawl4AI 이미지)와
+> `Crawl4aiClient`/`WebScraperService`를 통해 연동되며, 이 문서의 엔드포인트/데이터 스키마는
+> 직접 사용되지 않습니다. 최신 구현 개요는 같은 디렉터리의 `en/overview.md` (Crawl4AI) 문서를 참고하세요.
+
 ## 서비스 요약
 - **서비스 이름**: BACKEND-WEB-CRAWLER (changedetection.io 기반)
 - **주요 기능**: 웹 페이지의 콘텐츠 변경을 감지하고 차이가 발생하면 알림을 발송합니다.

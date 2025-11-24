@@ -1,5 +1,12 @@
 # 크롤링 서비스 데이터 계약
 
+> ⚠️ **주의 (2025-11-20 기준)**
+>
+> 본 문서의 `WatchBase`, `CreateWatch`, `Watch` 등의 스키마는 changedetection.io
+> 워치 서비스 규격에 기반합니다. 현재 NewsInsight Collector는 Crawl4AI `/crawl`
+> 호출만 사용하며, 이 스키마를 그대로 저장/조회하지 않습니다. 향후 연동 또는
+> 대체 아키텍처 설계 시 참고용으로 유지됩니다.
+
 ## 워치 스키마
 
 ### WatchBase

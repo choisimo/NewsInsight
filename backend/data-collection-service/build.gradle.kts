@@ -33,11 +33,17 @@ dependencies {
     // HTML Parsing (웹 크롤링용)
     implementation("org.jsoup:jsoup:1.17.1")
     
+    // MongoDB (AI 응답 저장용)
+    implementation("org.springframework.boot:spring-boot-starter-data-mongodb")
+    
     // RSS Feed Parsing
     implementation("com.rometools:rome:2.1.0")
     
     // Async Support
     implementation("org.springframework.boot:spring-boot-starter-aop")
+    
+    // Kafka (for AI integration and asynchronous messaging)
+    implementation("org.springframework.kafka:spring-kafka")
     
     // Test
     testImplementation("com.h2database:h2")
