@@ -12,7 +12,6 @@ COPY backend/data-collection-service/build.gradle.kts backend/data-collection-se
 RUN gradle :backend:data-collection-service:dependencies --no-daemon
 
 # Copy source code
-COPY backend/shared-libs/src backend/shared-libs/src
 COPY backend/data-collection-service/src backend/data-collection-service/src
 
 # Build the application
