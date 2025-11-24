@@ -1,5 +1,11 @@
 import axios from 'axios';
-import type { AnalysisResponse, ArticlesResponse } from '@/types/api';
+import type {
+  AnalysisResponse,
+  ArticlesResponse,
+  DataSource,
+  PageResponse,
+  SourceType,
+} from '@/types/api';
 
 let apiInstance: ReturnType<typeof axios.create> | null = null;
 
@@ -66,10 +72,56 @@ export const getAnalysis = async (query: string, window: string = '7d'): Promise
   return response.data;
 };
 
+export const openLiveAnalysisStream = async (
+  query: string,
+  window: string = '7d',
+): Promise<EventSource> => {
+  const initialBase = resolveInitialBaseUrl();
+  const baseURL = await fetchConfiguredBaseUrl(initialBase);
+  const url = new URL('/api/v1/analysis/live', baseURL);
+  url.searchParams.set('query', query);
+  url.searchParams.set('window', window);
+  return new EventSource(url.toString());
+};
+
 export const getArticles = async (query: string, limit: number = 50): Promise<ArticlesResponse> => {
   const client = await getApiClient();
   const response = await client.get('/api/v1/articles', {
     params: { query, limit },
   });
+  return response.data;
+};
+
+export interface CreateDataSourcePayload {
+  name: string;
+  url: string;
+  sourceType: SourceType;
+  collectionFrequency?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export const listSources = async (
+  page: number = 0,
+  size: number = 20,
+  sortBy: string = 'id',
+  sortDirection: 'ASC' | 'DESC' = 'DESC',
+): Promise<PageResponse<DataSource>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<DataSource>>('/api/v1/sources', {
+    params: { page, size, sortBy, sortDirection },
+  });
+  return response.data;
+};
+
+export const createSource = async (payload: CreateDataSourcePayload): Promise<DataSource> => {
+  const client = await getApiClient();
+  const response = await client.post<DataSource>('/api/v1/sources', payload);
+  return response.data;
+};
+
+export const setSourceActive = async (id: number, active: boolean): Promise<DataSource> => {
+  const client = await getApiClient();
+  const path = active ? `/api/v1/sources/${id}/activate` : `/api/v1/sources/${id}/deactivate`;
+  const response = await client.post<DataSource>(path);
   return response.data;
 };

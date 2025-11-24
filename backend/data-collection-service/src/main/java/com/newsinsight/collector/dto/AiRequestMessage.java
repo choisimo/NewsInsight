@@ -10,6 +10,9 @@ public record AiRequestMessage(
         String message,
         Map<String, Object> context,
         String providerId,
-        String modelId
+        String modelId,
+        String agentRole,
+        String outputSchema,
+        String source
 ) {
 }

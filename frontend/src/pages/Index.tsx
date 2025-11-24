@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileText, TrendingUp, Clock, AlertCircle, FileQuestion } from "lucide-react";
 import { SearchBar } from "@/components/SearchBar";
 import { SentimentChart } from "@/components/SentimentChart";
@@ -6,7 +6,7 @@ import { KeywordCloud } from "@/components/KeywordCloud";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getAnalysis, getArticles } from "@/lib/api";
+import { getAnalysis, getArticles, openLiveAnalysisStream } from "@/lib/api";
 import type { AnalysisResponse, Article } from "@/types/api";
 
 const Index = () => {
@@ -14,22 +14,54 @@ const Index = () => {
   const [error, setError] = useState<string | null>(null);
   const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
   const [articles, setArticles] = useState<Article[]>([]);
+  const [liveResult, setLiveResult] = useState<string | null>(null);
+  const [liveStreaming, setLiveStreaming] = useState(false);
+  const [liveSource, setLiveSource] = useState<EventSource | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (liveSource) {
+        liveSource.close();
+      }
+    };
+  }, [liveSource]);
 
   const handleSearch = async (query: string, window: string) => {
     setLoading(true);
     setError(null);
     setAnalysisData(null);
     setArticles([]);
+    if (liveSource) {
+      liveSource.close();
+      setLiveSource(null);
+    }
+    setLiveResult(null);
+    setLiveStreaming(false);
 
     try {
       const analysis = await getAnalysis(query, window);
-      
+      setAnalysisData(analysis);
+
       if (analysis.article_count === 0) {
-        setAnalysisData(analysis);
+        try {
+          setLiveStreaming(true);
+          const es = await openLiveAnalysisStream(query, window);
+          setLiveSource(es);
+
+          es.onmessage = (event) => {
+            setLiveResult((prev) => (prev ?? "") + event.data);
+          };
+
+          es.onerror = () => {
+            es.close();
+            setLiveStreaming(false);
+          };
+        } catch (streamError) {
+          console.error("Live analysis stream error:", streamError);
+          setLiveStreaming(false);
+        }
         return;
       }
-
-      setAnalysisData(analysis);
 
       try {
         const articlesData = await getArticles(query);
@@ -107,12 +139,17 @@ const Index = () => {
           analysisData.article_count === 0 ? (
             <Card className="p-12 text-center shadow-elegant">
               <FileQuestion className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
-              <h3 className="text-xl font-semibold mb-2">검색 결과가 없습니다</h3>
-              <p className="text-muted-foreground max-w-md mx-auto">
-                '<span className="font-semibold">{analysisData.query}</span>'에 대한 분석 결과를 찾을 수 없습니다.
-                <br />
-                다른 키워드로 다시 시도해 보세요.
+              <h3 className="text-xl font-semibold mb-2">로컬 데이터가 없습니다</h3>
+              <p className="text-muted-foreground max-w-md mx-auto mb-6">
+                '<span className="font-semibold">{analysisData.query}</span>'에 대한 수집된 뉴스 데이터가 없어
+                Agent API를 통해 실시간 웹 분석을 수행하고 있습니다.
               </p>
+              <div className="text-left max-w-2xl mx-auto bg-muted rounded-md p-4 max-h-64 overflow-auto whitespace-pre-wrap text-sm">
+                {liveResult ?? "실시간 분석 결과를 불러오는 중입니다..."}
+              </div>
+              {liveStreaming && (
+                <p className="text-xs text-muted-foreground mt-3">스트림 수신 중...</p>
+              )}
             </Card>
           ) : (
             <div className="space-y-6">

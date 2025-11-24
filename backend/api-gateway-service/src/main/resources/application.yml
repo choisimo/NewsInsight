@@ -23,6 +23,10 @@ spring:
         health-check-path: /actuator/health
         health-check-interval: 10s
         instance-id: ${spring.application.name}:${random.value}
+        prefer-ip-address: true
+    inetutils:
+      preferred-networks:
+        - 172.20
 
     gateway:
       routes:
@@ -103,7 +107,7 @@ spring:
       globalcors:
         cors-configurations:
           '[/**]':
-            allowedOrigins: "*"
+            allowedOriginPatterns: "*"
             allowedMethods:
               - GET
               - POST
@@ -136,6 +140,7 @@ management:
 logging:
   level:
     root: INFO
-    org.springframework.cloud.gateway: INFO
+    org.springframework.cloud.gateway: DEBUG
+    org.springframework.cloud.gateway.handler.RoutePredicateHandlerMapping: TRACE
     org.springframework.security: DEBUG
     com.newsinsight.gateway: DEBUG

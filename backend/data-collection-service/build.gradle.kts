@@ -44,7 +44,6 @@ dependencies {
     
     // Kafka (for AI integration and asynchronous messaging)
     implementation("org.springframework.kafka:spring-kafka")
-    implementation("org.springframework.kafka:spring-kafka-streams")
     
     // Test
     testImplementation("com.h2database:h2")

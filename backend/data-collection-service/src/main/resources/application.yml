@@ -44,7 +44,8 @@ spring:
         enabled: true
         instance-id: ${spring.application.name}:${random.value}
         service-name: ${spring.application.name}
-        prefer-ip-address: true
+        prefer-ip-address: false
+        hostname: ${CONSUL_DISCOVERY_HOSTNAME:collector-service}
         health-check-path: /actuator/health
         health-check-interval: 10s
       config:

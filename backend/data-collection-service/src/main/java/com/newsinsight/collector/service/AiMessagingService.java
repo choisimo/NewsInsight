@@ -39,10 +39,42 @@ public class AiMessagingService {
                 message,
                 context,
                 defaultProviderId,
-                defaultModelId
+                defaultModelId,
+                null,
+                null,
+                "collector-service"
         );
         aiRequestKafkaTemplate.send(requestTopic, requestId, payload);
         log.info("Sent AI analysis request {} to topic {} at {}", requestId, requestTopic, OffsetDateTime.now());
+        return requestId;
+    }
+
+    public String sendAnalysisRequestWithRole(
+            String query,
+            String window,
+            String message,
+            Map<String, Object> context,
+            String agentRole,
+            String outputSchema
+    ) {
+        String requestId = UUID.randomUUID().toString();
+        String type = "ARTICLE_ANALYSIS";
+        String effectiveWindow = (window == null || window.isBlank()) ? "7d" : window;
+        AiRequestMessage payload = new AiRequestMessage(
+                requestId,
+                type,
+                query,
+                effectiveWindow,
+                message,
+                context,
+                defaultProviderId,
+                defaultModelId,
+                agentRole,
+                outputSchema,
+                "collector-service"
+        );
+        aiRequestKafkaTemplate.send(requestTopic, requestId, payload);
+        log.info("Sent AI analysis request {} (role={}) to topic {} at {}", requestId, agentRole, requestTopic, OffsetDateTime.now());
         return requestId;
     }
 }

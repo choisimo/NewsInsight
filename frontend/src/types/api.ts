@@ -32,3 +32,26 @@ export interface ArticlesResponse {
   articles: Article[];
   total: number;
 }
+
+export type SourceType = "RSS" | "WEB" | "API" | "WEBHOOK";
+
+export interface DataSource {
+  id: number;
+  name: string;
+  url: string;
+  sourceType: SourceType;
+  isActive: boolean;
+  lastCollected: string | null;
+  collectionFrequency: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PageResponse<T> {
+  content: T[];
+  totalElements: number;
+  totalPages: number;
+  size: number;
+  number: number;
+}

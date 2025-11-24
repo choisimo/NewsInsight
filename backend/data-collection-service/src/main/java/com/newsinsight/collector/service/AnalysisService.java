@@ -54,7 +54,7 @@ public class AnalysisService {
         String normalizedQuery = (query != null && !query.isBlank()) ? query : null;
         String message = normalizedQuery != null ? normalizedQuery : "";
         aiMessagingService.sendAnalysisRequest(normalizedQuery, window, message, Map.of());
-        Page<CollectedData> page = collectedDataRepository.searchByQueryAndWindow(normalizedQuery, since, Pageable.unpaged());
+        Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(normalizedQuery, since, Pageable.unpaged());
         long articleCount = page.getTotalElements();
 
         List<CollectedData> documents = page.getContent();
@@ -94,7 +94,7 @@ public class AnalysisService {
                 Sort.by(Sort.Direction.DESC, "publishedDate")
                         .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
         String normalizedQuery = (query != null && !query.isBlank()) ? query : null;
-        Page<CollectedData> page = collectedDataRepository.searchByQueryAndWindow(normalizedQuery, null, pageRequest);
+        Page<CollectedData> page = collectedDataRepository.searchByQuery(normalizedQuery, pageRequest);
 
         List<ArticleDto> articles = page.getContent().stream()
                 .map(this::toArticleDto)
