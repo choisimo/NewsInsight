@@ -216,5 +216,5 @@ networks:
   default:
     name: newsinsight-net
   capstone-net:
-    external: true
     name: compose_capstone-net
+    driver: bridge

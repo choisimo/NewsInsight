@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { FileText, TrendingUp, Clock, AlertCircle, FileQuestion } from "lucide-react";
+import { Link } from "react-router-dom";
+import { FileText, TrendingUp, Clock, AlertCircle, FileQuestion, Sparkles } from "lucide-react";
 import { SearchBar } from "@/components/SearchBar";
 import { SentimentChart } from "@/components/SentimentChart";
 import { KeywordCloud } from "@/components/KeywordCloud";
@@ -90,9 +91,16 @@ const Index = () => {
           <h1 className="text-4xl md:text-5xl font-bold mb-3 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
             NewInsight
           </h1>
-          <p className="text-lg text-muted-foreground">
+          <p className="text-lg text-muted-foreground mb-4">
             키워드 기반 뉴스 분석 및 인사이트 제공
           </p>
+          <Link
+            to="/deep-search"
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+          >
+            <Sparkles className="h-4 w-4" />
+            Deep AI Search로 심층 분석하기
+          </Link>
         </header>
 
         <div className="mb-8">

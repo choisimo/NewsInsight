@@ -150,3 +150,27 @@ collector:
   crawler:
     enabled: ${COLLECTOR_SERVICE_CRAWLER_ENABLED:false}
     base-url: ${COLLECTOR_SERVICE_CRAWLER_BASE_URL:http://web-crawler:11235}
+
+  # Deep AI Search Configuration (n8n Crawl Agent Workflow)
+  # These settings can be managed via Consul KV under config/collector-service/
+  # Example Consul keys:
+  #   config/collector-service/DEEP_SEARCH_ENABLED=true
+  #   config/collector-service/DEEP_SEARCH_WEBHOOK_URL=https://n8n.nodove.com/webhook/crawl-agent
+  deep-search:
+    enabled: ${COLLECTOR_SERVICE_DEEP_SEARCH_ENABLED:${DEEP_SEARCH_ENABLED:true}}
+    # n8n webhook URL for crawl-agent workflow
+    webhook-url: ${COLLECTOR_SERVICE_DEEP_SEARCH_WEBHOOK_URL:${DEEP_SEARCH_WEBHOOK_URL:https://n8n.nodove.com/webhook/crawl-agent}}
+    # Base URL for callback (this service's public URL)
+    callback-base-url: ${COLLECTOR_SERVICE_DEEP_SEARCH_CALLBACK_BASE_URL:${DEEP_SEARCH_CALLBACK_BASE_URL:http://localhost:8081}}
+    # Token for validating callbacks from n8n
+    callback-token: ${COLLECTOR_SERVICE_DEEP_SEARCH_CALLBACK_TOKEN:${DEEP_SEARCH_CALLBACK_TOKEN:}}
+    # Timeout for webhook requests in seconds
+    timeout-seconds: ${COLLECTOR_SERVICE_DEEP_SEARCH_TIMEOUT_SECONDS:${DEEP_SEARCH_TIMEOUT_SECONDS:120}}
+    # Minutes before marking a job as timed out
+    timeout-minutes: ${COLLECTOR_SERVICE_DEEP_SEARCH_TIMEOUT_MINUTES:${DEEP_SEARCH_TIMEOUT_MINUTES:30}}
+    # Interval for checking timed out jobs (milliseconds)
+    timeout-check-interval: ${COLLECTOR_SERVICE_DEEP_SEARCH_TIMEOUT_CHECK_INTERVAL:${DEEP_SEARCH_TIMEOUT_CHECK_INTERVAL:300000}}
+    # Days to keep completed jobs before cleanup
+    cleanup-days: ${COLLECTOR_SERVICE_DEEP_SEARCH_CLEANUP_DAYS:${DEEP_SEARCH_CLEANUP_DAYS:7}}
+    # Cron expression for cleanup job (3 AM daily)
+    cleanup-cron: ${COLLECTOR_SERVICE_DEEP_SEARCH_CLEANUP_CRON:${DEEP_SEARCH_CLEANUP_CRON:0 0 3 * * ?}}

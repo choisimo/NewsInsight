@@ -17,14 +17,14 @@ const resolveInitialBaseUrl = (): string => {
   if (typeof window !== 'undefined') {
     try {
       const url = new URL(window.location.href);
-      url.port = '8112';
+      url.port = '8080';
       return url.origin;
     } catch {
       // ignore
     }
   }
 
-  return 'http://localhost:8112';
+  return 'http://localhost:8080';
 };
 
 const fetchConfiguredBaseUrl = async (initialBaseUrl: string): Promise<string> => {
@@ -123,5 +123,142 @@ export const setSourceActive = async (id: number, active: boolean): Promise<Data
   const client = await getApiClient();
   const path = active ? `/api/v1/sources/${id}/activate` : `/api/v1/sources/${id}/deactivate`;
   const response = await client.post<DataSource>(path);
+  return response.data;
+};
+
+// ============================================
+// Deep AI Search API (n8n Crawl Agent)
+// ============================================
+
+export interface DeepSearchJob {
+  jobId: string;
+  topic: string;
+  baseUrl?: string;
+  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'TIMEOUT';
+  evidenceCount?: number;
+  errorMessage?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface Evidence {
+  id: number;
+  url: string;
+  title?: string;
+  stance: 'pro' | 'con' | 'neutral';
+  snippet: string;
+  source?: string;
+}
+
+export interface StanceDistribution {
+  pro: number;
+  con: number;
+  neutral: number;
+  proRatio: number;
+  conRatio: number;
+  neutralRatio: number;
+}
+
+export interface DeepSearchResult extends DeepSearchJob {
+  evidence: Evidence[];
+  stanceDistribution: StanceDistribution;
+}
+
+export interface DeepSearchRequest {
+  topic: string;
+  baseUrl?: string;
+}
+
+/**
+ * Start a new deep AI search job.
+ * Returns immediately with job details; results are delivered asynchronously.
+ */
+export const startDeepSearch = async (request: DeepSearchRequest): Promise<DeepSearchJob> => {
+  const client = await getApiClient();
+  const response = await client.post<DeepSearchJob>('/api/v1/analysis/deep', request);
+  return response.data;
+};
+
+/**
+ * Get the status of a deep search job.
+ */
+export const getDeepSearchStatus = async (jobId: string): Promise<DeepSearchJob> => {
+  const client = await getApiClient();
+  const response = await client.get<DeepSearchJob>(`/api/v1/analysis/deep/${jobId}`);
+  return response.data;
+};
+
+/**
+ * Get the full results of a completed deep search, including evidence.
+ */
+export const getDeepSearchResult = async (jobId: string): Promise<DeepSearchResult> => {
+  const client = await getApiClient();
+  const response = await client.get<DeepSearchResult>(`/api/v1/analysis/deep/${jobId}/result`);
+  return response.data;
+};
+
+/**
+ * List all deep search jobs with optional filtering.
+ */
+export const listDeepSearchJobs = async (
+  page: number = 0,
+  size: number = 20,
+  status?: string,
+): Promise<PageResponse<DeepSearchJob>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<DeepSearchJob>>('/api/v1/analysis/deep', {
+    params: { page, size, ...(status && { status }) },
+  });
+  return response.data;
+};
+
+/**
+ * Cancel a pending or in-progress deep search job.
+ */
+export const cancelDeepSearch = async (jobId: string): Promise<DeepSearchJob> => {
+  const client = await getApiClient();
+  const response = await client.post<DeepSearchJob>(`/api/v1/analysis/deep/${jobId}/cancel`);
+  return response.data;
+};
+
+/**
+ * Poll for deep search completion.
+ * Returns when the job is completed, failed, or times out.
+ */
+export const pollDeepSearchResult = async (
+  jobId: string,
+  pollIntervalMs: number = 3000,
+  maxWaitMs: number = 120000,
+): Promise<DeepSearchResult> => {
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitMs) {
+    const status = await getDeepSearchStatus(jobId);
+    
+    if (status.status === 'COMPLETED') {
+      return getDeepSearchResult(jobId);
+    }
+    
+    if (status.status === 'FAILED' || status.status === 'CANCELLED' || status.status === 'TIMEOUT') {
+      throw new Error(`Deep search ${status.status.toLowerCase()}: ${status.errorMessage || 'Unknown error'}`);
+    }
+    
+    // Wait before next poll
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+  }
+  
+  throw new Error('Deep search polling timed out');
+};
+
+/**
+ * Check if deep search service is available.
+ */
+export const checkDeepSearchHealth = async (): Promise<{
+  enabled: boolean;
+  webhookUrl: string;
+  callbackBaseUrl: string;
+}> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/analysis/deep/health');
   return response.data;
 };
