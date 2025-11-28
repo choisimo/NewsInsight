@@ -1,88 +1,119 @@
-import { useEffect, useState } from "react";
+import { useState, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { FileText, TrendingUp, Clock, AlertCircle, FileQuestion, Sparkles } from "lucide-react";
+import { FileText, TrendingUp, Clock, AlertCircle, FileQuestion, Sparkles, RefreshCw } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SearchBar } from "@/components/SearchBar";
 import { SentimentChart } from "@/components/SentimentChart";
 import { KeywordCloud } from "@/components/KeywordCloud";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { getAnalysis, getArticles, openLiveAnalysisStream } from "@/lib/api";
+import { useEventSource } from "@/hooks/useEventSource";
 import type { AnalysisResponse, Article } from "@/types/api";
 
 const Index = () => {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
-  const [articles, setArticles] = useState<Article[]>([]);
+  const queryClient = useQueryClient();
+  
+  // 검색 상태
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [timeWindow, setTimeWindow] = useState<string>("7d");
+  const [searchTrigger, setSearchTrigger] = useState<number>(0);
+  
+  // SSE 라이브 분석 상태
   const [liveResult, setLiveResult] = useState<string | null>(null);
-  const [liveStreaming, setLiveStreaming] = useState(false);
-  const [liveSource, setLiveSource] = useState<EventSource | null>(null);
+  const [liveStreamUrl, setLiveStreamUrl] = useState<string | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (liveSource) {
-        liveSource.close();
-      }
-    };
-  }, [liveSource]);
+  // React Query: 분석 데이터 조회
+  const {
+    data: analysisData,
+    isLoading: analysisLoading,
+    error: analysisError,
+    isFetching: analysisFetching,
+  } = useQuery({
+    queryKey: ['analysis', searchQuery, timeWindow, searchTrigger],
+    queryFn: () => getAnalysis(searchQuery, timeWindow),
+    enabled: !!searchQuery && searchTrigger > 0,
+    staleTime: 30_000, // 30초간 fresh
+    gcTime: 5 * 60_000, // 5분간 캐시 유지
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+  });
 
-  const handleSearch = async (query: string, window: string) => {
-    setLoading(true);
-    setError(null);
-    setAnalysisData(null);
-    setArticles([]);
-    if (liveSource) {
-      liveSource.close();
-      setLiveSource(null);
-    }
+  // React Query: 기사 목록 조회 (분석 데이터가 있고 기사 수가 0보다 클 때)
+  const {
+    data: articlesData,
+  } = useQuery({
+    queryKey: ['articles', searchQuery],
+    queryFn: () => getArticles(searchQuery),
+    enabled: !!searchQuery && !!analysisData && analysisData.article_count > 0,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+  });
+
+  // SSE 연결: 로컬 데이터가 없을 때 라이브 분석
+  const { status: sseStatus } = useEventSource(liveStreamUrl, {
+    onMessage: (data) => {
+      setLiveResult((prev) => (prev ?? "") + data);
+    },
+    onError: () => {
+      setLiveStreamUrl(null);
+    },
+    enabled: !!liveStreamUrl,
+    maxRetries: 2,
+  });
+
+  // 검색 핸들러
+  const handleSearch = useCallback(async (query: string, window: string) => {
+    // 이전 라이브 스트림 정리
+    setLiveStreamUrl(null);
     setLiveResult(null);
-    setLiveStreaming(false);
+    
+    setSearchQuery(query);
+    setTimeWindow(window);
+    setSearchTrigger((prev) => prev + 1);
+  }, []);
 
+  // 분석 데이터가 없을 때 라이브 스트림 시작
+  const startLiveStream = useCallback(async () => {
+    if (!searchQuery) return;
+    
     try {
-      const analysis = await getAnalysis(query, window);
-      setAnalysisData(analysis);
-
-      if (analysis.article_count === 0) {
-        try {
-          setLiveStreaming(true);
-          const es = await openLiveAnalysisStream(query, window);
-          setLiveSource(es);
-
-          es.onmessage = (event) => {
-            setLiveResult((prev) => (prev ?? "") + event.data);
-          };
-
-          es.onerror = () => {
-            es.close();
-            setLiveStreaming(false);
-          };
-        } catch (streamError) {
-          console.error("Live analysis stream error:", streamError);
-          setLiveStreaming(false);
-        }
-        return;
-      }
-
-      try {
-        const articlesData = await getArticles(query);
-        setArticles(articlesData.articles);
-      } catch (articleError) {
-        console.error("Failed to fetch articles:", articleError);
-      }
-    } catch (err: any) {
-      console.error("Analysis error:", err);
-      setError(err.response?.data?.message || err.message || "분석에 실패했습니다.");
-    } finally {
-      setLoading(false);
+      const es = await openLiveAnalysisStream(searchQuery, timeWindow);
+      setLiveStreamUrl(es.url);
+      es.close(); // openLiveAnalysisStream이 EventSource를 반환하므로 URL만 추출
+    } catch (error) {
+      console.error("Failed to start live stream:", error);
     }
-  };
+  }, [searchQuery, timeWindow]);
 
-  const handleRetry = () => {
-    if (analysisData) {
-      handleSearch(analysisData.query, analysisData.window);
-    }
-  };
+  // 분석 결과가 0개면 자동으로 라이브 스트림 시작
+  const shouldStartLiveStream = analysisData?.article_count === 0 && !liveStreamUrl && !liveResult;
+  
+  if (shouldStartLiveStream && searchQuery) {
+    // URL 직접 구성 (openLiveAnalysisStream이 async라서 직접 구성)
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 
+      (typeof window !== 'undefined' 
+        ? `${window.location.protocol}//${window.location.hostname}:8080`
+        : 'http://localhost:8080');
+    const streamUrl = `${baseUrl}/api/v1/analysis/live?query=${encodeURIComponent(searchQuery)}&window=${encodeURIComponent(timeWindow)}`;
+    setLiveStreamUrl(streamUrl);
+  }
+
+  // 수동 새로고침
+  const handleRefresh = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['analysis', searchQuery, timeWindow] });
+    queryClient.invalidateQueries({ queryKey: ['articles', searchQuery] });
+  }, [queryClient, searchQuery, timeWindow]);
+
+  const handleRetry = useCallback(() => {
+    setSearchTrigger((prev) => prev + 1);
+  }, []);
+
+  const loading = analysisLoading;
+  const error = analysisError ? (analysisError as Error).message : null;
+  const articles: Article[] = articlesData?.articles ?? [];
 
   return (
     <div className="min-h-screen py-8">
@@ -106,6 +137,32 @@ const Index = () => {
         <div className="mb-8">
           <SearchBar onSearch={handleSearch} isLoading={loading} />
         </div>
+
+        {/* 실시간 상태 표시 */}
+        {searchQuery && (
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {analysisFetching && !loading && (
+                <Badge variant="secondary" className="animate-pulse">
+                  <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                  백그라운드 갱신 중
+                </Badge>
+              )}
+              {liveStreamUrl && sseStatus === 'connected' && (
+                <Badge variant="outline" className="border-green-500 text-green-600">
+                  <span className="h-2 w-2 rounded-full bg-green-500 mr-2 animate-pulse" />
+                  실시간 연결됨
+                </Badge>
+              )}
+            </div>
+            {analysisData && (
+              <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={analysisFetching}>
+                <RefreshCw className={`h-4 w-4 mr-1 ${analysisFetching ? 'animate-spin' : ''}`} />
+                새로고침
+              </Button>
+            )}
+          </div>
+        )}
 
         {loading ? (
           <div className="space-y-6">
@@ -137,11 +194,9 @@ const Index = () => {
             <AlertCircle className="h-16 w-16 mx-auto mb-4 text-destructive" />
             <h3 className="text-xl font-semibold mb-2">오류가 발생했습니다</h3>
             <p className="text-muted-foreground max-w-md mx-auto mb-6">{error}</p>
-            {analysisData && (
-              <Button onClick={handleRetry} variant="gradient">
-                다시 시도
-              </Button>
-            )}
+            <Button onClick={handleRetry} variant="default">
+              다시 시도
+            </Button>
           </Card>
         ) : analysisData ? (
           analysisData.article_count === 0 ? (
@@ -155,8 +210,11 @@ const Index = () => {
               <div className="text-left max-w-2xl mx-auto bg-muted rounded-md p-4 max-h-64 overflow-auto whitespace-pre-wrap text-sm">
                 {liveResult ?? "실시간 분석 결과를 불러오는 중입니다..."}
               </div>
-              {liveStreaming && (
+              {sseStatus === 'connected' && (
                 <p className="text-xs text-muted-foreground mt-3">스트림 수신 중...</p>
+              )}
+              {sseStatus === 'error' && (
+                <p className="text-xs text-destructive mt-3">스트림 연결 실패</p>
               )}
             </Card>
           ) : (

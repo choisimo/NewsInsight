@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { Link } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search,
   Loader2,
@@ -20,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -160,112 +160,134 @@ const StanceChart = ({ distribution }: StanceChartProps) => {
   );
 };
 
+const isTerminalStatus = (status: string) => 
+  ['COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT'].includes(status);
+
 const DeepSearch = () => {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  
   const [topic, setTopic] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [currentJob, setCurrentJob] = useState<DeepSearchJob | null>(null);
-  const [result, setResult] = useState<DeepSearchResult | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isHealthy, setIsHealthy] = useState<boolean | null>(null);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [activeStance, setActiveStance] = useState<"all" | "pro" | "con" | "neutral">("all");
 
-  // Check health on mount
-  useEffect(() => {
-    checkDeepSearchHealth()
-      .then((health) => setIsHealthy(health.enabled))
-      .catch(() => setIsHealthy(false));
-  }, []);
+  // React Query: 서비스 헬스 체크
+  const { data: healthData } = useQuery({
+    queryKey: ['deepSearch', 'health'],
+    queryFn: checkDeepSearchHealth,
+    staleTime: 60_000,
+    retry: 1,
+  });
 
-  // Poll for status when job is in progress
-  useEffect(() => {
-    if (!currentJob) return;
-    if (currentJob.status === "COMPLETED" || currentJob.status === "FAILED" || 
-        currentJob.status === "CANCELLED" || currentJob.status === "TIMEOUT") {
-      return;
-    }
+  const isHealthy = healthData?.enabled ?? null;
 
-    const pollInterval = setInterval(async () => {
-      try {
-        const status = await getDeepSearchStatus(currentJob.jobId);
-        setCurrentJob(status);
+  // React Query: Job 상태 폴링 (자동 갱신)
+  const { data: currentJob, isFetching: isPolling } = useQuery({
+    queryKey: ['deepSearch', 'job', currentJobId],
+    queryFn: () => getDeepSearchStatus(currentJobId!),
+    enabled: !!currentJobId,
+    refetchInterval: (query) => {
+      const data = query.state.data as DeepSearchJob | undefined;
+      if (!data) return 2000;
+      return isTerminalStatus(data.status) ? false : 2000;
+    },
+    staleTime: 1000,
+  });
 
-        if (status.status === "COMPLETED") {
-          const fullResult = await getDeepSearchResult(status.jobId);
-          setResult(fullResult);
-          toast({
-            title: "분석 완료",
-            description: `${fullResult.evidence.length}개의 증거를 수집했습니다.`,
-          });
-        } else if (status.status === "FAILED" || status.status === "TIMEOUT") {
-          toast({
-            title: "분석 실패",
-            description: status.errorMessage || "알 수 없는 오류가 발생했습니다.",
-            variant: "destructive",
-          });
-        }
-      } catch (error) {
-        console.error("Polling error:", error);
-      }
-    }, 3000);
+  // React Query: Job 결과 조회 (완료 시에만)
+  const { data: result } = useQuery({
+    queryKey: ['deepSearch', 'result', currentJobId],
+    queryFn: () => getDeepSearchResult(currentJobId!),
+    enabled: !!currentJobId && currentJob?.status === 'COMPLETED',
+    staleTime: Infinity, // 결과는 변하지 않으므로 영구 캐시
+  });
 
-    return () => clearInterval(pollInterval);
-  }, [currentJob, toast]);
-
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!topic.trim() || isSubmitting) return;
-
-    setIsSubmitting(true);
-    setResult(null);
-    setCurrentJob(null);
-
-    try {
-      const job = await startDeepSearch({
-        topic: topic.trim(),
-        baseUrl: baseUrl.trim() || undefined,
+  // 완료/실패 알림
+  const prevStatusRef = { current: '' };
+  if (currentJob && currentJob.status !== prevStatusRef.current) {
+    prevStatusRef.current = currentJob.status;
+    
+    if (currentJob.status === 'COMPLETED' && result) {
+      toast({
+        title: "분석 완료",
+        description: `${result.evidence.length}개의 증거를 수집했습니다.`,
       });
-      setCurrentJob(job);
+    } else if (currentJob.status === 'FAILED' || currentJob.status === 'TIMEOUT') {
+      toast({
+        title: "분석 실패",
+        description: currentJob.errorMessage || "알 수 없는 오류가 발생했습니다.",
+        variant: "destructive",
+      });
+    }
+  }
+
+  // React Query: 검색 시작 Mutation
+  const startMutation = useMutation({
+    mutationFn: startDeepSearch,
+    onSuccess: (job) => {
+      setCurrentJobId(job.jobId);
       toast({
         title: "분석 시작",
         description: "Deep AI Search를 시작했습니다. 잠시 기다려주세요.",
       });
-    } catch (error: any) {
+    },
+    onError: (error: any) => {
       toast({
         title: "오류",
         description: error.response?.data?.message || error.message || "분석 시작에 실패했습니다.",
         variant: "destructive",
       });
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [topic, baseUrl, isSubmitting, toast]);
+    },
+  });
 
-  const handleCancel = useCallback(async () => {
-    if (!currentJob) return;
-    try {
-      const cancelled = await cancelDeepSearch(currentJob.jobId);
-      setCurrentJob(cancelled);
+  // React Query: 취소 Mutation
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelDeepSearch(currentJobId!),
+    onSuccess: (cancelled) => {
+      queryClient.setQueryData(['deepSearch', 'job', currentJobId], cancelled);
       toast({
         title: "취소됨",
         description: "분석이 취소되었습니다.",
       });
-    } catch (error: any) {
+    },
+    onError: () => {
       toast({
         title: "오류",
         description: "취소에 실패했습니다.",
         variant: "destructive",
       });
-    }
-  }, [currentJob, toast]);
+    },
+  });
+
+  const handleSubmit = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    if (!topic.trim() || startMutation.isPending) return;
+
+    // 이전 결과 초기화
+    setCurrentJobId(null);
+    queryClient.removeQueries({ queryKey: ['deepSearch', 'job'] });
+    queryClient.removeQueries({ queryKey: ['deepSearch', 'result'] });
+
+    startMutation.mutate({
+      topic: topic.trim(),
+      baseUrl: baseUrl.trim() || undefined,
+    });
+  }, [topic, baseUrl, startMutation, queryClient]);
+
+  const handleCancel = useCallback(() => {
+    if (!currentJobId) return;
+    cancelMutation.mutate();
+  }, [currentJobId, cancelMutation]);
 
   const handleReset = useCallback(() => {
-    setCurrentJob(null);
-    setResult(null);
+    setCurrentJobId(null);
     setTopic("");
     setBaseUrl("");
     setActiveStance("all");
-  }, []);
+    queryClient.removeQueries({ queryKey: ['deepSearch', 'job'] });
+    queryClient.removeQueries({ queryKey: ['deepSearch', 'result'] });
+  }, [queryClient]);
 
   const filteredEvidence = result?.evidence.filter(
     (e) => activeStance === "all" || e.stance === activeStance
@@ -286,12 +308,22 @@ const DeepSearch = () => {
             <ArrowLeft className="h-4 w-4" />
             메인으로 돌아가기
           </Link>
-          <h1 className="text-3xl md:text-4xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-            Deep AI Search
-          </h1>
-          <p className="text-muted-foreground">
-            AI 기반 심층 분석으로 주제에 대한 다양한 입장과 증거를 수집합니다.
-          </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                Deep AI Search
+              </h1>
+              <p className="text-muted-foreground">
+                AI 기반 심층 분석으로 주제에 대한 다양한 입장과 증거를 수집합니다.
+              </p>
+            </div>
+            {isPolling && isProcessing && (
+              <Badge variant="secondary" className="animate-pulse">
+                <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                실시간 상태 확인 중
+              </Badge>
+            )}
+          </div>
           {isHealthy === false && (
             <div className="mt-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm flex items-center gap-2">
               <AlertCircle className="h-4 w-4" />
@@ -335,10 +367,10 @@ const DeepSearch = () => {
               <div className="flex gap-3">
                 <Button
                   type="submit"
-                  disabled={!topic.trim() || isProcessing || isHealthy === false}
+                  disabled={!topic.trim() || isProcessing || isHealthy === false || startMutation.isPending}
                   className="flex-1"
                 >
-                  {isSubmitting ? (
+                  {startMutation.isPending ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       시작 중...
@@ -376,9 +408,14 @@ const DeepSearch = () => {
                   </p>
                 </div>
                 <Progress value={currentJob.status === "PENDING" ? 10 : 50} className="max-w-md mx-auto" />
-                <Button variant="outline" size="sm" onClick={handleCancel}>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleCancel}
+                  disabled={cancelMutation.isPending}
+                >
                   <Trash2 className="h-4 w-4 mr-2" />
-                  분석 취소
+                  {cancelMutation.isPending ? "취소 중..." : "분석 취소"}
                 </Button>
               </div>
             </CardContent>
