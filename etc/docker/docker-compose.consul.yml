@@ -206,6 +206,45 @@ services:
       timeout: 3s
       retries: 5
 
+  # Autonomous Crawler Service (browser-use + AI)
+  autonomous-crawler:
+    build:
+      context: ../../
+      dockerfile: backend/autonomous-crawler-service/Dockerfile
+    image: newsinsight/autonomous-crawler:local
+    depends_on:
+      redpanda-dev:
+        condition: service_started
+    environment:
+      # Kafka configuration
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-redpanda-dev:9092}
+      - KAFKA_CONSUMER_GROUP_ID=${CRAWLER_CONSUMER_GROUP:-autonomous-crawler-group}
+      - KAFKA_BROWSER_TASK_TOPIC=${CRAWLER_TASK_TOPIC:-newsinsight.crawl.browser.tasks}
+      - KAFKA_CRAWL_RESULT_TOPIC=${CRAWLER_RESULT_TOPIC:-newsinsight.crawl.results}
+      # Browser settings
+      - BROWSER_HEADLESS=${CRAWLER_HEADLESS:-true}
+      - BROWSER_MAX_CONCURRENT_SESSIONS=${CRAWLER_MAX_SESSIONS:-2}
+      - BROWSER_DEFAULT_TIMEOUT_SECONDS=${CRAWLER_TIMEOUT:-300}
+      # LLM configuration
+      - LLM_PROVIDER=${CRAWLER_LLM_PROVIDER:-openai}
+      - LLM_OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LLM_OPENAI_MODEL=${CRAWLER_OPENAI_MODEL:-gpt-4o}
+      - LLM_ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - LLM_ANTHROPIC_MODEL=${CRAWLER_ANTHROPIC_MODEL:-claude-3-5-sonnet-20241022}
+      # Metrics and logging
+      - METRICS_ENABLED=${CRAWLER_METRICS_ENABLED:-true}
+      - METRICS_PORT=${CRAWLER_METRICS_PORT:-9090}
+      - LOG_LEVEL=${CRAWLER_LOG_LEVEL:-INFO}
+      - LOG_FORMAT=${CRAWLER_LOG_FORMAT:-json}
+    expose:
+      - "9090"
+    ports:
+      - "9190:9090"  # Prometheus metrics
+    shm_size: 2g  # Shared memory for browser
+    networks:
+      - default
+      - capstone-net
+
 volumes:
   postgres-data:
   redis-data:
