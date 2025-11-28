@@ -1,8 +1,10 @@
 package com.newsinsight.collector.service;
 
+import com.newsinsight.collector.dto.BrowserTaskMessage;
 import com.newsinsight.collector.dto.CollectionStatsDTO;
 import com.newsinsight.collector.dto.CrawlCommandMessage;
 import com.newsinsight.collector.dto.CrawlResultMessage;
+import com.newsinsight.collector.entity.BrowserAgentConfig;
 import com.newsinsight.collector.entity.CollectedData;
 import com.newsinsight.collector.entity.CollectionJob;
 import com.newsinsight.collector.entity.CollectionJob.JobStatus;
@@ -35,12 +37,22 @@ public class CollectionService {
 
     private final KafkaTemplate<String, CrawlCommandMessage> crawlCommandKafkaTemplate;
     private final KafkaTemplate<String, CrawlResultMessage> crawlResultKafkaTemplate;
+    private final KafkaTemplate<String, BrowserTaskMessage> browserTaskKafkaTemplate;
 
     @Value("${collector.crawl.topic.command:newsinsight.crawl.commands}")
     private String crawlCommandTopic;
 
     @Value("${collector.crawl.topic.result:newsinsight.crawl.results}")
     private String crawlResultTopic;
+
+    @Value("${collector.crawl.topic.browser-task:newsinsight.crawl.browser.tasks}")
+    private String browserTaskTopic;
+
+    @Value("${collector.browser-agent.callback-base-url:http://localhost:8081}")
+    private String browserAgentCallbackBaseUrl;
+
+    @Value("${collector.browser-agent.callback-token:}")
+    private String browserAgentCallbackToken;
 
     /**
      * 특정 소스에 대한 수집 작업 시작
@@ -128,6 +140,12 @@ public class CollectionService {
             job.setStartedAt(LocalDateTime.now());
             collectionJobRepository.save(job);
             
+            // BROWSER_AGENT 타입인 경우 별도 처리
+            if (source.getSourceType() == SourceType.BROWSER_AGENT) {
+                executeBrowserAgentCollection(jobId, source, job);
+                return;
+            }
+            
             // 소스 타입에 따라 데이터 수집
             List<CollectedData> collectedItems = collectFromSource(source);
 
@@ -180,6 +198,48 @@ public class CollectionService {
     }
 
     /**
+     * BROWSER_AGENT 소스에 대한 비동기 수집 시작.
+     * BrowserTaskMessage를 Kafka로 발행하고, 결과는 autonomous-crawler-service에서 
+     * crawl.results 토픽으로 비동기 전송됨.
+     */
+    private void executeBrowserAgentCollection(Long jobId, DataSource source, CollectionJob job) {
+        BrowserAgentConfig config = source.getEffectiveBrowserAgentConfig();
+        
+        String callbackUrl = browserAgentCallbackBaseUrl.endsWith("/") 
+                ? browserAgentCallbackBaseUrl + "api/v1/browser-agent/callback"
+                : browserAgentCallbackBaseUrl + "/api/v1/browser-agent/callback";
+
+        BrowserTaskMessage task = BrowserTaskMessage.builder()
+                .jobId(jobId)
+                .sourceId(source.getId())
+                .sourceName(source.getName())
+                .seedUrl(source.getUrl())
+                .maxDepth(config.getMaxDepth())
+                .maxPages(config.getMaxPages())
+                .budgetSeconds(config.getBudgetSeconds())
+                .policy(config.getPolicy() != null ? config.getPolicy().getValue() : "focused_topic")
+                .focusKeywords(config.getFocusKeywords())
+                .customPrompt(config.getCustomPrompt())
+                .captureScreenshots(config.getCaptureScreenshots())
+                .extractStructured(config.getExtractStructured())
+                .excludedDomains(config.getExcludedDomains())
+                .callbackUrl(callbackUrl)
+                .callbackToken(browserAgentCallbackToken)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        browserTaskKafkaTemplate.send(browserTaskTopic, jobId.toString(), task);
+        
+        log.info("Published browser task for job {}: source={}, seedUrl={}, policy={}, maxDepth={}, maxPages={}",
+                jobId, source.getName(), source.getUrl(), 
+                config.getPolicy(), config.getMaxDepth(), config.getMaxPages());
+        
+        // Job은 RUNNING 상태로 유지 - 결과는 비동기로 들어옴
+        // autonomous-crawler-service가 세션 완료 시 callback을 호출하거나,
+        // 개별 결과를 crawl.results 토픽으로 발행
+    }
+
+    /**
      * 소스 타입에 따른 데이터 수집
      */
     private List<CollectedData> collectFromSource(DataSource source) {
@@ -194,6 +254,11 @@ public class CollectionService {
             }
             case WEBHOOK -> {
                 log.warn("WEBHOOK 소스 타입은 수동 이벤트 기반으로, 능동 수집이 불가: {}", source.getName());
+                yield List.of();
+            }
+            case BROWSER_AGENT -> {
+                // BROWSER_AGENT는 executeBrowserAgentCollection에서 별도 처리
+                log.warn("BROWSER_AGENT should be handled by executeBrowserAgentCollection: {}", source.getName());
                 yield List.of();
             }
         };

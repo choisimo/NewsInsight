@@ -1,0 +1,32 @@
+# Core dependencies
+browser-use>=0.1.40
+playwright>=1.49.0
+langchain-openai>=0.2.14
+langchain-anthropic>=0.3.0
+
+# Kafka
+aiokafka>=0.12.0
+
+# Configuration & Validation
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+
+# HTTP Client
+aiohttp>=3.11.0
+httpx>=0.28.0
+
+# Observability
+prometheus-client>=0.21.0
+structlog>=24.4.0
+python-json-logger>=2.0.7
+
+# Resilience
+tenacity>=9.0.0
+
+# Development (optional)
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+pytest-cov>=6.0.0
+black>=24.10.0
+ruff>=0.8.0
+mypy>=1.13.0

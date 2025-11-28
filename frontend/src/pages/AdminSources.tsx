@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
@@ -6,16 +7,20 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { RefreshCw, AlertCircle } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { listSources, createSource, setSourceActive, type CreateDataSourcePayload } from "@/lib/api";
 import type { DataSource, SourceType } from "@/types/api";
 
 const DEFAULT_FREQUENCY = 3600;
 
 const AdminSources = () => {
-  const [sources, setSources] = useState<DataSource[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
+  // Form states
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [sourceType, setSourceType] = useState<SourceType>("RSS");
@@ -23,30 +28,112 @@ const AdminSources = () => {
   const [category, setCategory] = useState("");
   const [country, setCountry] = useState("KR");
   const [language, setLanguage] = useState("ko");
-  const [saving, setSaving] = useState(false);
 
-  const loadSources = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const page = await listSources(0, 100, "id", "DESC");
-      setSources(page.content);
-    } catch (e: any) {
-      console.error("Failed to load data sources", e);
-      setError(e?.message || "데이터 소스를 불러오는 중 오류가 발생했습니다.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  // React Query: 소스 목록 조회
+  const {
+    data: sourcesPage,
+    isLoading,
+    error,
+    isFetching,
+    refetch,
+  } = useQuery({
+    queryKey: ['sources'],
+    queryFn: () => listSources(0, 100, 'id', 'DESC'),
+    staleTime: 30_000, // 30초간 fresh
+    gcTime: 5 * 60_000, // 5분간 캐시 유지
+    refetchInterval: 60_000, // 1분마다 자동 갱신
+    retry: 3,
+  });
 
-  useEffect(() => {
-    void loadSources();
-  }, []);
+  const sources = sourcesPage?.content ?? [];
 
-  const handleCreate = async (e: React.FormEvent) => {
+  // React Query: 소스 생성 Mutation
+  const createMutation = useMutation({
+    mutationFn: createSource,
+    onSuccess: (created) => {
+      // 캐시에 새 소스 추가
+      queryClient.setQueryData(['sources'], (old: typeof sourcesPage) => {
+        if (!old) return old;
+        return {
+          ...old,
+          content: [created, ...old.content],
+          totalElements: old.totalElements + 1,
+        };
+      });
+      
+      // 폼 초기화
+      setName("");
+      setUrl("");
+      setCollectionFrequency(String(DEFAULT_FREQUENCY));
+      
+      toast({
+        title: "소스 등록 완료",
+        description: `'${created.name}' 소스가 등록되었습니다.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "등록 실패",
+        description: error?.response?.data?.message || error?.message || "소스 등록 중 오류가 발생했습니다.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // React Query: 소스 활성화/비활성화 Mutation
+  const toggleActiveMutation = useMutation({
+    mutationFn: ({ id, active }: { id: number; active: boolean }) => setSourceActive(id, active),
+    onMutate: async ({ id, active }) => {
+      // 낙관적 업데이트
+      await queryClient.cancelQueries({ queryKey: ['sources'] });
+      
+      const previousData = queryClient.getQueryData(['sources']);
+      
+      queryClient.setQueryData(['sources'], (old: typeof sourcesPage) => {
+        if (!old) return old;
+        return {
+          ...old,
+          content: old.content.map((s: DataSource) => 
+            s.id === id ? { ...s, isActive: active } : s
+          ),
+        };
+      });
+      
+      return { previousData };
+    },
+    onError: (error, variables, context) => {
+      // 실패 시 롤백
+      if (context?.previousData) {
+        queryClient.setQueryData(['sources'], context.previousData);
+      }
+      toast({
+        title: "상태 변경 실패",
+        description: "잠시 후 다시 시도해주세요.",
+        variant: "destructive",
+      });
+    },
+    onSuccess: (updated) => {
+      // 성공 시 서버 데이터로 업데이트
+      queryClient.setQueryData(['sources'], (old: typeof sourcesPage) => {
+        if (!old) return old;
+        return {
+          ...old,
+          content: old.content.map((s: DataSource) => 
+            s.id === updated.id ? updated : s
+          ),
+        };
+      });
+    },
+  });
+
+  const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !url.trim()) {
-      setError("이름과 URL을 모두 입력해 주세요.");
+      toast({
+        title: "입력 오류",
+        description: "이름과 URL을 모두 입력해주세요.",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -66,45 +153,35 @@ const AdminSources = () => {
       metadata,
     };
 
-    setSaving(true);
-    setError(null);
-    try {
-      const created = await createSource(payload);
-      setSources((prev) => [created, ...prev]);
-
-      setName("");
-      setUrl("");
-      setCollectionFrequency(String(DEFAULT_FREQUENCY));
-      // category/country/language는 유지하여 여러 개를 연속으로 넣기 편하게 둠
-    } catch (e: any) {
-      console.error("Failed to create data source", e);
-      setError(e?.response?.data?.message || e?.message || "데이터 소스를 생성하는 중 오류가 발생했습니다.");
-    } finally {
-      setSaving(false);
-    }
+    createMutation.mutate(payload);
   };
 
-  const handleToggleActive = async (source: DataSource, active: boolean) => {
-    // 낙관적 업데이트
-    setSources((prev) => prev.map((s) => (s.id === source.id ? { ...s, isActive: active } : s)));
-    try {
-      const updated = await setSourceActive(source.id, active);
-      setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-    } catch (e) {
-      console.error("Failed to toggle active state", e);
-      // 실패 시 롤백
-      setSources((prev) => prev.map((s) => (s.id === source.id ? { ...s, isActive: source.isActive } : s)));
-    }
+  const handleToggleActive = (source: DataSource, active: boolean) => {
+    toggleActiveMutation.mutate({ id: source.id, active });
   };
 
   return (
     <div className="min-h-screen py-8">
       <div className="container mx-auto px-4 max-w-6xl space-y-6">
-        <header className="mb-4">
-          <h1 className="text-3xl font-bold mb-2">데이터 소스 관리</h1>
-          <p className="text-muted-foreground text-sm">
-            RSS / WEB / API / WEBHOOK 소스를 등록하고 활성화 상태를 관리하는 관리자 화면입니다.
-          </p>
+        <header className="mb-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold mb-2">데이터 소스 관리</h1>
+            <p className="text-muted-foreground text-sm">
+              RSS / WEB / API / WEBHOOK 소스를 등록하고 활성화 상태를 관리하는 관리자 화면입니다.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {isFetching && !isLoading && (
+              <Badge variant="secondary" className="animate-pulse">
+                <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                동기화 중
+              </Badge>
+            )}
+            <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+              <RefreshCw className={`h-4 w-4 mr-1 ${isFetching ? 'animate-spin' : ''}`} />
+              새로고침
+            </Button>
+          </div>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -122,7 +199,7 @@ const AdminSources = () => {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="예: 연합뉴스 - 전체"
-                    disabled={saving}
+                    disabled={createMutation.isPending}
                   />
                 </div>
                 <div className="space-y-2">
@@ -132,7 +209,7 @@ const AdminSources = () => {
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
                     placeholder="예: https://www.yna.co.kr/rss/allheadline.xml"
-                    disabled={saving}
+                    disabled={createMutation.isPending}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -141,7 +218,7 @@ const AdminSources = () => {
                     <Select
                       value={sourceType}
                       onValueChange={(value) => setSourceType(value as SourceType)}
-                      disabled={saving}
+                      disabled={createMutation.isPending}
                     >
                       <SelectTrigger id="sourceType">
                         <SelectValue />
@@ -162,7 +239,7 @@ const AdminSources = () => {
                       min={60}
                       value={collectionFrequency}
                       onChange={(e) => setCollectionFrequency(e.target.value)}
-                      disabled={saving}
+                      disabled={createMutation.isPending}
                     />
                   </div>
                 </div>
@@ -174,7 +251,7 @@ const AdminSources = () => {
                       value={category}
                       onChange={(e) => setCategory(e.target.value)}
                       placeholder="예: 종합, 경제, IT"
-                      disabled={saving}
+                      disabled={createMutation.isPending}
                     />
                   </div>
                   <div className="space-y-2">
@@ -184,7 +261,7 @@ const AdminSources = () => {
                       value={country}
                       onChange={(e) => setCountry(e.target.value)}
                       placeholder="KR"
-                      disabled={saving}
+                      disabled={createMutation.isPending}
                     />
                   </div>
                   <div className="space-y-2">
@@ -194,15 +271,12 @@ const AdminSources = () => {
                       value={language}
                       onChange={(e) => setLanguage(e.target.value)}
                       placeholder="ko"
-                      disabled={saving}
+                      disabled={createMutation.isPending}
                     />
                   </div>
                 </div>
-                {error && (
-                  <p className="text-sm text-destructive mt-1">{error}</p>
-                )}
-                <Button type="submit" className="w-full" disabled={saving}>
-                  {saving ? "등록 중..." : "소스 등록"}
+                <Button type="submit" className="w-full" disabled={createMutation.isPending}>
+                  {createMutation.isPending ? "등록 중..." : "소스 등록"}
                 </Button>
               </form>
             </CardContent>
@@ -211,13 +285,42 @@ const AdminSources = () => {
           <Card className="lg:col-span-2 shadow-elegant">
             <CardHeader>
               <CardTitle>등록된 소스</CardTitle>
-              <CardDescription>최근 등록 순으로 최대 100개까지 표시됩니다.</CardDescription>
+              <CardDescription>
+                최근 등록 순으로 최대 100개까지 표시됩니다.
+                {sourcesPage && (
+                  <span className="ml-2 text-xs">
+                    (총 {sourcesPage.totalElements}개)
+                  </span>
+                )}
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              {loading ? (
-                <p className="text-sm text-muted-foreground">불러오는 중...</p>
+              {isLoading ? (
+                <div className="space-y-3">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className="flex items-center gap-4">
+                      <Skeleton className="h-4 w-12" />
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-4 flex-1" />
+                      <Skeleton className="h-6 w-10" />
+                    </div>
+                  ))}
+                </div>
+              ) : error ? (
+                <div className="text-center py-8">
+                  <AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
+                  <p className="text-sm text-destructive mb-4">
+                    {(error as Error).message || "데이터를 불러오는 중 오류가 발생했습니다."}
+                  </p>
+                  <Button variant="outline" onClick={() => refetch()}>
+                    다시 시도
+                  </Button>
+                </div>
               ) : sources.length === 0 ? (
-                <p className="text-sm text-muted-foreground">등록된 소스가 없습니다. 왼쪽 폼에서 첫 소스를 등록해 보세요.</p>
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  등록된 소스가 없습니다. 왼쪽 폼에서 첫 소스를 등록해 보세요.
+                </p>
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
@@ -235,7 +338,9 @@ const AdminSources = () => {
                         <TableRow key={source.id}>
                           <TableCell>{source.id}</TableCell>
                           <TableCell className="font-medium">{source.name}</TableCell>
-                          <TableCell>{source.sourceType}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{source.sourceType}</Badge>
+                          </TableCell>
                           <TableCell className="max-w-xs truncate">
                             <a
                               href={source.url}
@@ -250,6 +355,7 @@ const AdminSources = () => {
                             <Switch
                               checked={source.isActive}
                               onCheckedChange={(checked) => handleToggleActive(source, checked)}
+                              disabled={toggleActiveMutation.isPending}
                             />
                           </TableCell>
                         </TableRow>

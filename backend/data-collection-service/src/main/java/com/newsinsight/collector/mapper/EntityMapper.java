@@ -7,6 +7,7 @@ import com.newsinsight.collector.dto.*;
 import com.newsinsight.collector.entity.CollectedData;
 import com.newsinsight.collector.entity.CollectionJob;
 import com.newsinsight.collector.entity.DataSource;
+import com.newsinsight.collector.entity.SourceType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -37,7 +38,8 @@ public class EntityMapper {
                 source.getCollectionFrequency(),
                 parseJson(source.getMetadataJson()),
                 source.getCreatedAt(),
-                source.getUpdatedAt()
+                source.getUpdatedAt(),
+                BrowserAgentConfigDto.fromEntity(source.getBrowserAgentConfig())
         );
     }
 
@@ -85,14 +87,20 @@ public class EntityMapper {
     }
 
     public DataSource toEntity(DataSourceCreateRequest request) {
-        return DataSource.builder()
+        DataSource.DataSourceBuilder builder = DataSource.builder()
                 .name(request.name())
                 .url(request.url())
                 .sourceType(request.sourceType())
                 .collectionFrequency(request.collectionFrequency())
                 .metadataJson(toJson(request.metadata()))
-                .isActive(true)
-                .build();
+                .isActive(true);
+
+        // Set browser agent config if applicable
+        if (request.sourceType() == SourceType.BROWSER_AGENT && request.browserAgentConfig() != null) {
+            builder.browserAgentConfig(request.browserAgentConfig().toEntity());
+        }
+
+        return builder.build();
     }
 
     // Alias method for DataSourceCreateRequest
@@ -115,6 +123,10 @@ public class EntityMapper {
         }
         if (request.metadata() != null) {
             source.setMetadataJson(toJson(request.metadata()));
+        }
+        // Update browser agent config if provided
+        if (request.browserAgentConfig() != null) {
+            source.setBrowserAgentConfig(request.browserAgentConfig().toEntity());
         }
     }
 

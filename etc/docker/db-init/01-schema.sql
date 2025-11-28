@@ -74,3 +74,50 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE collection_jobs
     ADD CONSTRAINT collection_jobs_status_check
     CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED'));
+
+-- ============================================
+-- Deep AI Search Tables (n8n Crawl Agent)
+-- ============================================
+
+-- Crawl jobs table for deep AI search
+CREATE TABLE IF NOT EXISTS crawl_jobs (
+    id VARCHAR(64) PRIMARY KEY,
+    topic VARCHAR(512) NOT NULL,
+    base_url VARCHAR(2048),
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    evidence_count INTEGER DEFAULT 0,
+    error_message VARCHAR(1024),
+    callback_received BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_crawl_jobs_status ON crawl_jobs (status);
+CREATE INDEX IF NOT EXISTS idx_crawl_jobs_topic ON crawl_jobs (topic);
+CREATE INDEX IF NOT EXISTS idx_crawl_jobs_created_at ON crawl_jobs (created_at);
+
+-- Ensure crawl job status values
+ALTER TABLE crawl_jobs
+    ADD CONSTRAINT crawl_jobs_status_check
+    CHECK (status IN ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT'));
+
+-- Crawl evidence table for storing search results
+CREATE TABLE IF NOT EXISTS crawl_evidence (
+    id BIGSERIAL PRIMARY KEY,
+    job_id VARCHAR(64) NOT NULL REFERENCES crawl_jobs (id) ON DELETE CASCADE,
+    url VARCHAR(2048),
+    title VARCHAR(512),
+    stance VARCHAR(16),
+    snippet TEXT,
+    source VARCHAR(255),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_crawl_evidence_job_id ON crawl_evidence (job_id);
+CREATE INDEX IF NOT EXISTS idx_crawl_evidence_stance ON crawl_evidence (stance);
+
+-- Ensure evidence stance values
+ALTER TABLE crawl_evidence
+    ADD CONSTRAINT crawl_evidence_stance_check
+    CHECK (stance IS NULL OR stance IN ('PRO', 'CON', 'NEUTRAL'));

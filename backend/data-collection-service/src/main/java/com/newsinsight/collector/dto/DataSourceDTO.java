@@ -15,7 +15,8 @@ public record DataSourceDTO(
         Integer collectionFrequency,
         Map<String, Object> metadata,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        BrowserAgentConfigDto browserAgentConfig
 ) {
     public DataSourceDTO {
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);

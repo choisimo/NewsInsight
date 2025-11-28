@@ -12,7 +12,8 @@ public record DataSourceCreateRequest(
         @NotBlank(message = "URL is required") String url,
         @NotNull(message = "Source type is required") SourceType sourceType,
         @Min(value = 60, message = "Collection frequency must be at least 60 seconds") Integer collectionFrequency,
-        Map<String, Object> metadata
+        Map<String, Object> metadata,
+        BrowserAgentConfigDto browserAgentConfig
 ) {
     public DataSourceCreateRequest {
         collectionFrequency = collectionFrequency == null ? 3600 : collectionFrequency;
