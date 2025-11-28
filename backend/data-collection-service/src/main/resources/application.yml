@@ -141,6 +141,25 @@ collector:
       response: ${COLLECTOR_AI_RESPONSE_TOPIC:newsinsight.ai.responses}
     default-provider-id: ${COLLECTOR_AI_PROVIDER_ID:openai}
     default-model-id: ${COLLECTOR_AI_MODEL_ID:gpt-4.1}
+    
+    # AI Orchestration Configuration (Multi-provider Job Management)
+    orchestration:
+      # Kafka topic for AI task requests
+      topic: ${COLLECTOR_AI_ORCHESTRATION_TOPIC:ai.tasks.requests}
+      # Base URL for callback (this service's public URL)
+      callback-base-url: ${COLLECTOR_AI_ORCHESTRATION_CALLBACK_BASE_URL:${collector.deep-search.callback-base-url}}
+      # Token for validating callbacks from workers/n8n
+      callback-token: ${COLLECTOR_AI_ORCHESTRATION_CALLBACK_TOKEN:${collector.deep-search.callback-token}}
+      # Minutes before marking a job as timed out
+      timeout-minutes: ${COLLECTOR_AI_ORCHESTRATION_TIMEOUT_MINUTES:30}
+      # Interval for checking timed out jobs (milliseconds)
+      timeout-check-interval: ${COLLECTOR_AI_ORCHESTRATION_TIMEOUT_CHECK_INTERVAL:300000}
+      # Days to keep completed jobs before cleanup
+      cleanup-days: ${COLLECTOR_AI_ORCHESTRATION_CLEANUP_DAYS:7}
+      # Cron expression for cleanup job (3 AM daily)
+      cleanup-cron: ${COLLECTOR_AI_ORCHESTRATION_CLEANUP_CRON:0 0 3 * * ?}
+      # n8n webhook base URL for AI agents
+      n8n-base-url: ${COLLECTOR_AI_N8N_BASE_URL:https://n8n.nodove.com/webhook}
 
   crawl:
     topic:

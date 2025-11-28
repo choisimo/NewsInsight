@@ -50,6 +50,7 @@ Thumbs.db
 .env.*
 !.env.example
 
+**/*session_*.md
 # Editor swap/backup
 *.swp
 *.swo

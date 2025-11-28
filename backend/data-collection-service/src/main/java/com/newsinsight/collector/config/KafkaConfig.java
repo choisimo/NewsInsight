@@ -2,6 +2,7 @@ package com.newsinsight.collector.config;
 
 import com.newsinsight.collector.dto.AiRequestMessage;
 import com.newsinsight.collector.dto.AiResponseMessage;
+import com.newsinsight.collector.dto.AiTaskRequestMessage;
 import com.newsinsight.collector.dto.CrawlCommandMessage;
 import com.newsinsight.collector.dto.CrawlResultMessage;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -134,5 +135,21 @@ public class KafkaConfig {
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(crawlResultConsumerFactory());
         return factory;
+    }
+
+    // ========== AI Task Request (for Orchestration) ==========
+
+    @Bean
+    public ProducerFactory<String, AiTaskRequestMessage> aiTaskRequestProducerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        return new DefaultKafkaProducerFactory<>(props);
+    }
+
+    @Bean
+    public KafkaTemplate<String, AiTaskRequestMessage> aiTaskRequestKafkaTemplate() {
+        return new KafkaTemplate<>(aiTaskRequestProducerFactory());
     }
 }
