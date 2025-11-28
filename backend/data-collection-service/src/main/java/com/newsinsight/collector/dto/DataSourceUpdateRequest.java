@@ -9,7 +9,8 @@ public record DataSourceUpdateRequest(
         String url,
         Boolean isActive,
         @Min(value = 60, message = "Collection frequency must be at least 60 seconds") Integer collectionFrequency,
-        Map<String, Object> metadata
+        Map<String, Object> metadata,
+        BrowserAgentConfigDto browserAgentConfig
 ) {
     public DataSourceUpdateRequest {
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);

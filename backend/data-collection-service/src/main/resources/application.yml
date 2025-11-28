@@ -5,6 +5,19 @@ spring:
     import: "consul:"
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    # Producer reliability settings
+    producer:
+      acks: ${KAFKA_PRODUCER_ACKS:all}
+      retries: ${KAFKA_PRODUCER_RETRIES:3}
+      retry-backoff-ms: ${KAFKA_PRODUCER_RETRY_BACKOFF_MS:1000}
+      delivery-timeout-ms: ${KAFKA_PRODUCER_DELIVERY_TIMEOUT_MS:120000}
+      enable-idempotence: ${KAFKA_PRODUCER_ENABLE_IDEMPOTENCE:true}
+    # Consumer reliability settings
+    consumer:
+      max-retry-attempts: ${KAFKA_CONSUMER_MAX_RETRY_ATTEMPTS:3}
+      retry-backoff-ms: ${KAFKA_CONSUMER_RETRY_BACKOFF_MS:1000}
+      retry-max-backoff-ms: ${KAFKA_CONSUMER_RETRY_MAX_BACKOFF_MS:30000}
+      concurrency: ${KAFKA_CONSUMER_CONCURRENCY:1}
   data:
     mongodb:
       uri: ${MONGODB_URI:mongodb://localhost:27017/newsinsight}
@@ -87,6 +100,16 @@ management:
   health:
     consul:
       enabled: ${CONSUL_ENABLED:true}
+  # Kafka metrics via Micrometer
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        kafka: true
+      slo:
+        kafka.producer.request.latency: 10ms,50ms,100ms,500ms
+        kafka.consumer.fetch.latency: 10ms,50ms,100ms,500ms
 
 logging:
   level:
@@ -165,10 +188,18 @@ collector:
     topic:
       command: ${COLLECTOR_CRAWL_COMMAND_TOPIC:newsinsight.crawl.commands}
       result: ${COLLECTOR_CRAWL_RESULT_TOPIC:newsinsight.crawl.results}
+      browser-task: ${COLLECTOR_CRAWL_BROWSER_TASK_TOPIC:newsinsight.crawl.browser.tasks}
 
   crawler:
     enabled: ${COLLECTOR_SERVICE_CRAWLER_ENABLED:false}
     base-url: ${COLLECTOR_SERVICE_CRAWLER_BASE_URL:http://web-crawler:11235}
+
+  # Browser Agent Configuration (autonomous-crawler-service)
+  browser-agent:
+    enabled: ${COLLECTOR_BROWSER_AGENT_ENABLED:true}
+    # Callback URL for session completion
+    callback-base-url: ${COLLECTOR_BROWSER_AGENT_CALLBACK_BASE_URL:http://localhost:8081}
+    callback-token: ${COLLECTOR_BROWSER_AGENT_CALLBACK_TOKEN:}
 
   # Deep AI Search Configuration (n8n Crawl Agent Workflow)
   # These settings can be managed via Consul KV under config/collector-service/

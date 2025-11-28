@@ -52,6 +52,13 @@ public class DataSource {
     @Column(name = "metadata_json", columnDefinition = "jsonb")
     private String metadataJson;
 
+    /**
+     * Browser agent configuration.
+     * Only applicable when sourceType = BROWSER_AGENT.
+     */
+    @Embedded
+    private BrowserAgentConfig browserAgentConfig;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -59,4 +66,24 @@ public class DataSource {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    /**
+     * Check if this source requires browser-based collection.
+     */
+    public boolean requiresBrowserAgent() {
+        return sourceType != null && sourceType.requiresBrowser();
+    }
+
+    /**
+     * Get browser agent config, creating default if null and source type requires it.
+     */
+    public BrowserAgentConfig getEffectiveBrowserAgentConfig() {
+        if (browserAgentConfig != null) {
+            return browserAgentConfig;
+        }
+        if (requiresBrowserAgent()) {
+            return BrowserAgentConfig.forNewsExploration();
+        }
+        return null;
+    }
 }
