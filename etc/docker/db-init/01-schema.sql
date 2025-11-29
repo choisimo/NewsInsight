@@ -14,6 +14,16 @@ CREATE TABLE IF NOT EXISTS data_sources (
     last_collected TIMESTAMP,
     collection_frequency INTEGER NOT NULL DEFAULT 3600,
     metadata_json JSONB,
+    -- Browser Agent configuration (for BROWSER_AGENT source type)
+    agent_max_depth INTEGER,
+    agent_max_pages INTEGER,
+    agent_budget_seconds INTEGER,
+    agent_policy VARCHAR(50),
+    agent_focus_keywords TEXT,
+    agent_custom_prompt TEXT,
+    agent_capture_screenshots BOOLEAN,
+    agent_extract_structured BOOLEAN,
+    agent_excluded_domains TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP
 );
@@ -121,3 +131,58 @@ CREATE INDEX IF NOT EXISTS idx_crawl_evidence_stance ON crawl_evidence (stance);
 ALTER TABLE crawl_evidence
     ADD CONSTRAINT crawl_evidence_stance_check
     CHECK (stance IS NULL OR stance IN ('PRO', 'CON', 'NEUTRAL'));
+
+-- ============================================
+-- AI Orchestration Tables (Multi-provider AI Jobs)
+-- ============================================
+
+-- AI jobs table for orchestrating multi-provider tasks
+CREATE TABLE IF NOT EXISTS ai_jobs (
+    job_id VARCHAR(64) PRIMARY KEY,
+    topic VARCHAR(512) NOT NULL,
+    base_url VARCHAR(2048),
+    overall_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    error_message VARCHAR(1024),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_overall_status ON ai_jobs (overall_status);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_topic ON ai_jobs (topic);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_created_at ON ai_jobs (created_at);
+
+-- Ensure AI job status values
+ALTER TABLE ai_jobs
+    ADD CONSTRAINT ai_jobs_status_check
+    CHECK (overall_status IN ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'PARTIAL_SUCCESS', 'FAILED', 'CANCELLED', 'TIMEOUT'));
+
+-- AI sub-tasks table for individual provider tasks
+CREATE TABLE IF NOT EXISTS ai_sub_tasks (
+    sub_task_id VARCHAR(64) PRIMARY KEY,
+    job_id VARCHAR(64) NOT NULL REFERENCES ai_jobs (job_id) ON DELETE CASCADE,
+    provider_id VARCHAR(32) NOT NULL,
+    task_type VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    result_json TEXT,
+    error_message VARCHAR(1024),
+    retry_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_sub_tasks_job_id ON ai_sub_tasks (job_id);
+CREATE INDEX IF NOT EXISTS idx_ai_sub_tasks_status ON ai_sub_tasks (status);
+CREATE INDEX IF NOT EXISTS idx_ai_sub_tasks_provider_id ON ai_sub_tasks (provider_id);
+CREATE INDEX IF NOT EXISTS idx_ai_sub_tasks_created_at ON ai_sub_tasks (created_at);
+
+-- Ensure AI sub-task status values
+ALTER TABLE ai_sub_tasks
+    ADD CONSTRAINT ai_sub_tasks_status_check
+    CHECK (status IN ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT'));
+
+-- Ensure AI provider values
+ALTER TABLE ai_sub_tasks
+    ADD CONSTRAINT ai_sub_tasks_provider_check
+    CHECK (provider_id IN ('UNIVERSAL_AGENT', 'DEEP_READER', 'SCOUT', 'LOCAL_QUICK'));

@@ -72,6 +72,22 @@ export const getAnalysis = async (query: string, window: string = '7d'): Promise
   return response.data;
 };
 
+/**
+ * Check if live analysis is available.
+ * Returns provider info (perplexity or crawl+aidove fallback).
+ */
+export const checkLiveAnalysisHealth = async (): Promise<{
+  enabled: boolean;
+  provider: string;
+  perplexityEnabled?: boolean;
+  crawlEnabled?: boolean;
+  message: string;
+}> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/analysis/live/health');
+  return response.data;
+};
+
 export const openLiveAnalysisStream = async (
   query: string,
   window: string = '7d',
@@ -260,5 +276,374 @@ export const checkDeepSearchHealth = async (): Promise<{
 }> => {
   const client = await getApiClient();
   const response = await client.get('/api/v1/analysis/deep/health');
+  return response.data;
+};
+
+
+// ============================================
+// Browser-Use API with Human-in-the-Loop
+// ============================================
+
+const BROWSER_USE_BASE_URL = import.meta.env.VITE_BROWSER_USE_URL || 'http://localhost:8500';
+
+export type BrowserJobStatus = 'pending' | 'running' | 'waiting_human' | 'completed' | 'failed' | 'cancelled';
+export type InterventionType = 'captcha' | 'login' | 'navigation' | 'extraction' | 'confirmation' | 'custom';
+
+export interface BrowseRequest {
+  task: string;
+  url?: string;
+  session_id?: string;
+  max_steps?: number;
+  timeout_seconds?: number;
+  headless?: boolean;
+  enable_human_intervention?: boolean;
+  auto_request_intervention?: boolean;
+}
+
+export interface BrowseResponse {
+  job_id: string;
+  status: BrowserJobStatus;
+  message: string;
+  result?: string;
+  steps_taken: number;
+  urls_visited: string[];
+  screenshots: string[];
+  error?: string;
+  started_at?: string;
+  completed_at?: string;
+  intervention_requested?: boolean;
+  intervention_type?: InterventionType;
+}
+
+export interface BrowserJobStatusResponse {
+  job_id: string;
+  status: BrowserJobStatus;
+  progress: number;
+  current_step: number;
+  max_steps: number;
+  result?: string;
+  error?: string;
+  urls_visited: string[];
+  started_at?: string;
+  completed_at?: string;
+  intervention_requested: boolean;
+  intervention_type?: InterventionType;
+  intervention_reason?: string;
+  intervention_screenshot?: string;
+  current_url?: string;
+}
+
+export interface HumanAction {
+  action_type: 'click' | 'type' | 'navigate' | 'scroll' | 'custom' | 'skip' | 'abort';
+  selector?: string;
+  value?: string;
+  x?: number;
+  y?: number;
+  custom_script?: string;
+  message?: string;
+}
+
+export interface BrowserHealthResponse {
+  status: string;
+  version: string;
+  uptime_seconds: number;
+  active_jobs: number;
+  waiting_intervention: number;
+}
+
+// WebSocket message types
+export interface BrowserWSMessage {
+  type: 'step_update' | 'intervention_requested' | 'completed' | 'failed' | 'cancelled' | 'screenshot' | 'intervention_accepted' | 'intervention_result' | 'error';
+  job_id?: string;
+  step?: number;
+  progress?: number;
+  current_url?: string;
+  screenshot?: string;
+  intervention_type?: InterventionType;
+  reason?: string;
+  suggested_actions?: string[];
+  result?: string;
+  error?: string;
+  message?: string;
+  success?: boolean;
+  data?: string;
+}
+
+/**
+ * Check browser-use service health
+ */
+export const checkBrowserUseHealth = async (): Promise<BrowserHealthResponse> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/health`);
+  if (!response.ok) {
+    throw new Error('Browser-use service unavailable');
+  }
+  return response.json();
+};
+
+/**
+ * Start a browser automation task
+ */
+export const startBrowserTask = async (request: BrowseRequest): Promise<BrowseResponse> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/browse`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to start browser task');
+  }
+  return response.json();
+};
+
+/**
+ * Get browser job status
+ */
+export const getBrowserJobStatus = async (jobId: string): Promise<BrowserJobStatusResponse> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/jobs/${jobId}`);
+  if (!response.ok) {
+    throw new Error('Failed to get job status');
+  }
+  return response.json();
+};
+
+/**
+ * Submit human intervention action
+ */
+export const submitIntervention = async (jobId: string, action: HumanAction): Promise<{ message: string }> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/jobs/${jobId}/intervene`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(action),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to submit intervention');
+  }
+  return response.json();
+};
+
+/**
+ * Request manual intervention for a running job
+ */
+export const requestManualIntervention = async (
+  jobId: string,
+  interventionType: InterventionType = 'custom',
+  reason: string = 'Manual intervention requested'
+): Promise<{ message: string; screenshot?: string; current_url?: string }> => {
+  const response = await fetch(
+    `${BROWSER_USE_BASE_URL}/jobs/${jobId}/request-intervention?intervention_type=${interventionType}&reason=${encodeURIComponent(reason)}`,
+    { method: 'POST' }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to request intervention');
+  }
+  return response.json();
+};
+
+/**
+ * Get current screenshot from browser session
+ */
+export const getBrowserScreenshot = async (jobId: string): Promise<{ screenshot?: string; current_url?: string }> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/jobs/${jobId}/screenshot`);
+  if (!response.ok) {
+    throw new Error('Failed to get screenshot');
+  }
+  return response.json();
+};
+
+/**
+ * Cancel a browser job
+ */
+export const cancelBrowserJob = async (jobId: string): Promise<{ message: string }> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/jobs/${jobId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to cancel job');
+  }
+  return response.json();
+};
+
+/**
+ * List browser jobs
+ */
+export const listBrowserJobs = async (
+  status?: BrowserJobStatus,
+  limit: number = 20
+): Promise<Array<{
+  job_id: string;
+  task: string;
+  status: BrowserJobStatus;
+  progress: number;
+  intervention_requested: boolean;
+  intervention_type?: InterventionType;
+  started_at?: string;
+  completed_at?: string;
+}>> => {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (status) params.append('status', status);
+  
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/jobs?${params}`);
+  if (!response.ok) {
+    throw new Error('Failed to list jobs');
+  }
+  return response.json();
+};
+
+/**
+ * Get WebSocket URL for browser job
+ */
+export const getBrowserWSUrl = (jobId: string): string => {
+  const wsBase = BROWSER_USE_BASE_URL.replace(/^http/, 'ws');
+  return `${wsBase}/ws/${jobId}`;
+};
+
+
+// ============================================
+// Unified Search API (Parallel Search + Deep Analysis)
+// ============================================
+
+/**
+ * Search result from any source (database, web, AI)
+ */
+export interface UnifiedSearchResult {
+  id: string;
+  source: 'database' | 'web' | 'ai';
+  sourceLabel: string;
+  title: string;
+  snippet?: string;
+  url?: string;
+  publishedAt?: string;
+  relevanceScore?: number;
+  category?: string;
+}
+
+/**
+ * Search event from SSE stream
+ */
+export interface UnifiedSearchEvent {
+  eventType: 'status' | 'result' | 'ai_chunk' | 'complete' | 'error';
+  source: 'database' | 'web' | 'ai';
+  message?: string;
+  result?: UnifiedSearchResult;
+  totalCount?: number;
+}
+
+/**
+ * Fact verification status
+ */
+export type VerificationStatus = 
+  | 'VERIFIED'
+  | 'PARTIALLY_VERIFIED'
+  | 'UNVERIFIED'
+  | 'DISPUTED'
+  | 'FALSE'
+  | 'NEEDS_CONTEXT';
+
+/**
+ * Claim verification result
+ */
+export interface ClaimVerification {
+  claim: string;
+  status: VerificationStatus;
+  credibilityScore: number;
+  summary: string;
+  sources: TrustedSource[];
+  verifiedAt: string;
+}
+
+/**
+ * Trusted source for fact verification
+ */
+export interface TrustedSource {
+  name: string;
+  url: string;
+  excerpt: string;
+  retrievedAt: string;
+}
+
+/**
+ * Deep analysis event from SSE stream
+ */
+export interface DeepAnalysisEvent {
+  eventType: 'status' | 'verification_result' | 'analysis_chunk' | 'complete' | 'error';
+  message?: string;
+  verification?: ClaimVerification;
+  overallCredibility?: number;
+}
+
+/**
+ * Open SSE stream for parallel search
+ * @param query - Search query string
+ * @param window - Time window (1d, 7d, 30d)
+ * @param priorityUrls - Optional array of URLs to prioritize in the search
+ */
+export const openUnifiedSearchStream = async (
+  query: string,
+  window: string = '7d',
+  priorityUrls?: string[],
+): Promise<EventSource> => {
+  const initialBase = resolveInitialBaseUrl();
+  const baseURL = await fetchConfiguredBaseUrl(initialBase);
+  const url = new URL('/api/v1/search/stream', baseURL);
+  url.searchParams.set('query', query);
+  url.searchParams.set('window', window);
+  if (priorityUrls && priorityUrls.length > 0) {
+    url.searchParams.set('priorityUrls', priorityUrls.join(','));
+  }
+  return new EventSource(url.toString());
+};
+
+/**
+ * Open SSE stream for deep analysis with fact verification
+ * @param topic - Topic to analyze
+ * @param claims - Claims to verify
+ * @param referenceUrls - Optional array of URLs to use as additional sources
+ */
+export const openDeepAnalysisStream = async (
+  topic: string,
+  claims: string[],
+  referenceUrls?: string[],
+): Promise<Response> => {
+  const initialBase = resolveInitialBaseUrl();
+  const baseURL = await fetchConfiguredBaseUrl(initialBase);
+  
+  // For POST with body, we need to use fetch with ReadableStream
+  const response = await fetch(`${baseURL}/api/v1/search/deep/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify({ 
+      topic, 
+      claims, 
+      ...(referenceUrls && referenceUrls.length > 0 && { referenceUrls })
+    }),
+  });
+  
+  if (!response.ok) {
+    throw new Error('Failed to start deep analysis');
+  }
+  
+  return response;
+};
+
+/**
+ * Check unified search service health
+ */
+export const checkUnifiedSearchHealth = async (): Promise<{
+  status: string;
+  features: {
+    parallelSearch: boolean;
+    deepAnalysis: boolean;
+    factVerification: boolean;
+  };
+  description: string;
+}> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/search/health');
   return response.data;
 };

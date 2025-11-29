@@ -1,14 +1,18 @@
 package com.newsinsight.collector.controller;
 
 import com.newsinsight.collector.client.PerplexityClient;
+import com.newsinsight.collector.service.CrawlSearchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/analysis")
@@ -17,19 +21,79 @@ import reactor.core.publisher.Flux;
 public class LiveAnalysisController {
 
     private final PerplexityClient perplexityClient;
+    private final CrawlSearchService crawlSearchService;
+
+    /**
+     * Health check for live analysis service.
+     * Returns whether the analysis APIs are configured and available.
+     * 
+     * Providers:
+     * - perplexity: Primary provider (requires API key)
+     * - crawl+aidove: Fallback provider (Crawl4AI + AI Dove)
+     */
+    @GetMapping("/live/health")
+    public ResponseEntity<Map<String, Object>> liveAnalysisHealth() {
+        boolean perplexityEnabled = perplexityClient.isEnabled();
+        boolean crawlEnabled = crawlSearchService.isAvailable();
+        boolean anyEnabled = perplexityEnabled || crawlEnabled;
+
+        String provider;
+        String message;
+
+        if (perplexityEnabled) {
+            provider = "perplexity";
+            message = "Live analysis is available (Perplexity)";
+        } else if (crawlEnabled) {
+            provider = "crawl+aidove";
+            message = "Live analysis is available (Crawl4AI + AI Dove fallback)";
+        } else {
+            provider = "none";
+            message = "Live analysis is disabled. No AI provider is configured.";
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "enabled", anyEnabled,
+                "provider", provider,
+                "perplexityEnabled", perplexityEnabled,
+                "crawlEnabled", crawlEnabled,
+                "message", message
+        ));
+    }
 
     @GetMapping(value = "/live", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> streamLiveAnalysis(
             @RequestParam String query,
             @RequestParam(defaultValue = "7d") String window
     ) {
-        String prompt = buildPrompt(query, window);
-        log.info("Starting live analysis stream for query='{}', window='{}'", query, window);
-        return perplexityClient.streamCompletion(prompt)
-                .onErrorResume(e -> {
-                    log.error("Live analysis streaming failed", e);
-                    return Flux.just("실시간 분석 중 오류가 발생했습니다: " + e.getMessage());
-                });
+        // Try Perplexity first (primary provider)
+        if (perplexityClient.isEnabled()) {
+            String prompt = buildPrompt(query, window);
+            log.info("Starting live analysis with Perplexity for query='{}', window='{}'", query, window);
+            return perplexityClient.streamCompletion(prompt)
+                    .onErrorResume(e -> {
+                        log.error("Perplexity streaming failed, falling back to Crawl+AIDove", e);
+                        // Fallback to CrawlSearchService if Perplexity fails
+                        if (crawlSearchService.isAvailable()) {
+                            return crawlSearchService.searchAndAnalyze(query, window);
+                        }
+                        return Flux.just("실시간 분석 중 오류가 발생했습니다: " + e.getMessage());
+                    });
+        }
+
+        // Fallback to CrawlSearchService (Crawl4AI + AI Dove)
+        if (crawlSearchService.isAvailable()) {
+            log.info("Starting live analysis with Crawl+AIDove for query='{}', window='{}'", query, window);
+            return crawlSearchService.searchAndAnalyze(query, window);
+        }
+
+        // No provider available
+        log.warn("Live analysis requested but no provider is available");
+        return Flux.just(
+                "실시간 분석 기능이 현재 사용할 수 없습니다.\n\n" +
+                "설정된 AI 제공자가 없습니다 (Perplexity API 키 또는 AI Dove 서비스).\n" +
+                "관리자에게 문의하세요.\n\n" +
+                "대안: Deep AI Search 또는 Browser AI Agent를 사용해 보세요."
+        );
     }
 
     private String buildPrompt(String query, String window) {

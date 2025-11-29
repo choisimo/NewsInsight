@@ -53,6 +53,25 @@ All colors MUST be HSL.
     --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
     --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1);
 
+    /* Neutral color palette for balanced viewpoints */
+    --teal-50: 166 76% 97%;
+    --teal-100: 167 85% 89%;
+    --teal-200: 168 84% 78%;
+    --teal-500: 172 66% 50%;
+    --teal-600: 173 80% 40%;
+    --teal-700: 175 77% 26%;
+    --teal-900: 176 61% 19%;
+    --teal-950: 176 74% 12%;
+
+    --coral-50: 14 100% 97%;
+    --coral-100: 14 93% 90%;
+    --coral-200: 14 91% 82%;
+    --coral-500: 14 89% 55%;
+    --coral-600: 14 80% 50%;
+    --coral-700: 14 83% 40%;
+    --coral-900: 14 68% 25%;
+    --coral-950: 14 75% 15%;
+
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
     --sidebar-primary: 240 5.9% 10%;
@@ -107,6 +126,25 @@ All colors MUST be HSL.
     --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4);
     --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.4);
 
+    /* Dark mode neutral colors */
+    --teal-50: 166 50% 15%;
+    --teal-100: 167 45% 20%;
+    --teal-200: 168 50% 25%;
+    --teal-500: 172 66% 50%;
+    --teal-600: 173 70% 55%;
+    --teal-700: 175 65% 60%;
+    --teal-900: 176 50% 25%;
+    --teal-950: 176 55% 18%;
+
+    --coral-50: 14 50% 15%;
+    --coral-100: 14 45% 20%;
+    --coral-200: 14 50% 25%;
+    --coral-500: 14 89% 55%;
+    --coral-600: 14 80% 60%;
+    --coral-700: 14 75% 65%;
+    --coral-900: 14 50% 25%;
+    --coral-950: 14 55% 18%;
+
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;
@@ -150,5 +188,99 @@ All colors MUST be HSL.
   .card-hover:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-xl);
+  }
+
+  /* Glassmorphism utility classes */
+  .glass {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+  }
+
+  .dark .glass {
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .glass-subtle {
+    background: rgba(255, 255, 255, 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  .dark .glass-subtle {
+    background: rgba(30, 41, 59, 0.5);
+  }
+
+  /* Insight card specific styles */
+  .insight-card {
+    @apply rounded-2xl border shadow-lg p-6 md:p-8;
+    @apply bg-card/80 backdrop-blur-md border-border/50;
+    @apply transition-all duration-300;
+  }
+
+  .insight-card:hover {
+    @apply shadow-xl;
+  }
+
+  /* Progress step animations */
+  @keyframes step-pulse {
+    0%, 100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(1.1);
+      opacity: 0.8;
+    }
+  }
+
+  .step-active {
+    animation: step-pulse 2s infinite;
+  }
+
+  /* Swipe hint animation */
+  @keyframes swipe-hint {
+    0%, 100% {
+      transform: translateX(0);
+      opacity: 1;
+    }
+    50% {
+      transform: translateX(8px);
+      opacity: 0.6;
+    }
+  }
+
+  .swipe-hint {
+    animation: swipe-hint 1.5s ease-in-out infinite;
+  }
+
+  /* Scroll snap for carousel */
+  .snap-x {
+    scroll-snap-type: x mandatory;
+  }
+
+  .snap-center {
+    scroll-snap-align: center;
+  }
+
+  .snap-start {
+    scroll-snap-align: start;
+  }
+
+  /* Hide scrollbar but allow scrolling */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Text balance for headings */
+  .text-balance {
+    text-wrap: balance;
   }
 }

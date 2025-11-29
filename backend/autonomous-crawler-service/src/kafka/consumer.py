@@ -23,7 +23,7 @@ class BrowserTaskConsumer:
         self._running = False
 
     async def start(self) -> None:
-        """Start the Kafka consumer."""
+        """Start the Kafka consumer with retry logic."""
         kafka_settings = self.settings.kafka
 
         self._consumer = AIOKafkaConsumer(
@@ -38,13 +38,36 @@ class BrowserTaskConsumer:
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         )
 
-        await self._consumer.start()
-        self._running = True
-        logger.info(
-            "Kafka consumer started",
-            topic=kafka_settings.browser_task_topic,
-            group_id=kafka_settings.consumer_group_id,
-        )
+        # Retry connection with exponential backoff
+        max_retries = 10
+        retry_delay = 2
+        for attempt in range(max_retries):
+            try:
+                await self._consumer.start()
+                self._running = True
+                logger.info(
+                    "Kafka consumer started",
+                    topic=kafka_settings.browser_task_topic,
+                    group_id=kafka_settings.consumer_group_id,
+                )
+                return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        "Failed to connect to Kafka, retrying...",
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
+                        error=str(e),
+                    )
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 2, 30)  # Max 30 seconds
+                else:
+                    logger.error(
+                        "Failed to connect to Kafka after all retries",
+                        error=str(e),
+                    )
+                    raise
 
     async def stop(self) -> None:
         """Stop the Kafka consumer."""

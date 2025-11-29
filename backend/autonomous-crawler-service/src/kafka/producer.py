@@ -26,11 +26,8 @@ class CrawlResultProducer:
         self._producer = AIOKafkaProducer(
             bootstrap_servers=self.settings.kafka.bootstrap_servers,
             value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8"),
-            # Reliability settings matching Java producer
+            # Reliability settings
             acks="all",
-            retries=3,
-            retry_backoff_ms=1000,
-            enable_idempotence=True,
         )
 
         await self._producer.start()

@@ -10,7 +10,9 @@ from urllib.parse import urlparse
 
 import httpx
 import structlog
-from browser_use import Agent, Browser, BrowserConfig
+from browser_use.agent.service import Agent
+from browser_use.browser.session import BrowserSession
+from browser_use.browser.profile import BrowserProfile
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
@@ -81,7 +83,7 @@ class AutonomousCrawlerAgent:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self._browser: Browser | None = None
+        self._browser_session: BrowserSession | None = None
         self._llm = self._create_llm()
 
     def _create_llm(self) -> ChatOpenAI | ChatAnthropic:
@@ -103,21 +105,21 @@ class AutonomousCrawlerAgent:
                 max_tokens=llm_settings.max_tokens,
             )
 
-    async def _get_browser(self) -> Browser:
-        """Get or create the browser instance."""
-        if self._browser is None:
-            config = BrowserConfig(
+    async def _get_browser_session(self) -> BrowserSession:
+        """Get or create the browser session."""
+        if self._browser_session is None:
+            profile = BrowserProfile(
                 headless=self.settings.browser.headless,
                 disable_security=True,  # Required for some sites
             )
-            self._browser = Browser(config=config)
-        return self._browser
+            self._browser_session = BrowserSession(browser_profile=profile)
+        return self._browser_session
 
     async def close(self) -> None:
         """Close the browser and cleanup resources."""
-        if self._browser:
-            await self._browser.close()
-            self._browser = None
+        if self._browser_session:
+            await self._browser_session.stop()
+            self._browser_session = None
 
     async def execute_task(self, task: BrowserTaskMessage) -> list[CrawlResultMessage]:
         """
@@ -175,13 +177,13 @@ class AutonomousCrawlerAgent:
             # Create the task prompt
             task_prompt = self._build_task_prompt(session)
 
-            # Get browser and create agent
-            browser = await self._get_browser()
+            # Get browser session and create agent
+            browser_session = await self._get_browser_session()
 
             agent = Agent(
                 task=task_prompt,
                 llm=self._llm,
-                browser=browser,
+                browser_session=browser_session,
                 max_actions_per_step=5,
             )
 

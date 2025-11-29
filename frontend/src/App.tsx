@@ -7,6 +7,10 @@ import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import AdminSources from "./pages/AdminSources";
 import DeepSearch from "./pages/DeepSearch";
+import BrowserAgent from "./pages/BrowserAgent";
+import ParallelSearch from "./pages/ParallelSearch";
+import FactCheck from "./pages/FactCheck";
+import UrlCollections from "./pages/UrlCollections";
 
 const queryClient = new QueryClient();
 
@@ -18,7 +22,11 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
+          <Route path="/search" element={<ParallelSearch />} />
+          <Route path="/fact-check" element={<FactCheck />} />
           <Route path="/deep-search" element={<DeepSearch />} />
+          <Route path="/browser-agent" element={<BrowserAgent />} />
+          <Route path="/url-collections" element={<UrlCollections />} />
           <Route path="/admin/sources" element={<AdminSources />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />

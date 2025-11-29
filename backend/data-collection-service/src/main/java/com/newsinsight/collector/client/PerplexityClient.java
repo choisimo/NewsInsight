@@ -31,8 +31,15 @@ public class PerplexityClient {
     @Value("${PERPLEXITY_MODEL:llama-3.1-sonar-large-128k-online}")
     private String model;
 
+    /**
+     * Check if Perplexity API is enabled (API key is configured)
+     */
+    public boolean isEnabled() {
+        return apiKey != null && !apiKey.isBlank();
+    }
+
     public Flux<String> streamCompletion(String prompt) {
-        if (apiKey == null || apiKey.isBlank()) {
+        if (!isEnabled()) {
             return Flux.error(new IllegalStateException("Perplexity API key is not configured"));
         }
 
