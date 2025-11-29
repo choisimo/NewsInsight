@@ -36,7 +36,7 @@ FROM base as builder
 WORKDIR /app
 
 # Install pip dependencies
-COPY requirements.txt .
+COPY backend/autonomous-crawler-service/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Install Playwright browsers
@@ -55,8 +55,8 @@ COPY --from=builder /root/.local /home/crawler/.local
 COPY --from=builder /root/.cache/ms-playwright /home/crawler/.cache/ms-playwright
 
 # Copy application code
-COPY src/ ./src/
-COPY pyproject.toml .
+COPY backend/autonomous-crawler-service/src/ ./src/
+COPY backend/autonomous-crawler-service/pyproject.toml .
 
 # Set ownership
 RUN chown -R crawler:crawler /app /home/crawler

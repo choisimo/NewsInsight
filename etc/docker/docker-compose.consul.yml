@@ -69,6 +69,7 @@ services:
       - frontend-node-modules:/app/node_modules
     environment:
       - VITE_API_BASE_URL=http://localhost:8112
+      - VITE_BROWSER_USE_URL=http://localhost:8500
     command: >
       sh -c "(npm ci --legacy-peer-deps || npm install --legacy-peer-deps) \
       && npm run dev -- --host 0.0.0.0 --port 8080"
@@ -184,7 +185,23 @@ services:
 
   redpanda-dev:
     image: docker.redpanda.com/redpandadata/redpanda:latest
-    command: ["redpanda", "start", "--overprovisioned", "--smp", "1", "--memory", "1G", "--reserve-memory", "0M", "--node-id", "0", "--check=false"]
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - 1G
+      - --reserve-memory
+      - 0M
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda-dev:9092
     ports:
       - "9092:9092"
       - "9644:9644"
@@ -212,6 +229,7 @@ services:
       context: ../../
       dockerfile: backend/autonomous-crawler-service/Dockerfile
     image: newsinsight/autonomous-crawler:local
+    restart: unless-stopped
     depends_on:
       redpanda-dev:
         condition: service_started
@@ -241,6 +259,33 @@ services:
     ports:
       - "9190:9090"  # Prometheus metrics
     shm_size: 2g  # Shared memory for browser
+    networks:
+      - default
+      - capstone-net
+
+  # Browser-Use API Server with AI Dove Integration
+  browser-use-api:
+    build:
+      context: ../../backend/browser-use
+      dockerfile: Dockerfile.api
+    image: newsinsight/browser-use-api:local
+    restart: unless-stopped
+    environment:
+      # AI Dove webhook configuration
+      - AIDOVE_WEBHOOK_URL=${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
+      # Browser settings
+      - BROWSER_HEADLESS=${BROWSER_USE_HEADLESS:-true}
+      # Server settings
+      - SERVER_PORT=8500
+      - LOG_LEVEL=${BROWSER_USE_LOG_LEVEL:-INFO}
+    ports:
+      - "8500:8500"  # Browser-Use API
+    shm_size: 2g  # Shared memory for browser
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - default
       - capstone-net

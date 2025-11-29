@@ -1,6 +1,7 @@
 """Main entry point for autonomous-crawler-service."""
 
 import asyncio
+import logging
 import signal
 import sys
 from contextlib import asynccontextmanager
@@ -40,11 +41,12 @@ def configure_logging(settings: Settings) -> None:
     else:
         processors.append(structlog.dev.ConsoleRenderer(colors=True))
 
+    # Map log level string to logging module level
+    log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+
     structlog.configure(
         processors=processors,
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(structlog, settings.log_level)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(log_level),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,

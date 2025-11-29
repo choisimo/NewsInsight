@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { FileText, TrendingUp, Clock, AlertCircle, FileQuestion, Sparkles, RefreshCw } from "lucide-react";
+import { FileText, TrendingUp, Clock, AlertCircle, FileQuestion, Sparkles, RefreshCw, Bot, Info, Search, Shield, FolderOpen } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SearchBar } from "@/components/SearchBar";
 import { SentimentChart } from "@/components/SentimentChart";
@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { getAnalysis, getArticles, openLiveAnalysisStream } from "@/lib/api";
+import { getAnalysis, getArticles, checkLiveAnalysisHealth } from "@/lib/api";
 import { useEventSource } from "@/hooks/useEventSource";
 import type { AnalysisResponse, Article } from "@/types/api";
 
@@ -24,6 +24,17 @@ const Index = () => {
   // SSE 라이브 분석 상태
   const [liveResult, setLiveResult] = useState<string | null>(null);
   const [liveStreamUrl, setLiveStreamUrl] = useState<string | null>(null);
+
+  // React Query: 라이브 분석 헬스 체크
+  const { data: liveAnalysisHealth } = useQuery({
+    queryKey: ['liveAnalysis', 'health'],
+    queryFn: checkLiveAnalysisHealth,
+    staleTime: 60_000, // 1분간 캐시
+    retry: 1,
+  });
+
+  const isLiveAnalysisEnabled = liveAnalysisHealth?.enabled ?? false;
+  const liveAnalysisProvider = liveAnalysisHealth?.provider ?? 'none';
 
   // React Query: 분석 데이터 조회
   const {
@@ -88,8 +99,8 @@ const Index = () => {
     }
   }, [searchQuery, timeWindow]);
 
-  // 분석 결과가 0개면 자동으로 라이브 스트림 시작
-  const shouldStartLiveStream = analysisData?.article_count === 0 && !liveStreamUrl && !liveResult;
+  // 분석 결과가 0개이고 라이브 분석이 활성화되어 있으면 자동으로 라이브 스트림 시작
+  const shouldStartLiveStream = analysisData?.article_count === 0 && !liveStreamUrl && !liveResult && isLiveAnalysisEnabled;
   
   if (shouldStartLiveStream && searchQuery) {
     // URL 직접 구성 (openLiveAnalysisStream이 async라서 직접 구성)
@@ -125,13 +136,43 @@ const Index = () => {
           <p className="text-lg text-muted-foreground mb-4">
             키워드 기반 뉴스 분석 및 인사이트 제공
           </p>
-          <Link
-            to="/deep-search"
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
-          >
-            <Sparkles className="h-4 w-4" />
-            Deep AI Search로 심층 분석하기
-          </Link>
+          <div className="flex flex-wrap justify-center gap-2">
+            <Link
+              to="/url-collections"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-orange-600/10 text-orange-600 hover:bg-orange-600/20 transition-colors"
+            >
+              <FolderOpen className="h-4 w-4" />
+              URL 컬렉션
+            </Link>
+            <Link
+              to="/search"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600/10 text-blue-600 hover:bg-blue-600/20 transition-colors"
+            >
+              <Search className="h-4 w-4" />
+              통합 검색
+            </Link>
+            <Link
+              to="/fact-check"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-green-600/10 text-green-600 hover:bg-green-600/20 transition-colors"
+            >
+              <Shield className="h-4 w-4" />
+              팩트체크
+            </Link>
+            <Link
+              to="/deep-search"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+            >
+              <Sparkles className="h-4 w-4" />
+              Deep AI Search
+            </Link>
+            <Link
+              to="/browser-agent"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+            >
+              <Bot className="h-4 w-4" />
+              Browser AI Agent
+            </Link>
+          </div>
         </header>
 
         <div className="mb-8">
@@ -204,17 +245,67 @@ const Index = () => {
               <FileQuestion className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
               <h3 className="text-xl font-semibold mb-2">로컬 데이터가 없습니다</h3>
               <p className="text-muted-foreground max-w-md mx-auto mb-6">
-                '<span className="font-semibold">{analysisData.query}</span>'에 대한 수집된 뉴스 데이터가 없어
-                Agent API를 통해 실시간 웹 분석을 수행하고 있습니다.
+                '<span className="font-semibold">{analysisData.query}</span>'에 대한 수집된 뉴스 데이터가 없습니다.
               </p>
-              <div className="text-left max-w-2xl mx-auto bg-muted rounded-md p-4 max-h-64 overflow-auto whitespace-pre-wrap text-sm">
-                {liveResult ?? "실시간 분석 결과를 불러오는 중입니다..."}
-              </div>
-              {sseStatus === 'connected' && (
-                <p className="text-xs text-muted-foreground mt-3">스트림 수신 중...</p>
-              )}
-              {sseStatus === 'error' && (
-                <p className="text-xs text-destructive mt-3">스트림 연결 실패</p>
+              
+              {isLiveAnalysisEnabled ? (
+                <>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {liveAnalysisProvider === 'perplexity' 
+                      ? 'Perplexity API를 통해 실시간 웹 분석을 수행하고 있습니다.'
+                      : 'Crawl4AI + AI Dove를 통해 실시간 웹 분석을 수행하고 있습니다.'}
+                  </p>
+                  {liveAnalysisProvider === 'crawl+aidove' && (
+                    <Badge variant="outline" className="mb-4 border-blue-500 text-blue-600">
+                      <Info className="h-3 w-3 mr-1" />
+                      크롤링 기반 분석 (Perplexity 대체)
+                    </Badge>
+                  )}
+                  <div className="text-left max-w-2xl mx-auto bg-muted rounded-md p-4 max-h-64 overflow-auto whitespace-pre-wrap text-sm">
+                    {liveResult ?? "실시간 분석 결과를 불러오는 중입니다..."}
+                  </div>
+                  {sseStatus === 'connected' && (
+                    <p className="text-xs text-muted-foreground mt-3">스트림 수신 중...</p>
+                  )}
+                  {sseStatus === 'error' && (
+                    <p className="text-xs text-destructive mt-3">스트림 연결 실패</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="max-w-md mx-auto mb-6 p-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                    <div className="flex items-start gap-3">
+                      <Info className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                      <div className="text-left">
+                        <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                          실시간 분석 기능이 비활성화되어 있습니다
+                        </p>
+                        <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+                          AI 제공자가 설정되지 않았습니다 (Perplexity API 또는 AI Dove).
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    다른 방법으로 분석을 시도해 보세요:
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                    <Link
+                      to="/deep-search"
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-accent text-accent-foreground hover:bg-accent/90 transition-colors"
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      Deep AI Search
+                    </Link>
+                    <Link
+                      to="/browser-agent"
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                    >
+                      <Bot className="h-4 w-4" />
+                      Browser AI Agent
+                    </Link>
+                  </div>
+                </>
               )}
             </Card>
           ) : (

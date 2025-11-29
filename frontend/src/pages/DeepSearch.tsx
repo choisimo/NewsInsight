@@ -15,6 +15,8 @@ import {
   ArrowLeft,
   RefreshCw,
   Trash2,
+  LayoutGrid,
+  List,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { InsightFlow } from "@/components/insight";
 import {
   startDeepSearch,
   getDeepSearchStatus,
@@ -44,8 +47,8 @@ const STATUS_CONFIG = {
 } as const;
 
 const STANCE_CONFIG = {
-  pro: { label: "찬성", icon: ThumbsUp, color: "text-green-600", bgColor: "bg-green-100 dark:bg-green-900/30" },
-  con: { label: "반대", icon: ThumbsDown, color: "text-red-600", bgColor: "bg-red-100 dark:bg-red-900/30" },
+  pro: { label: "찬성", icon: ThumbsUp, color: "text-teal-600", bgColor: "bg-teal-100 dark:bg-teal-900/30" },
+  con: { label: "반대", icon: ThumbsDown, color: "text-coral-600", bgColor: "bg-coral-100 dark:bg-coral-900/30" },
   neutral: { label: "중립", icon: Minus, color: "text-gray-600", bgColor: "bg-gray-100 dark:bg-gray-800" },
 } as const;
 
@@ -58,7 +61,7 @@ const EvidenceCard = ({ evidence }: EvidenceCardProps) => {
   const StanceIcon = stanceInfo.icon;
 
   return (
-    <Card className={`${stanceInfo.bgColor} border-l-4 ${evidence.stance === 'pro' ? 'border-l-green-500' : evidence.stance === 'con' ? 'border-l-red-500' : 'border-l-gray-400'}`}>
+    <Card className={`${stanceInfo.bgColor} border-l-4 ${evidence.stance === 'pro' ? 'border-l-teal-500' : evidence.stance === 'con' ? 'border-l-coral-500' : 'border-l-gray-400'}`}>
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
@@ -100,7 +103,7 @@ const StanceChart = ({ distribution }: StanceChartProps) => {
   if (total === 0) return null;
 
   return (
-    <Card>
+    <Card className="glass">
       <CardHeader className="pb-2">
         <CardTitle className="text-lg">입장 분포</CardTitle>
         <CardDescription>수집된 증거의 입장 분석 결과</CardDescription>
@@ -109,7 +112,7 @@ const StanceChart = ({ distribution }: StanceChartProps) => {
         <div className="flex gap-1 h-8 rounded-lg overflow-hidden">
           {distribution.proRatio > 0 && (
             <div
-              className="bg-green-500 flex items-center justify-center text-white text-xs font-medium transition-all"
+              className="bg-teal-500 flex items-center justify-center text-white text-xs font-medium transition-all"
               style={{ width: `${distribution.proRatio}%` }}
             >
               {distribution.proRatio >= 10 && `${distribution.proRatio.toFixed(0)}%`}
@@ -125,7 +128,7 @@ const StanceChart = ({ distribution }: StanceChartProps) => {
           )}
           {distribution.conRatio > 0 && (
             <div
-              className="bg-red-500 flex items-center justify-center text-white text-xs font-medium transition-all"
+              className="bg-coral-500 flex items-center justify-center text-white text-xs font-medium transition-all"
               style={{ width: `${distribution.conRatio}%` }}
             >
               {distribution.conRatio >= 10 && `${distribution.conRatio.toFixed(0)}%`}
@@ -134,7 +137,7 @@ const StanceChart = ({ distribution }: StanceChartProps) => {
         </div>
         <div className="grid grid-cols-3 gap-4 text-center">
           <div>
-            <div className="flex items-center justify-center gap-1 text-green-600 mb-1">
+            <div className="flex items-center justify-center gap-1 text-teal-600 mb-1">
               <ThumbsUp className="h-4 w-4" />
               <span className="font-bold">{distribution.pro}</span>
             </div>
@@ -148,7 +151,7 @@ const StanceChart = ({ distribution }: StanceChartProps) => {
             <span className="text-xs text-muted-foreground">중립</span>
           </div>
           <div>
-            <div className="flex items-center justify-center gap-1 text-red-600 mb-1">
+            <div className="flex items-center justify-center gap-1 text-coral-600 mb-1">
               <ThumbsDown className="h-4 w-4" />
               <span className="font-bold">{distribution.con}</span>
             </div>
@@ -171,6 +174,7 @@ const DeepSearch = () => {
   const [baseUrl, setBaseUrl] = useState("");
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [activeStance, setActiveStance] = useState<"all" | "pro" | "con" | "neutral">("all");
+  const [viewMode, setViewMode] = useState<"insight" | "list">("insight");
 
   // React Query: 서비스 헬스 체크
   const { data: healthData } = useQuery({
@@ -454,79 +458,129 @@ const DeepSearch = () => {
         {/* Results */}
         {result && (
           <div className="space-y-6">
-            {/* Summary */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="text-center">
-                    <p className="text-3xl font-bold">{result.evidence.length}</p>
-                    <p className="text-sm text-muted-foreground">수집된 증거</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="text-center">
-                    <p className="text-3xl font-bold text-green-600">
-                      {result.stanceDistribution.proRatio.toFixed(0)}%
-                    </p>
-                    <p className="text-sm text-muted-foreground">찬성 비율</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="text-center">
-                    <p className="text-3xl font-bold text-red-600">
-                      {result.stanceDistribution.conRatio.toFixed(0)}%
-                    </p>
-                    <p className="text-sm text-muted-foreground">반대 비율</p>
-                  </div>
-                </CardContent>
-              </Card>
+            {/* View Mode Toggle */}
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold">분석 결과</h2>
+              <div className="flex items-center gap-2 p-1 rounded-lg bg-muted">
+                <Button
+                  variant={viewMode === "insight" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setViewMode("insight")}
+                  className="gap-2"
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                  <span className="hidden sm:inline">인사이트 뷰</span>
+                </Button>
+                <Button
+                  variant={viewMode === "list" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setViewMode("list")}
+                  className="gap-2"
+                >
+                  <List className="h-4 w-4" />
+                  <span className="hidden sm:inline">상세 목록</span>
+                </Button>
+              </div>
             </div>
 
-            {/* Stance Distribution */}
-            <StanceChart distribution={result.stanceDistribution} />
+            {/* Insight Flow View (Card Carousel) */}
+            {viewMode === "insight" && (
+              <InsightFlow
+                result={result}
+                onShare={() => {
+                  navigator.clipboard.writeText(window.location.href);
+                  toast({
+                    title: "링크 복사됨",
+                    description: "분석 결과 링크가 클립보드에 복사되었습니다.",
+                  });
+                }}
+                onDownload={() => {
+                  toast({
+                    title: "준비 중",
+                    description: "이미지 다운로드 기능은 곧 제공될 예정입니다.",
+                  });
+                }}
+              />
+            )}
 
-            {/* Evidence List */}
-            <Card>
-              <CardHeader>
-                <CardTitle>수집된 증거</CardTitle>
-                <CardDescription>
-                  '{result.topic}'에 대해 수집된 다양한 입장의 증거입니다.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Tabs value={activeStance} onValueChange={(v) => setActiveStance(v as typeof activeStance)}>
-                  <TabsList className="mb-4">
-                    <TabsTrigger value="all">
-                      전체 ({result.evidence.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="pro" className="text-green-600">
-                      찬성 ({result.stanceDistribution.pro})
-                    </TabsTrigger>
-                    <TabsTrigger value="neutral">
-                      중립 ({result.stanceDistribution.neutral})
-                    </TabsTrigger>
-                    <TabsTrigger value="con" className="text-red-600">
-                      반대 ({result.stanceDistribution.con})
-                    </TabsTrigger>
-                  </TabsList>
-                  <TabsContent value={activeStance} className="space-y-4">
-                    {filteredEvidence.length > 0 ? (
-                      filteredEvidence.map((evidence) => (
-                        <EvidenceCard key={evidence.id} evidence={evidence} />
-                      ))
-                    ) : (
-                      <div className="text-center py-8 text-muted-foreground">
-                        해당 입장의 증거가 없습니다.
+            {/* List View (Original) */}
+            {viewMode === "list" && (
+              <>
+                {/* Summary */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <Card className="glass">
+                    <CardContent className="pt-6">
+                      <div className="text-center">
+                        <p className="text-3xl font-bold">{result.evidence.length}</p>
+                        <p className="text-sm text-muted-foreground">수집된 증거</p>
                       </div>
-                    )}
-                  </TabsContent>
-                </Tabs>
-              </CardContent>
-            </Card>
+                    </CardContent>
+                  </Card>
+                  <Card className="glass">
+                    <CardContent className="pt-6">
+                      <div className="text-center">
+                        <p className="text-3xl font-bold text-teal-600">
+                          {result.stanceDistribution.proRatio.toFixed(0)}%
+                        </p>
+                        <p className="text-sm text-muted-foreground">찬성 비율</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card className="glass">
+                    <CardContent className="pt-6">
+                      <div className="text-center">
+                        <p className="text-3xl font-bold text-coral-600">
+                          {result.stanceDistribution.conRatio.toFixed(0)}%
+                        </p>
+                        <p className="text-sm text-muted-foreground">반대 비율</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Stance Distribution */}
+                <StanceChart distribution={result.stanceDistribution} />
+
+                {/* Evidence List */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>수집된 증거</CardTitle>
+                    <CardDescription>
+                      '{result.topic}'에 대해 수집된 다양한 입장의 증거입니다.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Tabs value={activeStance} onValueChange={(v) => setActiveStance(v as typeof activeStance)}>
+                      <TabsList className="mb-4">
+                        <TabsTrigger value="all">
+                          전체 ({result.evidence.length})
+                        </TabsTrigger>
+                        <TabsTrigger value="pro" className="text-teal-600">
+                          찬성 ({result.stanceDistribution.pro})
+                        </TabsTrigger>
+                        <TabsTrigger value="neutral">
+                          중립 ({result.stanceDistribution.neutral})
+                        </TabsTrigger>
+                        <TabsTrigger value="con" className="text-coral-600">
+                          반대 ({result.stanceDistribution.con})
+                        </TabsTrigger>
+                      </TabsList>
+                      <TabsContent value={activeStance} className="space-y-4">
+                        {filteredEvidence.length > 0 ? (
+                          filteredEvidence.map((evidence) => (
+                            <EvidenceCard key={evidence.id} evidence={evidence} />
+                          ))
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            해당 입장의 증거가 없습니다.
+                          </div>
+                        )}
+                      </TabsContent>
+                    </Tabs>
+                  </CardContent>
+                </Card>
+              </>
+            )}
 
             {/* Meta Info */}
             <div className="text-center text-xs text-muted-foreground">
