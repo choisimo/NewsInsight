@@ -202,6 +202,8 @@ const DeepSearch = () => {
   const isHealthy = healthData?.enabled ?? null;
 
   // SSE connection for real-time updates
+  const sseEnabled = !!currentJobId;
+
   const {
     status: sseStatus,
     currentStatus,
@@ -213,7 +215,7 @@ const DeepSearch = () => {
   } = useDeepSearchSSE({
     jobId: currentJobId,
     topic,
-    enabled: !!currentJobId && !isTerminalStatus(currentStatus || ''),
+    enabled: sseEnabled,
     autoAddToBackground: true,
     onComplete: (result) => {
       queryClient.setQueryData(['deepSearch', 'result', currentJobId], result);

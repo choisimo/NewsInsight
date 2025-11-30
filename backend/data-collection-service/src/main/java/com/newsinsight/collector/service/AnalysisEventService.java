@@ -9,6 +9,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -161,25 +162,27 @@ public class AnalysisEventService {
      * @param analysis The complete analysis result
      */
     public void publishAnalysisComplete(Long articleId, ArticleAnalysis analysis) {
+        // Build analysis map using HashMap since we have more than 10 entries
+        Map<String, Object> analysisMap = new HashMap<>();
+        analysisMap.put("reliabilityScore", analysis.getReliabilityScore() != null ? analysis.getReliabilityScore() : 0);
+        analysisMap.put("reliabilityGrade", analysis.getReliabilityGrade() != null ? analysis.getReliabilityGrade() : "unknown");
+        analysisMap.put("reliabilityColor", analysis.getReliabilityColor());
+        analysisMap.put("sentimentLabel", analysis.getSentimentLabel() != null ? analysis.getSentimentLabel() : "neutral");
+        analysisMap.put("sentimentScore", analysis.getSentimentScore() != null ? analysis.getSentimentScore() : 0);
+        analysisMap.put("biasLabel", analysis.getBiasLabel());
+        analysisMap.put("biasScore", analysis.getBiasScore());
+        analysisMap.put("factcheckStatus", analysis.getFactcheckStatus());
+        analysisMap.put("misinfoRisk", analysis.getMisinfoRisk());
+        analysisMap.put("riskTags", analysis.getRiskTags());
+        analysisMap.put("topics", analysis.getTopics());
+        analysisMap.put("summary", analysis.getSummary());
+        analysisMap.put("fullyAnalyzed", analysis.getFullyAnalyzed());
+
         ServerSentEvent<Object> event = ServerSentEvent.builder()
                 .event("analysis_complete")
                 .data(Map.of(
                         "articleId", articleId,
-                        "analysis", Map.of(
-                                "reliabilityScore", analysis.getReliabilityScore() != null ? analysis.getReliabilityScore() : 0,
-                                "reliabilityGrade", analysis.getReliabilityGrade() != null ? analysis.getReliabilityGrade() : "unknown",
-                                "reliabilityColor", analysis.getReliabilityColor(),
-                                "sentimentLabel", analysis.getSentimentLabel() != null ? analysis.getSentimentLabel() : "neutral",
-                                "sentimentScore", analysis.getSentimentScore() != null ? analysis.getSentimentScore() : 0,
-                                "biasLabel", analysis.getBiasLabel(),
-                                "biasScore", analysis.getBiasScore(),
-                                "factcheckStatus", analysis.getFactcheckStatus(),
-                                "misinfoRisk", analysis.getMisinfoRisk(),
-                                "riskTags", analysis.getRiskTags(),
-                                "topics", analysis.getTopics(),
-                                "summary", analysis.getSummary(),
-                                "fullyAnalyzed", analysis.getFullyAnalyzed()
-                        ),
+                        "analysis", analysisMap,
                         "timestamp", System.currentTimeMillis()
                 ))
                 .build();

@@ -388,7 +388,7 @@ const ParallelSearch = () => {
     queryKey: ["unifiedSearch", "health"],
     queryFn: checkUnifiedSearchHealth,
     staleTime: 60_000,
-    retry: 1,
+    retry: 0,
   });
 
   const isHealthy = healthData?.status === "available";
@@ -662,7 +662,7 @@ const ParallelSearch = () => {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder="뉴스 키워드를 입력하세요... (예: AI 기술, 경제 전망, 정치 이슈)"
-                    disabled={isSearching || !isHealthy}
+                    disabled={isSearching}
                     className="text-lg h-12"
                   />
                 </div>
@@ -682,7 +682,11 @@ const ParallelSearch = () => {
                       취소
                     </Button>
                   ) : (
-                    <Button type="submit" disabled={!query.trim() || !isHealthy} size="lg">
+                    <Button
+                      type="submit"
+                      disabled={!query.trim() || isHealthy === false}
+                      size="lg"
+                    >
                       <Search className="h-4 w-4 mr-2" />
                       검색
                     </Button>

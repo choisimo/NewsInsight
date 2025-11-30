@@ -55,19 +55,21 @@ const HEARTBEAT_TIMEOUT = 35000; // 35 seconds (server sends every 30s)
 // ============================================
 
 const resolveBaseUrl = (): string => {
+  // 개발 환경: Vite proxy 사용 (상대 경로)
+  if (import.meta.env.DEV) {
+    return '';
+  }
+
   if (import.meta.env.VITE_API_BASE_URL) {
     return import.meta.env.VITE_API_BASE_URL as string;
   }
+
+  // 프로덕션: 현재 호스트 사용
   if (typeof window !== 'undefined') {
-    try {
-      const url = new URL(window.location.href);
-      url.port = '8080';
-      return url.origin;
-    } catch {
-      // ignore
-    }
+    return window.location.origin;
   }
-  return 'http://localhost:8080';
+
+  return '';
 };
 
 // ============================================

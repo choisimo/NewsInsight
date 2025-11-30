@@ -47,19 +47,21 @@ interface UseAnalysisSSEReturn {
 }
 
 const getApiBaseUrl = (): string => {
+  // 개발 환경: Vite proxy 사용 (상대 경로)
+  if (import.meta.env.DEV) {
+    return '';
+  }
+
   if (import.meta.env.VITE_API_BASE_URL) {
     return import.meta.env.VITE_API_BASE_URL as string;
   }
-  if (typeof window !== "undefined") {
-    try {
-      const url = new URL(window.location.href);
-      url.port = "8080";
-      return url.origin;
-    } catch {
-      // ignore
-    }
+
+  // 프로덕션: 현재 호스트 사용
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
   }
-  return "http://localhost:8080";
+
+  return '';
 };
 
 export function useAnalysisSSE({

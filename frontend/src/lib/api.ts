@@ -9,27 +9,40 @@ import type {
 
 let apiInstance: ReturnType<typeof axios.create> | null = null;
 
+/**
+ * 개발 환경에서는 Vite proxy를 통해 상대 경로 사용
+ * 프로덕션에서는 환경변수 또는 동적 config 사용
+ */
 const resolveInitialBaseUrl = (): string => {
+  // 개발 환경: Vite proxy 사용 (상대 경로)
+  if (import.meta.env.DEV) {
+    return '';
+  }
+
+  // 프로덕션: 환경변수 우선
   if (import.meta.env.VITE_API_BASE_URL) {
     return import.meta.env.VITE_API_BASE_URL as string;
   }
 
+  // 프로덕션 fallback: 현재 호스트 사용
   if (typeof window !== 'undefined') {
-    try {
-      const url = new URL(window.location.href);
-      url.port = '8080';
-      return url.origin;
-    } catch {
-      // ignore
-    }
+    return window.location.origin;
   }
 
-  return 'http://localhost:8080';
+  return '';
 };
 
 const fetchConfiguredBaseUrl = async (initialBaseUrl: string): Promise<string> => {
+  // 개발 환경에서는 proxy 사용하므로 config fetch 불필요
+  if (import.meta.env.DEV) {
+    return '';
+  }
+
   try {
-    const response = await fetch(`${initialBaseUrl}/api/v1/config/frontend`);
+    const configUrl = initialBaseUrl 
+      ? `${initialBaseUrl}/api/v1/config/frontend`
+      : '/api/v1/config/frontend';
+    const response = await fetch(configUrl);
     if (!response.ok) {
       return initialBaseUrl;
     }
@@ -311,7 +324,31 @@ export const openDeepSearchStream = async (jobId: string): Promise<EventSource> 
 // Browser-Use API with Human-in-the-Loop
 // ============================================
 
-const BROWSER_USE_BASE_URL = import.meta.env.VITE_BROWSER_USE_URL || 'http://localhost:8500';
+/**
+ * 개발 환경에서는 Vite proxy를 통해 상대 경로 사용
+ * 프로덕션에서는 환경변수 사용
+ */
+const getBrowserUseBaseUrl = (): string => {
+  // 개발 환경: Vite proxy 사용 (상대 경로)
+  if (import.meta.env.DEV) {
+    return '';
+  }
+
+  if (import.meta.env.VITE_BROWSER_USE_URL) {
+    return import.meta.env.VITE_BROWSER_USE_URL as string;
+  }
+  
+  // 프로덕션: 현재 호스트에서 8500 포트 사용
+  if (typeof window !== 'undefined') {
+    const url = new URL(window.location.href);
+    url.port = '8500';
+    return url.origin;
+  }
+  
+  return 'http://localhost:8500';
+};
+
+const BROWSER_USE_BASE_URL = getBrowserUseBaseUrl();
 
 export type BrowserJobStatus = 'pending' | 'running' | 'waiting_human' | 'completed' | 'failed' | 'cancelled';
 export type InterventionType = 'captcha' | 'login' | 'navigation' | 'extraction' | 'confirmation' | 'custom';
@@ -523,6 +560,13 @@ export const listBrowserJobs = async (
  * Get WebSocket URL for browser job
  */
 export const getBrowserWSUrl = (jobId: string): string => {
+  // 개발 환경: Vite proxy 사용
+  if (import.meta.env.DEV) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/ws/${jobId}`;
+  }
+  
+  // 프로덕션: Browser-Use URL 사용
   const wsBase = BROWSER_USE_BASE_URL.replace(/^http/, 'ws');
   return `${wsBase}/ws/${jobId}`;
 };

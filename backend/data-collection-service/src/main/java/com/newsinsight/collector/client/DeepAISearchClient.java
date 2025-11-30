@@ -32,10 +32,10 @@ public class DeepAISearchClient {
     @Value("${collector.deep-search.enabled:true}")
     private boolean enabled;
 
-    @Value("${collector.deep-search.webhook-url:https://n8n.nodove.com/webhook/crawl-agent}")
+    @Value("${collector.deep-search.webhook-url:${COLLECTOR_DEEP_SEARCH_WEBHOOK_URL:https://n8n.nodove.com/webhook/crawl-agent}}")
     private String webhookUrl;
 
-    @Value("${collector.deep-search.callback-base-url:http://localhost:8081}")
+    @Value("${collector.deep-search.callback-base-url:${COLLECTOR_CALLBACK_BASE_URL:http://collector-service:8081}}")
     private String callbackBaseUrl;
 
     @Value("${collector.deep-search.callback-token:}")

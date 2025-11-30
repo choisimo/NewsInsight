@@ -103,6 +103,56 @@ spring:
               args:
                 redis-rate-limiter.replenishRate: 100
                 redis-rate-limiter.burstCapacity: 150
+
+        # Search API - 통합 검색
+        - id: search-api
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/search/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+
+        # Config API - 프론트엔드 설정
+        - id: config-api
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/config/**
+
+        # Browser-Use API - AI 브라우저 자동화
+        - id: browser-use-browse
+          uri: ${BROWSER_USE_URL:http://localhost:8500}
+          predicates:
+            - Path=/browse/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+
+        - id: browser-use-jobs
+          uri: ${BROWSER_USE_URL:http://localhost:8500}
+          predicates:
+            - Path=/jobs/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+
+        - id: browser-use-health
+          uri: ${BROWSER_USE_URL:http://localhost:8500}
+          predicates:
+            - Path=/health
+
+        # Browser-Use WebSocket
+        - id: browser-use-websocket
+          uri: ${BROWSER_USE_WS_URL:ws://localhost:8500}
+          predicates:
+            - Path=/ws/**
+
       # 전역 CORS 설정
       globalcors:
         cors-configurations:
@@ -114,6 +164,7 @@ spring:
               - PUT
               - DELETE
               - PATCH
+              - OPTIONS
             allowedHeaders: "*"
             allowCredentials: true
             maxAge: 3600
