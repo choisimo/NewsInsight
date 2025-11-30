@@ -51,7 +51,16 @@ public class UnifiedSearchController {
     ) {
         log.info("Starting streaming search for query: '{}', window: {}", query, window);
 
-        return unifiedSearchService.searchParallel(query, window)
+        // 즉시 연결 확인 이벤트 전송 (클라이언트가 연결 성공을 확인할 수 있도록)
+        Flux<ServerSentEvent<String>> initialEvent = Flux.just(
+                ServerSentEvent.<String>builder()
+                        .id("init")
+                        .event("connected")
+                        .data("{\"message\": \"검색 시스템에 연결되었습니다. 병렬 검색을 시작합니다...\", \"query\": \"" + query + "\"}")
+                        .build()
+        );
+
+        Flux<ServerSentEvent<String>> searchEvents = unifiedSearchService.searchParallel(query, window)
                 .map(event -> {
                     try {
                         String data = objectMapper.writeValueAsString(event);
@@ -67,13 +76,16 @@ public class UnifiedSearchController {
                                 .data("{\"error\": \"Serialization failed\"}")
                                 .build();
                     }
-                })
-                .concatWith(Flux.just(
-                        ServerSentEvent.<String>builder()
-                                .event("done")
-                                .data("{\"message\": \"Search completed\"}")
-                                .build()
-                ))
+                });
+
+        Flux<ServerSentEvent<String>> doneEvent = Flux.just(
+                ServerSentEvent.<String>builder()
+                        .event("done")
+                        .data("{\"message\": \"Search completed\"}")
+                        .build()
+        );
+
+        return Flux.concat(initialEvent, searchEvents, doneEvent)
                 .doOnError(e -> log.error("Stream search error: {}", e.getMessage()))
                 .timeout(Duration.ofMinutes(2))
                 .onErrorResume(e -> Flux.just(

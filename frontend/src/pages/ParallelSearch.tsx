@@ -70,7 +70,7 @@ const SOURCE_CONFIG = {
 type SourceType = keyof typeof SOURCE_CONFIG;
 
 interface SourceStatus {
-  status: "idle" | "searching" | "complete" | "error";
+  status: "idle" | "connecting" | "searching" | "complete" | "error";
   message?: string;
   count: number;
 }
@@ -230,6 +230,9 @@ const SourceStatusIndicator = ({ source, status }: SourceStatusIndicatorProps) =
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm">{config.label}</span>
+          {status.status === "connecting" && (
+            <Loader2 className="h-3 w-3 animate-spin text-yellow-600" />
+          )}
           {status.status === "searching" && (
             <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
           )}
@@ -242,6 +245,7 @@ const SourceStatusIndicator = ({ source, status }: SourceStatusIndicatorProps) =
         </div>
         <p className="text-xs text-muted-foreground truncate">
           {status.status === "idle" && "대기 중"}
+          {status.status === "connecting" && "연결 중..."}
           {status.status === "searching" && (status.message || "검색 중...")}
           {status.status === "complete" && `${status.count}개 결과`}
           {status.status === "error" && (status.message || "오류 발생")}
@@ -322,6 +326,9 @@ const ParallelSearch = () => {
   
   // Priority URLs from URL Collections page
   const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
+  
+  // Connection status state for initial SSE feedback
+  const [connectionStatus, setConnectionStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
   
   // Results state
   const [results, setResults] = useState<UnifiedSearchResult[]>([]);
@@ -406,6 +413,7 @@ const ParallelSearch = () => {
     setResults([]);
     setAiContent("");
     setAiComplete(false);
+    setConnectionStatus("idle");
     setSourceStatus({
       database: { status: "idle", count: 0 },
       web: { status: "idle", count: 0 },
@@ -424,12 +432,33 @@ const ParallelSearch = () => {
     
     resetState();
     setIsSearching(true);
+    setConnectionStatus("connecting");
 
     try {
       // Extract URLs from priority list
       const priorityUrlList = priorityUrls.map((p) => p.url);
       const es = await openUnifiedSearchStream(query.trim(), timeWindow, priorityUrlList.length > 0 ? priorityUrlList : undefined);
       eventSourceRef.current = es;
+
+      // Handle initial connection event from server
+      es.addEventListener("connected", (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent).data);
+          setConnectionStatus("connected");
+          toast({
+            title: "연결됨",
+            description: data.message || "검색 시스템에 연결되었습니다.",
+          });
+          // Set all sources to "searching" state
+          setSourceStatus({
+            database: { status: "searching", message: "검색 시작...", count: 0 },
+            web: { status: "searching", message: "검색 시작...", count: 0 },
+            ai: { status: "searching", message: "분석 시작...", count: 0 },
+          });
+        } catch {
+          setConnectionStatus("connected");
+        }
+      });
 
       es.onmessage = (event) => {
         try {
@@ -509,12 +538,14 @@ const ParallelSearch = () => {
       es.addEventListener("error", (errorEvent) => {
         console.error("SSE error:", errorEvent);
         setIsSearching(false);
+        setConnectionStatus("error");
         es.close();
         eventSourceRef.current = null;
       });
 
       es.onerror = () => {
         setIsSearching(false);
+        setConnectionStatus("error");
         es.close();
         eventSourceRef.current = null;
         toast({
@@ -527,6 +558,7 @@ const ParallelSearch = () => {
     } catch (error) {
       console.error("Failed to start search:", error);
       setIsSearching(false);
+      setConnectionStatus("error");
       toast({
         title: "오류",
         description: "검색을 시작할 수 없습니다.",
@@ -541,11 +573,18 @@ const ParallelSearch = () => {
       eventSourceRef.current = null;
     }
     setIsSearching(false);
+    setConnectionStatus("idle");
     toast({
       title: "취소됨",
       description: "검색이 취소되었습니다.",
     });
   }, [toast]);
+
+  // Retry search on error
+  const handleRetry = useCallback(() => {
+    const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+    handleSearch(fakeEvent);
+  }, [handleSearch]);
 
   const filteredResults = activeTab === "all"
     ? results
@@ -706,13 +745,31 @@ const ParallelSearch = () => {
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
                 <Loader2 className="h-5 w-5 animate-spin" />
-                병렬 검색 진행 중...
+                {connectionStatus === "connecting" ? "서버에 연결 중..." : "병렬 검색 진행 중..."}
               </CardTitle>
               <CardDescription>
-                3개의 소스에서 동시에 검색하고 있습니다.
+                {connectionStatus === "connecting" 
+                  ? "검색 서버와 실시간 연결을 설정하고 있습니다..."
+                  : connectionStatus === "connected"
+                    ? "3개의 소스에서 동시에 검색하고 있습니다."
+                    : "연결 대기 중..."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Connection Status Indicator */}
+              {connectionStatus === "connecting" && (
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 text-sm">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>SSE 스트림 연결 대기 중... 첫 이벤트를 기다리고 있습니다.</span>
+                </div>
+              )}
+              {connectionStatus === "connected" && (
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 text-sm">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>서버에 연결됨 - 실시간 결과가 도착하는 대로 표시됩니다.</span>
+                </div>
+              )}
+              
               <Progress value={searchProgress} className="h-2" />
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {(Object.keys(SOURCE_CONFIG) as SourceType[]).map((source) => (
@@ -803,6 +860,34 @@ const ParallelSearch = () => {
               </CardContent>
             </Card>
           </div>
+        )}
+
+        {/* Connection Error State with Retry */}
+        {connectionStatus === "error" && !isSearching && results.length === 0 && (
+          <Card className="mb-8 border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10">
+            <CardContent className="pt-6">
+              <div className="flex flex-col items-center text-center gap-4">
+                <div className="p-4 rounded-full bg-red-100 dark:bg-red-900/30">
+                  <AlertCircle className="h-8 w-8 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg mb-1">연결 오류</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    검색 서버와의 연결에 실패했습니다. 네트워크 연결을 확인하거나 잠시 후 다시 시도해주세요.
+                  </p>
+                  <div className="flex gap-2 justify-center">
+                    <Button onClick={handleRetry} variant="default" className="gap-2">
+                      <RefreshCw className="h-4 w-4" />
+                      다시 시도
+                    </Button>
+                    <Button onClick={resetState} variant="outline">
+                      초기화
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* Empty State / Welcome */}

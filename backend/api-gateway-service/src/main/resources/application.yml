@@ -35,85 +35,53 @@ spring:
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/data/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 100
-                redis-rate-limiter.burstCapacity: 150
+          # NOTE: Redis RateLimiter 비활성화 - Redis 없이도 동작하도록 설정
+          # Redis 도입 시 아래 주석 해제
+          # filters:
+          #   - name: RequestRateLimiter
+          #     args:
+          #       redis-rate-limiter.replenishRate: 100
+          #       redis-rate-limiter.burstCapacity: 150
 
         # Collector 서비스 - 소스 관리 (SourceController)
         - id: collector-sources
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/sources/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 100
-                redis-rate-limiter.burstCapacity: 150
 
         # Collector 서비스 - 수집 작업 (CollectionController)
         - id: collector-collections
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/collections/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 100
-                redis-rate-limiter.burstCapacity: 150
 
         # Articles & Analysis - 프론트엔드 API
         - id: articles-root
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/articles
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 100
-                redis-rate-limiter.burstCapacity: 150
 
         - id: articles-alias
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/articles/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 100
-                redis-rate-limiter.burstCapacity: 150
 
         - id: analysis-root
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/analysis
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 100
-                redis-rate-limiter.burstCapacity: 150
 
         - id: analysis-alias
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/analysis/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 100
-                redis-rate-limiter.burstCapacity: 150
 
-        # Search API - 통합 검색
+        # Search API - 통합 검색 (SSE 스트리밍)
+        # NOTE: SSE 스트리밍은 RateLimiter와 호환성 문제가 있어 비활성화
         - id: search-api
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/search/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 50
-                redis-rate-limiter.burstCapacity: 100
 
         # Config API - 프론트엔드 설정
         - id: config-api
@@ -126,21 +94,11 @@ spring:
           uri: ${BROWSER_USE_URL:http://localhost:8500}
           predicates:
             - Path=/browse/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 10
-                redis-rate-limiter.burstCapacity: 20
 
         - id: browser-use-jobs
           uri: ${BROWSER_USE_URL:http://localhost:8500}
           predicates:
             - Path=/jobs/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 50
-                redis-rate-limiter.burstCapacity: 100
 
         - id: browser-use-health
           uri: ${BROWSER_USE_URL:http://localhost:8500}
@@ -169,12 +127,13 @@ spring:
             allowCredentials: true
             maxAge: 3600
   
-  # Redis 설정 (Rate Limiting용)
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:}
+  # Redis 설정 (Rate Limiting용) - 선택적 의존성
+  # NOTE: Redis 없이도 동작하도록 설정. Redis 도입 시 활성화
+  # data:
+  #   redis:
+  #     host: ${REDIS_HOST:localhost}
+  #     port: ${REDIS_PORT:6379}
+  #     password: ${REDIS_PASSWORD:}
 
 server:
   port: ${PORT:8000}

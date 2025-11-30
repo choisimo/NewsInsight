@@ -688,7 +688,10 @@ export const openUnifiedSearchStream = async (
 ): Promise<EventSource> => {
   const initialBase = resolveInitialBaseUrl();
   const baseURL = await fetchConfiguredBaseUrl(initialBase);
-  const url = new URL('/api/v1/search/stream', baseURL);
+  
+  // 개발 환경에서 baseURL이 빈 문자열이면 현재 origin 사용
+  const effectiveBaseURL = baseURL || (typeof globalThis.window !== 'undefined' ? globalThis.window.location.origin : '');
+  const url = new URL('/api/v1/search/stream', effectiveBaseURL);
   url.searchParams.set('query', query);
   url.searchParams.set('window', window);
   if (priorityUrls && priorityUrls.length > 0) {
