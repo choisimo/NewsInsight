@@ -645,24 +645,39 @@ const FactCheck = () => {
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
-                {priorityUrls.map((item) => (
-                  <Badge
-                    key={item.id}
-                    variant="outline"
-                    className="pl-2 pr-1 py-1 flex items-center gap-1 bg-white dark:bg-gray-800"
-                  >
-                    <LinkIcon className="h-3 w-3 text-blue-500" />
-                    <span className="max-w-[200px] truncate" title={item.url}>
-                      {item.name || new URL(item.url).hostname}
-                    </span>
-                    <button
-                      onClick={() => removePriorityUrl(item.id)}
-                      className="ml-1 p-0.5 rounded hover:bg-muted transition-colors"
+                {priorityUrls.map((item) => {
+                  // Safe URL hostname extraction
+                  let displayName = item.name;
+                  if (!displayName && item.url) {
+                    try {
+                      displayName = new URL(item.url).hostname;
+                    } catch {
+                      displayName = item.url;
+                    }
+                  }
+                  if (!displayName) {
+                    displayName = '알 수 없는 URL';
+                  }
+
+                  return (
+                    <Badge
+                      key={item.id}
+                      variant="outline"
+                      className="pl-2 pr-1 py-1 flex items-center gap-1 bg-white dark:bg-gray-800"
                     >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))}
+                      <LinkIcon className="h-3 w-3 text-blue-500" />
+                      <span className="max-w-[200px] truncate" title={item.url || ''}>
+                        {displayName}
+                      </span>
+                      <button
+                        onClick={() => removePriorityUrl(item.id)}
+                        className="ml-1 p-0.5 rounded hover:bg-muted transition-colors"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  );
+                })}
               </div>
               <p className="text-xs text-muted-foreground mt-3">
                 <Link to="/url-collections" className="text-blue-600 hover:underline">

@@ -1,0 +1,13 @@
+# ML Add-on Server Dependencies
+
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.5.0
+
+# For ngrok tunnel (Colab용)
+pyngrok>=7.0.0
+
+# Optional: ML 모델 사용 시
+# transformers>=4.35.0
+# torch>=2.1.0
+# kobert-tokenizer>=0.5.2

@@ -3,8 +3,13 @@ package com.newsinsight.collector.service;
 import com.newsinsight.collector.client.Crawl4aiClient;
 import com.newsinsight.collector.client.PerplexityClient;
 import com.newsinsight.collector.dto.ArticleDto;
+import com.newsinsight.collector.dto.ArticleWithAnalysisDto;
 import com.newsinsight.collector.entity.CollectedData;
 import com.newsinsight.collector.entity.DataSource;
+import com.newsinsight.collector.entity.analysis.ArticleAnalysis;
+import com.newsinsight.collector.entity.analysis.ArticleDiscussion;
+import com.newsinsight.collector.repository.ArticleAnalysisRepository;
+import com.newsinsight.collector.repository.ArticleDiscussionRepository;
 import com.newsinsight.collector.repository.CollectedDataRepository;
 import com.newsinsight.collector.repository.DataSourceRepository;
 import lombok.Builder;
@@ -26,8 +31,11 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Unified Search Service - 병렬 검색 통합 서비스
@@ -42,6 +50,8 @@ public class UnifiedSearchService {
 
     private final CollectedDataRepository collectedDataRepository;
     private final DataSourceRepository dataSourceRepository;
+    private final ArticleAnalysisRepository articleAnalysisRepository;
+    private final ArticleDiscussionRepository articleDiscussionRepository;
     private final PerplexityClient perplexityClient;
     private final Crawl4aiClient crawl4aiClient;
     private final CrawlSearchService crawlSearchService;
@@ -65,6 +75,38 @@ public class UnifiedSearchService {
         private String publishedAt;
         private Double relevanceScore;
         private String category;        // 주제 분류
+        
+        // ========== 분석 결과 (optional) ==========
+        private Boolean analyzed;           // 분석 완료 여부
+        private String analysisStatus;      // pending, partial, complete
+        
+        // 신뢰도
+        private Double reliabilityScore;    // 0-100
+        private String reliabilityGrade;    // high, medium, low
+        private String reliabilityColor;    // green, yellow, red
+        
+        // 감정 분석
+        private String sentimentLabel;      // positive, negative, neutral
+        private Double sentimentScore;      // -1 ~ 1
+        
+        // 편향도
+        private String biasLabel;           // left, right, center
+        private Double biasScore;           // -1 ~ 1
+        
+        // 팩트체크
+        private String factcheckStatus;     // verified, suspicious, unverified
+        private String misinfoRisk;         // low, mid, high
+        
+        // 위험 태그
+        private List<String> riskTags;
+        
+        // 토픽
+        private List<String> topics;
+        
+        // 여론 정보
+        private Boolean hasDiscussion;
+        private Integer totalCommentCount;
+        private String discussionSentiment;
     }
 
     @Data
@@ -144,9 +186,28 @@ public class UnifiedSearchService {
                 Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(
                         query, since, pageRequest);
 
+                // 분석 결과 일괄 조회 (N+1 방지)
+                List<Long> articleIds = page.getContent().stream()
+                        .map(CollectedData::getId)
+                        .filter(id -> id != null)
+                        .toList();
+                
+                Map<Long, ArticleAnalysis> analysisMap = articleIds.isEmpty() 
+                        ? Map.of()
+                        : articleAnalysisRepository.findByArticleIdIn(articleIds).stream()
+                                .collect(Collectors.toMap(ArticleAnalysis::getArticleId, Function.identity()));
+                
+                Map<Long, ArticleDiscussion> discussionMap = articleIds.isEmpty()
+                        ? Map.of()
+                        : articleDiscussionRepository.findByArticleIdIn(articleIds).stream()
+                                .collect(Collectors.toMap(ArticleDiscussion::getArticleId, Function.identity()));
+
                 int count = 0;
                 for (CollectedData data : page.getContent()) {
-                    SearchResult result = convertToSearchResult(data);
+                    ArticleAnalysis analysis = data.getId() != null ? analysisMap.get(data.getId()) : null;
+                    ArticleDiscussion discussion = data.getId() != null ? discussionMap.get(data.getId()) : null;
+                    
+                    SearchResult result = convertToSearchResult(data, analysis, discussion);
                     sink.next(SearchEvent.builder()
                             .eventType("result")
                             .source("database")
@@ -175,7 +236,7 @@ public class UnifiedSearchService {
         });
     }
 
-    private SearchResult convertToSearchResult(CollectedData data) {
+    private SearchResult convertToSearchResult(CollectedData data, ArticleAnalysis analysis, ArticleDiscussion discussion) {
         DataSource source = data.getSourceId() != null
                 ? dataSourceRepository.findById(data.getSourceId()).orElse(null)
                 : null;
@@ -185,7 +246,7 @@ public class UnifiedSearchService {
                 ? data.getPublishedDate().toString()
                 : (data.getCollectedAt() != null ? data.getCollectedAt().toString() : null);
 
-        return SearchResult.builder()
+        SearchResult.SearchResultBuilder builder = SearchResult.builder()
                 .id(data.getId() != null ? data.getId().toString() : UUID.randomUUID().toString())
                 .source("database")
                 .sourceLabel(sourceName)
@@ -193,8 +254,39 @@ public class UnifiedSearchService {
                 .snippet(buildSnippet(data.getContent()))
                 .url(data.getUrl())
                 .publishedAt(publishedAt)
-                .relevanceScore(data.getQualityScore())
-                .build();
+                .relevanceScore(data.getQualityScore());
+        
+        // 분석 결과 추가
+        if (analysis != null) {
+            builder.analyzed(true)
+                    .analysisStatus(analysis.getFullyAnalyzed() != null && analysis.getFullyAnalyzed() 
+                            ? "complete" : "partial")
+                    .reliabilityScore(analysis.getReliabilityScore())
+                    .reliabilityGrade(analysis.getReliabilityGrade())
+                    .reliabilityColor(analysis.getReliabilityColor())
+                    .sentimentLabel(analysis.getSentimentLabel())
+                    .sentimentScore(analysis.getSentimentScore())
+                    .biasLabel(analysis.getBiasLabel())
+                    .biasScore(analysis.getBiasScore())
+                    .factcheckStatus(analysis.getFactcheckStatus())
+                    .misinfoRisk(analysis.getMisinfoRisk())
+                    .riskTags(analysis.getRiskTags())
+                    .topics(analysis.getTopics());
+        } else {
+            builder.analyzed(false)
+                    .analysisStatus("pending");
+        }
+        
+        // 여론 분석 결과 추가
+        if (discussion != null) {
+            builder.hasDiscussion(true)
+                    .totalCommentCount(discussion.getTotalCommentCount())
+                    .discussionSentiment(discussion.getOverallSentiment());
+        } else {
+            builder.hasDiscussion(false);
+        }
+        
+        return builder.build();
     }
 
     // ============================================

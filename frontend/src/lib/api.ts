@@ -279,6 +279,33 @@ export const checkDeepSearchHealth = async (): Promise<{
   return response.data;
 };
 
+/**
+ * Get the SSE stream URL for a deep search job.
+ * This URL can be used with EventSource for real-time updates.
+ */
+export const getDeepSearchStreamUrl = async (jobId: string): Promise<string> => {
+  const initialBase = resolveInitialBaseUrl();
+  const baseURL = await fetchConfiguredBaseUrl(initialBase);
+  return `${baseURL}/api/v1/analysis/deep/${jobId}/stream`;
+};
+
+/**
+ * Open SSE stream for deep search job status updates.
+ * Returns an EventSource that emits real-time updates about the job.
+ * 
+ * Event types:
+ * - status: Job status changed (PENDING, IN_PROGRESS, COMPLETED, FAILED, etc.)
+ * - progress: Progress update with percentage and message
+ * - evidence: New evidence collected
+ * - complete: Job completed with full result
+ * - error: Error occurred
+ * - heartbeat: Keep-alive signal
+ */
+export const openDeepSearchStream = async (jobId: string): Promise<EventSource> => {
+  const url = await getDeepSearchStreamUrl(jobId);
+  return new EventSource(url);
+};
+
 
 // ============================================
 // Browser-Use API with Human-in-the-Loop
@@ -518,6 +545,36 @@ export interface UnifiedSearchResult {
   publishedAt?: string;
   relevanceScore?: number;
   category?: string;
+  
+  // Analysis fields (only for database source)
+  analyzed?: boolean;
+  analysisStatus?: 'pending' | 'partial' | 'complete';
+  
+  // Reliability
+  reliabilityScore?: number;
+  reliabilityGrade?: 'high' | 'medium' | 'low';
+  reliabilityColor?: 'green' | 'yellow' | 'red';
+  
+  // Sentiment
+  sentimentLabel?: 'positive' | 'negative' | 'neutral';
+  sentimentScore?: number;
+  
+  // Bias
+  biasLabel?: string;
+  biasScore?: number;
+  
+  // Factcheck
+  factcheckStatus?: 'verified' | 'suspicious' | 'conflicting' | 'unverified';
+  misinfoRisk?: 'low' | 'mid' | 'high';
+  
+  // Tags & topics
+  riskTags?: string[];
+  topics?: string[];
+  
+  // Discussion
+  hasDiscussion?: boolean;
+  totalCommentCount?: number;
+  discussionSentiment?: string;
 }
 
 /**

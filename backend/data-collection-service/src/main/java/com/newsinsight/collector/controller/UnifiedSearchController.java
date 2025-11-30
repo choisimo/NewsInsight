@@ -1,6 +1,7 @@
 package com.newsinsight.collector.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.newsinsight.collector.service.AnalysisEventService;
 import com.newsinsight.collector.service.FactVerificationService;
 import com.newsinsight.collector.service.UnifiedSearchService;
 import lombok.RequiredArgsConstructor;
@@ -12,8 +13,10 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 import java.time.Duration;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 통합 검색 컨트롤러
@@ -29,6 +32,7 @@ public class UnifiedSearchController {
 
     private final UnifiedSearchService unifiedSearchService;
     private final FactVerificationService factVerificationService;
+    private final AnalysisEventService analysisEventService;
     private final ObjectMapper objectMapper;
 
     /**
@@ -137,9 +141,76 @@ public class UnifiedSearchController {
                 "features", Map.of(
                         "parallelSearch", true,
                         "deepAnalysis", true,
-                        "factVerification", true
+                        "factVerification", true,
+                        "analysisStreaming", true
                 ),
                 "description", "통합 검색 및 심층 분석 서비스"
+        ));
+    }
+
+    /**
+     * 분석 결과 실시간 업데이트 스트림 (SSE)
+     * 
+     * 특정 기사 ID들의 분석 완료 이벤트를 실시간으로 구독합니다.
+     * 검색 결과 페이지에서 분석 중인 기사들의 상태를 실시간으로 업데이트할 때 사용합니다.
+     * 
+     * @param articleIds 구독할 기사 ID 목록 (comma-separated)
+     * @return SSE 이벤트 스트림
+     */
+    @GetMapping(value = "/analysis/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<Object>> streamAnalysisUpdates(
+            @RequestParam(required = false) String articleIds
+    ) {
+        Set<Long> ids = new HashSet<>();
+        if (articleIds != null && !articleIds.isBlank()) {
+            try {
+                for (String idStr : articleIds.split(",")) {
+                    ids.add(Long.parseLong(idStr.trim()));
+                }
+            } catch (NumberFormatException e) {
+                log.warn("Invalid article IDs format: {}", articleIds);
+            }
+        }
+
+        log.info("Starting analysis stream for {} article IDs", ids.size());
+
+        return analysisEventService.subscribeToAnalysisUpdates(ids)
+                .timeout(Duration.ofMinutes(30))
+                .onErrorResume(e -> {
+                    log.error("Analysis stream error: {}", e.getMessage());
+                    return Flux.just(
+                            ServerSentEvent.builder()
+                                    .event("error")
+                                    .data(Map.of("error", e.getMessage()))
+                                    .build()
+                    );
+                });
+    }
+
+    /**
+     * 분석 구독 기사 추가
+     * 
+     * @param articleIds 추가할 기사 ID 목록
+     */
+    @PostMapping("/analysis/watch")
+    public ResponseEntity<Map<String, Object>> watchArticles(@RequestBody List<Long> articleIds) {
+        if (articleIds != null && !articleIds.isEmpty()) {
+            analysisEventService.watchArticles(new HashSet<>(articleIds));
+        }
+        return ResponseEntity.ok(Map.of(
+                "message", "Articles added to watch list",
+                "watchedCount", analysisEventService.getWatchedCount()
+        ));
+    }
+
+    /**
+     * 분석 스트리밍 상태 확인
+     */
+    @GetMapping("/analysis/stream/status")
+    public ResponseEntity<Map<String, Object>> analysisStreamStatus() {
+        return ResponseEntity.ok(Map.of(
+                "subscriberCount", analysisEventService.getSubscriberCount(),
+                "watchedArticleCount", analysisEventService.getWatchedCount()
         ));
     }
 

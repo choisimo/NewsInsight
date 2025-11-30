@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 /**
  * Service for managing deep AI search operations.
  * Handles job creation, callback processing, and result retrieval.
+ * Publishes SSE events via DeepSearchEventService for real-time updates.
  */
 @Service
 @RequiredArgsConstructor
@@ -41,6 +42,7 @@ public class DeepAnalysisService {
     private final DeepAISearchClient deepAISearchClient;
     private final CrawlJobRepository crawlJobRepository;
     private final CrawlEvidenceRepository crawlEvidenceRepository;
+    private final DeepSearchEventService deepSearchEventService;
 
     @Value("${collector.deep-search.timeout-minutes:30}")
     private int timeoutMinutes;
@@ -73,6 +75,9 @@ public class DeepAnalysisService {
         crawlJobRepository.save(job);
         log.info("Created deep search job: id={}, topic={}", jobId, topic);
 
+        // Publish initial status via SSE
+        deepSearchEventService.publishStatusUpdate(jobId, "PENDING", "Job created, starting search...");
+
         // Trigger n8n workflow asynchronously
         triggerSearchAsync(jobId, topic, baseUrl);
 
@@ -85,17 +90,27 @@ public class DeepAnalysisService {
     @Async
     public void triggerSearchAsync(String jobId, String topic, String baseUrl) {
         try {
+            // Publish progress update
+            deepSearchEventService.publishProgressUpdate(jobId, 10, "Triggering AI search workflow...");
+            
             var response = deepAISearchClient.triggerSearchSync(jobId, topic, baseUrl);
             
             if (response.success()) {
                 updateJobStatus(jobId, CrawlJobStatus.IN_PROGRESS);
+                // Publish SSE status update
+                deepSearchEventService.publishStatusUpdate(jobId, "IN_PROGRESS", "Search in progress...");
+                deepSearchEventService.publishProgressUpdate(jobId, 20, "AI search started, gathering evidence...");
                 log.info("Deep search triggered successfully: jobId={}", jobId);
             } else {
                 updateJobStatus(jobId, CrawlJobStatus.FAILED, response.message());
+                // Publish SSE error
+                deepSearchEventService.publishError(jobId, response.message());
                 log.error("Failed to trigger deep search: jobId={}, message={}", jobId, response.message());
             }
         } catch (Exception e) {
             updateJobStatus(jobId, CrawlJobStatus.FAILED, e.getMessage());
+            // Publish SSE error
+            deepSearchEventService.publishError(jobId, e.getMessage());
             log.error("Exception triggering deep search: jobId={}", jobId, e);
         }
     }
@@ -126,6 +141,9 @@ public class DeepAnalysisService {
             return getSearchResult(jobId);
         }
 
+        // Publish progress update
+        deepSearchEventService.publishProgressUpdate(jobId, 70, "Processing callback, saving evidence...");
+
         // Process evidence
         List<CrawlEvidence> evidenceList = List.of();
         if (payload.evidence() != null && !payload.evidence().isEmpty()) {
@@ -133,13 +151,31 @@ public class DeepAnalysisService {
                     .map(e -> CrawlEvidence.fromClientEvidence(jobId, e))
                     .collect(Collectors.toList());
             crawlEvidenceRepository.saveAll(evidenceList);
+            
+            // Publish each evidence via SSE
+            int evidenceCount = 0;
+            for (CrawlEvidence evidence : evidenceList) {
+                evidenceCount++;
+                EvidenceDto evidenceDto = toEvidenceDto(evidence);
+                deepSearchEventService.publishEvidence(jobId, evidenceDto);
+                
+                // Update progress as evidence is processed
+                int progress = 70 + (int) ((evidenceCount / (double) evidenceList.size()) * 25);
+                deepSearchEventService.publishProgressUpdate(jobId, progress, 
+                        String.format("Processing evidence %d/%d", evidenceCount, evidenceList.size()));
+            }
         }
 
         // Update job status
         if ("completed".equalsIgnoreCase(payload.status())) {
             job.markCompleted(evidenceList.size());
+            // Publish completion event
+            deepSearchEventService.publishProgressUpdate(jobId, 100, "Completed");
+            deepSearchEventService.publishComplete(jobId, toJobDto(job));
         } else {
             job.markFailed("Workflow returned status: " + payload.status());
+            // Publish error event
+            deepSearchEventService.publishError(jobId, "Workflow returned status: " + payload.status());
         }
         crawlJobRepository.save(job);
 
@@ -219,6 +255,10 @@ public class DeepAnalysisService {
             job.setCompletedAt(LocalDateTime.now());
             crawlJobRepository.save(job);
             log.info("Cancelled job: {}", jobId);
+            
+            // Publish cancellation via SSE
+            deepSearchEventService.publishStatusUpdate(jobId, "CANCELLED", "Job was cancelled by user");
+            deepSearchEventService.publishComplete(jobId, toJobDto(job));
         }
 
         return toJobDto(job);
@@ -231,9 +271,21 @@ public class DeepAnalysisService {
     @Transactional
     public void timeoutOldJobs() {
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(timeoutMinutes);
+        
+        // Find jobs that will be timed out before marking them
+        List<CrawlJob> jobsToTimeout = crawlJobRepository.findByStatusInAndCreatedAtBefore(
+                List.of(CrawlJobStatus.PENDING, CrawlJobStatus.IN_PROGRESS),
+                cutoff
+        );
+        
         int count = crawlJobRepository.markTimedOutJobs(cutoff);
         if (count > 0) {
             log.info("Marked {} jobs as timed out", count);
+            
+            // Publish timeout events for each job
+            for (CrawlJob job : jobsToTimeout) {
+                deepSearchEventService.publishError(job.getId(), "Job timed out after " + timeoutMinutes + " minutes");
+            }
         }
     }
 

@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { useState, useCallback, useEffect } from "react";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search,
@@ -17,6 +17,8 @@ import {
   Trash2,
   LayoutGrid,
   List,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,6 +28,8 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { InsightFlow } from "@/components/insight";
+import { useDeepSearchSSE } from "@/hooks/useDeepSearchSSE";
+import { useBackgroundTasks } from "@/contexts/BackgroundTaskContext";
 import {
   startDeepSearch,
   getDeepSearchStatus,
@@ -169,12 +173,23 @@ const isTerminalStatus = (status: string) =>
 const DeepSearch = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { getTask } = useBackgroundTasks();
   
   const [topic, setTopic] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [activeStance, setActiveStance] = useState<"all" | "pro" | "con" | "neutral">("all");
   const [viewMode, setViewMode] = useState<"insight" | "list">("insight");
+
+  // Load jobId from URL params or background task
+  useEffect(() => {
+    const jobIdFromUrl = searchParams.get('jobId');
+    if (jobIdFromUrl && jobIdFromUrl !== currentJobId) {
+      setCurrentJobId(jobIdFromUrl);
+    }
+  }, [searchParams, currentJobId]);
 
   // React Query: 서비스 헬스 체크
   const { data: healthData } = useQuery({
@@ -186,54 +201,64 @@ const DeepSearch = () => {
 
   const isHealthy = healthData?.enabled ?? null;
 
-  // React Query: Job 상태 폴링 (자동 갱신)
-  const { data: currentJob, isFetching: isPolling } = useQuery({
-    queryKey: ['deepSearch', 'job', currentJobId],
-    queryFn: () => getDeepSearchStatus(currentJobId!),
-    enabled: !!currentJobId,
-    refetchInterval: (query) => {
-      const data = query.state.data as DeepSearchJob | undefined;
-      if (!data) return 2000;
-      return isTerminalStatus(data.status) ? false : 2000;
-    },
-    staleTime: 1000,
-  });
-
-  // React Query: Job 결과 조회 (완료 시에만)
-  const { data: result } = useQuery({
-    queryKey: ['deepSearch', 'result', currentJobId],
-    queryFn: () => getDeepSearchResult(currentJobId!),
-    enabled: !!currentJobId && currentJob?.status === 'COMPLETED',
-    staleTime: Infinity, // 결과는 변하지 않으므로 영구 캐시
-  });
-
-  // 완료/실패 알림
-  const prevStatusRef = { current: '' };
-  if (currentJob && currentJob.status !== prevStatusRef.current) {
-    prevStatusRef.current = currentJob.status;
-    
-    if (currentJob.status === 'COMPLETED' && result) {
+  // SSE connection for real-time updates
+  const {
+    status: sseStatus,
+    currentStatus,
+    progress,
+    progressMessage,
+    evidenceCount,
+    result: sseResult,
+    error: sseError,
+  } = useDeepSearchSSE({
+    jobId: currentJobId,
+    topic,
+    enabled: !!currentJobId && !isTerminalStatus(currentStatus || ''),
+    autoAddToBackground: true,
+    onComplete: (result) => {
+      queryClient.setQueryData(['deepSearch', 'result', currentJobId], result);
       toast({
         title: "분석 완료",
         description: `${result.evidence.length}개의 증거를 수집했습니다.`,
       });
-    } else if (currentJob.status === 'FAILED' || currentJob.status === 'TIMEOUT') {
+    },
+    onError: (error) => {
       toast({
         title: "분석 실패",
-        description: currentJob.errorMessage || "알 수 없는 오류가 발생했습니다.",
+        description: error,
         variant: "destructive",
       });
-    }
-  }
+    },
+  });
+
+  // Fallback: Fetch result if we have jobId but no SSE result (e.g., page refresh)
+  const { data: fetchedResult } = useQuery({
+    queryKey: ['deepSearch', 'result', currentJobId],
+    queryFn: () => getDeepSearchResult(currentJobId!),
+    enabled: !!currentJobId && !sseResult && currentStatus === 'COMPLETED',
+    staleTime: Infinity,
+  });
+
+  // Fallback: Get job status if we have jobId but no SSE connection yet
+  const { data: fetchedJob } = useQuery({
+    queryKey: ['deepSearch', 'job', currentJobId],
+    queryFn: () => getDeepSearchStatus(currentJobId!),
+    enabled: !!currentJobId && sseStatus === 'disconnected',
+    staleTime: 5000,
+  });
+
+  const result = sseResult || fetchedResult;
+  const jobStatus = currentStatus || fetchedJob?.status;
 
   // React Query: 검색 시작 Mutation
   const startMutation = useMutation({
     mutationFn: startDeepSearch,
     onSuccess: (job) => {
       setCurrentJobId(job.jobId);
+      setSearchParams({ jobId: job.jobId });
       toast({
         title: "분석 시작",
-        description: "Deep AI Search를 시작했습니다. 잠시 기다려주세요.",
+        description: "Deep AI Search를 시작했습니다. 백그라운드에서 계속 실행됩니다.",
       });
     },
     onError: (error: any) => {
@@ -248,8 +273,7 @@ const DeepSearch = () => {
   // React Query: 취소 Mutation
   const cancelMutation = useMutation({
     mutationFn: () => cancelDeepSearch(currentJobId!),
-    onSuccess: (cancelled) => {
-      queryClient.setQueryData(['deepSearch', 'job', currentJobId], cancelled);
+    onSuccess: () => {
       toast({
         title: "취소됨",
         description: "분석이 취소되었습니다.",
@@ -270,6 +294,7 @@ const DeepSearch = () => {
 
     // 이전 결과 초기화
     setCurrentJobId(null);
+    setSearchParams({});
     queryClient.removeQueries({ queryKey: ['deepSearch', 'job'] });
     queryClient.removeQueries({ queryKey: ['deepSearch', 'result'] });
 
@@ -277,7 +302,7 @@ const DeepSearch = () => {
       topic: topic.trim(),
       baseUrl: baseUrl.trim() || undefined,
     });
-  }, [topic, baseUrl, startMutation, queryClient]);
+  }, [topic, baseUrl, startMutation, queryClient, setSearchParams]);
 
   const handleCancel = useCallback(() => {
     if (!currentJobId) return;
@@ -289,16 +314,47 @@ const DeepSearch = () => {
     setTopic("");
     setBaseUrl("");
     setActiveStance("all");
+    setSearchParams({});
     queryClient.removeQueries({ queryKey: ['deepSearch', 'job'] });
     queryClient.removeQueries({ queryKey: ['deepSearch', 'result'] });
-  }, [queryClient]);
+  }, [queryClient, setSearchParams]);
 
   const filteredEvidence = result?.evidence.filter(
     (e) => activeStance === "all" || e.stance === activeStance
   ) ?? [];
 
-  const isProcessing = currentJob && 
-    (currentJob.status === "PENDING" || currentJob.status === "IN_PROGRESS");
+  const isProcessing = currentJobId && 
+    (jobStatus === "PENDING" || jobStatus === "IN_PROGRESS");
+
+  const connectionStatusBadge = () => {
+    if (!currentJobId || isTerminalStatus(jobStatus || '')) return null;
+    
+    switch (sseStatus) {
+      case 'connected':
+        return (
+          <Badge variant="secondary" className="text-green-600">
+            <Wifi className="h-3 w-3 mr-1" />
+            실시간 연결됨
+          </Badge>
+        );
+      case 'connecting':
+        return (
+          <Badge variant="secondary" className="animate-pulse">
+            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+            연결 중...
+          </Badge>
+        );
+      case 'error':
+        return (
+          <Badge variant="secondary" className="text-orange-600">
+            <WifiOff className="h-3 w-3 mr-1" />
+            재연결 시도 중
+          </Badge>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="min-h-screen py-8">
@@ -321,12 +377,7 @@ const DeepSearch = () => {
                 AI 기반 심층 분석으로 주제에 대한 다양한 입장과 증거를 수집합니다.
               </p>
             </div>
-            {isPolling && isProcessing && (
-              <Badge variant="secondary" className="animate-pulse">
-                <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                실시간 상태 확인 중
-              </Badge>
-            )}
+            {connectionStatusBadge()}
           </div>
           {isHealthy === false && (
             <div className="mt-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm flex items-center gap-2">
@@ -386,7 +437,7 @@ const DeepSearch = () => {
                     </>
                   )}
                 </Button>
-                {(currentJob || result) && (
+                {(currentJobId || result) && (
                   <Button type="button" variant="outline" onClick={handleReset}>
                     <RefreshCw className="h-4 w-4 mr-2" />
                     초기화
@@ -398,20 +449,28 @@ const DeepSearch = () => {
         </Card>
 
         {/* Processing Status */}
-        {isProcessing && currentJob && (
+        {isProcessing && (
           <Card className="mb-8">
             <CardContent className="py-8">
               <div className="text-center space-y-4">
                 <Loader2 className="h-12 w-12 mx-auto animate-spin text-primary" />
                 <div>
                   <h3 className="font-semibold text-lg">
-                    {currentJob.status === "PENDING" ? "대기 중..." : "분석 중..."}
+                    {jobStatus === "PENDING" ? "대기 중..." : "분석 중..."}
                   </h3>
                   <p className="text-sm text-muted-foreground">
-                    '{currentJob.topic}'에 대해 다양한 출처를 분석하고 있습니다.
+                    {progressMessage || `'${topic}'에 대해 다양한 출처를 분석하고 있습니다.`}
                   </p>
+                  {evidenceCount > 0 && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {evidenceCount}개 증거 수집됨
+                    </p>
+                  )}
                 </div>
-                <Progress value={currentJob.status === "PENDING" ? 10 : 50} className="max-w-md mx-auto" />
+                <Progress value={progress || (jobStatus === "PENDING" ? 10 : 50)} className="max-w-md mx-auto" />
+                <p className="text-xs text-muted-foreground">
+                  다른 페이지로 이동해도 백그라운드에서 계속 실행됩니다.
+                </p>
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -427,23 +486,23 @@ const DeepSearch = () => {
         )}
 
         {/* Error/Cancelled State */}
-        {currentJob && (currentJob.status === "FAILED" || currentJob.status === "CANCELLED" || currentJob.status === "TIMEOUT") && !result && (
+        {currentJobId && (jobStatus === "FAILED" || jobStatus === "CANCELLED" || jobStatus === "TIMEOUT") && !result && (
           <Card className="mb-8">
             <CardContent className="py-8">
               <div className="text-center space-y-4">
-                {currentJob.status === "FAILED" ? (
+                {jobStatus === "FAILED" ? (
                   <XCircle className="h-12 w-12 mx-auto text-destructive" />
-                ) : currentJob.status === "TIMEOUT" ? (
+                ) : jobStatus === "TIMEOUT" ? (
                   <AlertCircle className="h-12 w-12 mx-auto text-orange-500" />
                 ) : (
                   <XCircle className="h-12 w-12 mx-auto text-muted-foreground" />
                 )}
                 <div>
                   <h3 className="font-semibold text-lg">
-                    {STATUS_CONFIG[currentJob.status].label}
+                    {STATUS_CONFIG[jobStatus as keyof typeof STATUS_CONFIG]?.label || jobStatus}
                   </h3>
                   <p className="text-sm text-muted-foreground">
-                    {currentJob.errorMessage || "분석이 완료되지 않았습니다."}
+                    {sseError || "분석이 완료되지 않았습니다."}
                   </p>
                 </div>
                 <Button variant="outline" onClick={handleReset}>
@@ -592,14 +651,17 @@ const DeepSearch = () => {
         )}
 
         {/* Empty State */}
-        {!currentJob && !result && (
+        {!currentJobId && !result && (
           <div className="text-center py-16">
             <div className="inline-block p-4 rounded-full bg-accent/10 mb-4">
               <Search className="h-12 w-12 text-accent" />
             </div>
             <h2 className="text-xl font-semibold mb-2">주제를 입력하세요</h2>
-            <p className="text-muted-foreground max-w-md mx-auto">
+            <p className="text-muted-foreground max-w-md mx-auto mb-4">
               분석하고 싶은 주제를 입력하면 AI가 웹에서 다양한 입장의 증거를 수집하고 분류합니다.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              분석 중에도 다른 페이지를 탐색할 수 있으며, 상단의 작업 인디케이터에서 진행 상황을 확인할 수 있습니다.
             </p>
           </div>
         )}

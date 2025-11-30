@@ -1,0 +1,73 @@
+# ML Add-ons Docker Compose
+# 모든 ML Add-on 서비스를 함께 실행합니다.
+
+version: '3.8'
+
+services:
+  # 감정 분석 Add-on
+  sentiment-addon:
+    build:
+      context: ./sentiment-addon
+      dockerfile: Dockerfile
+    container_name: newsinsight-sentiment-addon
+    ports:
+      - "8100:8100"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ml-addons-network
+    labels:
+      - "addon.type=sentiment"
+      - "addon.version=1.0.0"
+
+  # 팩트체크 Add-on
+  factcheck-addon:
+    build:
+      context: ./factcheck-addon
+      dockerfile: Dockerfile
+    container_name: newsinsight-factcheck-addon
+    ports:
+      - "8101:8101"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ml-addons-network
+    labels:
+      - "addon.type=factcheck"
+      - "addon.version=1.0.0"
+
+  # 편향도 분석 Add-on
+  bias-addon:
+    build:
+      context: ./bias-addon
+      dockerfile: Dockerfile
+    container_name: newsinsight-bias-addon
+    ports:
+      - "8102:8102"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8102/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ml-addons-network
+    labels:
+      - "addon.type=bias"
+      - "addon.version=1.0.0"
+
+networks:
+  ml-addons-network:
+    driver: bridge
+    name: newsinsight-ml-addons

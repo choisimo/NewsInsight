@@ -1,0 +1,9 @@
+# Bias Analysis Add-on Dependencies
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.5.0
+
+# Optional: ML 기반 편향 분석시 필요
+# transformers>=4.35.0    # 사전학습 모델
+# torch>=2.0.0            # PyTorch
+# kobert-transformers     # 한국어 BERT

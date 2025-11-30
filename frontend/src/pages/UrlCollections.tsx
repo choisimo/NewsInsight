@@ -475,9 +475,15 @@ const UrlCollections = () => {
     // Store selected URLs in sessionStorage for the analysis page
     sessionStorage.setItem('analysis-urls', JSON.stringify(selectedUrls.map(u => u.url)));
     
-    // Navigate to the analysis page
+    // Navigate to the analysis page with proper PriorityUrl objects
     navigate(mode === 'search' ? '/search' : '/fact-check', {
-      state: { priorityUrls: selectedUrls.map(u => u.url) },
+      state: {
+        priorityUrls: selectedUrls.map((u) => ({
+          id: u.id,
+          url: u.url,
+          name: u.name,
+        })),
+      },
     });
   }, [getSelectedUrls, navigate, toast]);
 

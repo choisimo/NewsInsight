@@ -1,0 +1,10 @@
+# Fact-Check Add-on Dependencies
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.5.0
+
+# Optional: 실제 팩트체크 기능 강화시 필요
+# httpx>=0.25.0           # 외부 API 호출
+# beautifulsoup4>=4.12.0  # 웹 스크래핑
+# openai>=1.0.0           # LLM 기반 검증
+# sentence-transformers   # 유사도 비교
