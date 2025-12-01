@@ -4,13 +4,17 @@ import com.newsinsight.collector.client.DeepAISearchClient;
 import com.newsinsight.collector.dto.*;
 import com.newsinsight.collector.entity.CrawlJobStatus;
 import com.newsinsight.collector.service.DeepAnalysisService;
+import com.newsinsight.collector.service.DeepSearchEventService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Map;
@@ -31,6 +35,7 @@ public class DeepAnalysisController {
 
     private final DeepAnalysisService deepAnalysisService;
     private final DeepAISearchClient deepAISearchClient;
+    private final DeepSearchEventService deepSearchEventService;
 
     /**
      * Start a new deep AI search job.
@@ -90,6 +95,57 @@ public class DeepAnalysisController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }
+    }
+
+    /**
+     * SSE stream for real-time job updates.
+     * Clients can subscribe to this endpoint to receive live updates for a job.
+     * 
+     * Events:
+     * - status: Job status changes (PENDING, IN_PROGRESS, COMPLETED, FAILED)
+     * - progress: Progress updates (0-100%)
+     * - evidence: New evidence found during the search
+     * - complete: Job completed successfully
+     * - error: Job failed with error
+     * - heartbeat: Keep-alive ping every 15 seconds
+     * 
+     * @param jobId The job ID to subscribe to
+     * @return SSE event stream
+     */
+    @GetMapping(value = "/{jobId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<Object>> streamJobUpdates(@PathVariable String jobId) {
+        log.info("New SSE client subscribed to job: {}", jobId);
+        
+        // Validate job exists
+        try {
+            DeepSearchJobDto job = deepAnalysisService.getJobStatus(jobId);
+            
+            // If job is already completed or failed, send immediate result and close
+            if ("COMPLETED".equals(job.getStatus()) || "FAILED".equals(job.getStatus()) 
+                    || "CANCELLED".equals(job.getStatus()) || "TIMEOUT".equals(job.getStatus())) {
+                log.info("Job {} already finished with status: {}, sending immediate result", jobId, job.getStatus());
+                return Flux.just(ServerSentEvent.builder()
+                        .event("complete")
+                        .data(Map.of(
+                                "jobId", jobId,
+                                "job", job,
+                                "timestamp", System.currentTimeMillis()
+                        ))
+                        .build());
+            }
+        } catch (IllegalArgumentException e) {
+            log.warn("SSE subscription for unknown job: {}", jobId);
+            return Flux.just(ServerSentEvent.builder()
+                    .event("error")
+                    .data(Map.of(
+                            "jobId", jobId,
+                            "error", "Job not found: " + jobId,
+                            "timestamp", System.currentTimeMillis()
+                    ))
+                    .build());
+        }
+
+        return deepSearchEventService.getJobEventStream(jobId);
     }
 
     /**

@@ -41,7 +41,11 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         "/api/v1/config",
         "/api/v1/sources",
         "/api/v1/collections",
-        "/api/v1/data"
+        "/api/v1/data",
+        "/api/v1/search",
+        "/browse",
+        "/jobs",
+        "/ws"
     );
     
     @Value("${JWT_SECRET_KEY:default-secret-key-please-change-in-consul}")

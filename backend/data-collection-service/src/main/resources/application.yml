@@ -182,7 +182,7 @@ collector:
       # Cron expression for cleanup job (3 AM daily)
       cleanup-cron: ${COLLECTOR_AI_ORCHESTRATION_CLEANUP_CRON:0 0 3 * * ?}
       # n8n webhook base URL for AI agents
-      n8n-base-url: ${COLLECTOR_AI_N8N_BASE_URL:https://n8n.nodove.com/webhook}
+      n8n-base-url: ${COLLECTOR_N8N_BASE_URL:${COLLECTOR_AI_N8N_BASE_URL:https://n8n.nodove.com/webhook}}
 
   crawl:
     topic:
@@ -198,7 +198,7 @@ collector:
   browser-agent:
     enabled: ${COLLECTOR_BROWSER_AGENT_ENABLED:true}
     # Callback URL for session completion
-    callback-base-url: ${COLLECTOR_BROWSER_AGENT_CALLBACK_BASE_URL:http://localhost:8081}
+    callback-base-url: ${COLLECTOR_CALLBACK_BASE_URL:${COLLECTOR_BROWSER_AGENT_CALLBACK_BASE_URL:http://collector-service:8081}}
     callback-token: ${COLLECTOR_BROWSER_AGENT_CALLBACK_TOKEN:}
 
   # Deep AI Search Configuration (n8n Crawl Agent Workflow)
@@ -209,9 +209,9 @@ collector:
   deep-search:
     enabled: ${COLLECTOR_SERVICE_DEEP_SEARCH_ENABLED:${DEEP_SEARCH_ENABLED:true}}
     # n8n webhook URL for crawl-agent workflow
-    webhook-url: ${COLLECTOR_SERVICE_DEEP_SEARCH_WEBHOOK_URL:${DEEP_SEARCH_WEBHOOK_URL:https://n8n.nodove.com/webhook/crawl-agent}}
+    webhook-url: ${COLLECTOR_DEEP_SEARCH_WEBHOOK_URL:${COLLECTOR_SERVICE_DEEP_SEARCH_WEBHOOK_URL:${DEEP_SEARCH_WEBHOOK_URL:https://n8n.nodove.com/webhook/crawl-agent}}}
     # Base URL for callback (this service's public URL)
-    callback-base-url: ${COLLECTOR_SERVICE_DEEP_SEARCH_CALLBACK_BASE_URL:${DEEP_SEARCH_CALLBACK_BASE_URL:http://localhost:8081}}
+    callback-base-url: ${COLLECTOR_CALLBACK_BASE_URL:${COLLECTOR_SERVICE_DEEP_SEARCH_CALLBACK_BASE_URL:${DEEP_SEARCH_CALLBACK_BASE_URL:http://collector-service:8081}}}
     # Token for validating callbacks from n8n
     callback-token: ${COLLECTOR_SERVICE_DEEP_SEARCH_CALLBACK_TOKEN:${DEEP_SEARCH_CALLBACK_TOKEN:}}
     # Timeout for webhook requests in seconds

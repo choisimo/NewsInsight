@@ -16,9 +16,9 @@ import java.util.Map;
 
 /**
  * Client for AI Dove Agent API.
- * Provides AI-powered text analysis using the self-healing AI service at workflow.nodove.com.
+ * Provides AI-powered text analysis using the self-healing AI service.
  * 
- * API Endpoint: POST https://workflow.nodove.com/webhook/aidove
+ * API Endpoint: Configurable via COLLECTOR_AIDOVE_BASE_URL or Consul KV
  * 
  * Request:
  *   - chatInput: string (required) - The message/prompt
@@ -37,7 +37,7 @@ public class AIDoveClient {
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
 
-    @Value("${collector.aidove.base-url:https://workflow.nodove.com/webhook/aidove}")
+    @Value("${collector.aidove.base-url:${COLLECTOR_AIDOVE_BASE_URL:https://workflow.nodove.com/webhook/aidove}}")
     private String baseUrl;
 
     @Value("${collector.aidove.timeout-seconds:120}")

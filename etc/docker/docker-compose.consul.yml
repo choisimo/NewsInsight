@@ -45,6 +45,8 @@ services:
         condition: service_completed_successfully
       collector-service:
         condition: service_started
+      browser-use-api:
+        condition: service_started
     environment:
       # Consul access for config loading in the app
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -55,6 +57,9 @@ services:
       - REDIS_PORT=${REDIS_PORT:-6379}
       # Service port
       - PORT=${API_GATEWAY_PORT:-8000}
+      # Browser-Use API URLs (for routing)
+      - BROWSER_USE_URL=http://browser-use-api:8500
+      - BROWSER_USE_WS_URL=ws://browser-use-api:8500
     ports:
       - "8112:8000"  # keep gateway reachable from host
     networks:
@@ -68,8 +73,11 @@ services:
       - ../../frontend:/app
       - frontend-node-modules:/app/node_modules
     environment:
-      - VITE_API_BASE_URL=http://localhost:8112
-      - VITE_BROWSER_USE_URL=http://localhost:8500
+      # Docker 내부 네트워크: API Gateway 서비스 이름 사용
+      - VITE_API_BASE_URL=http://api-gateway:8000
+      - VITE_BROWSER_USE_URL=http://api-gateway:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: >
       sh -c "(npm ci --legacy-peer-deps || npm install --legacy-peer-deps) \
       && npm run dev -- --host 0.0.0.0 --port 8080"
@@ -78,6 +86,8 @@ services:
     depends_on:
       api-gateway:
         condition: service_started
+    networks:
+      - default
 
   collector-service:
     build:
@@ -113,9 +123,14 @@ services:
       - SPRING_DATA_REDIS_HOST=${REDIS_HOST:-redis}
       - SPRING_DATA_REDIS_PORT=${REDIS_PORT:-6379}
       - SPRING_JPA_HIBERNATE_DDL_AUTO=validate
-      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
-      - PERPLEXITY_MODEL=sonar
-      - PERPLEXITY_BASE_URL=https://api.perplexity.ai
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
+      - PERPLEXITY_MODEL=${PERPLEXITY_MODEL:-sonar}
+      - PERPLEXITY_BASE_URL=${PERPLEXITY_BASE_URL:-https://api.perplexity.ai}
+      # AI Service URLs (can be overridden via Consul KV)
+      - COLLECTOR_AIDOVE_BASE_URL=${COLLECTOR_SERVICE_AIDOVE_BASE_URL:-https://workflow.nodove.com/webhook/aidove}
+      - COLLECTOR_DEEP_SEARCH_WEBHOOK_URL=${COLLECTOR_SERVICE_DEEP_SEARCH_WEBHOOK_URL:-https://n8n.nodove.com/webhook/crawl-agent}
+      - COLLECTOR_N8N_BASE_URL=${COLLECTOR_SERVICE_N8N_BASE_URL:-https://n8n.nodove.com/webhook}
+      - COLLECTOR_CALLBACK_BASE_URL=${COLLECTOR_SERVICE_CALLBACK_BASE_URL:-http://collector-service:8081}
       # Database configuration
       - DB_HOST=${DB_HOST:-postgres}
       - DB_PORT=${DB_PORT:-5432}
@@ -203,8 +218,8 @@ services:
       - --advertise-kafka-addr
       - PLAINTEXT://redpanda-dev:9092
     ports:
-      - "9092:9092"
-      - "9644:9644"
+      - "19093:9092"
+      - "19644:9644"
     networks:
       - default
       - capstone-net
@@ -279,7 +294,7 @@ services:
       - SERVER_PORT=8500
       - LOG_LEVEL=${BROWSER_USE_LOG_LEVEL:-INFO}
     ports:
-      - "8500:8500"  # Browser-Use API
+      - "8501:8500"  # Browser-Use API (avoid conflict with Consul)
     shm_size: 2g  # Shared memory for browser
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8500/health"]

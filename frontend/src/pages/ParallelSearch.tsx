@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
-  ArrowLeft,
   RefreshCw,
   Zap,
   Shield,
@@ -20,6 +19,11 @@ import {
   FolderOpen,
   Link as LinkIcon,
   X,
+  Bot,
+  Sparkles,
+  TrendingUp,
+  FileText,
+  BarChart3,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,6 +34,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
+import { AnalysisBadges, type AnalysisData } from "@/components/AnalysisBadges";
 import {
   openUnifiedSearchStream,
   checkUnifiedSearchHealth,
@@ -65,7 +70,7 @@ const SOURCE_CONFIG = {
 type SourceType = keyof typeof SOURCE_CONFIG;
 
 interface SourceStatus {
-  status: "idle" | "searching" | "complete" | "error";
+  status: "idle" | "connecting" | "searching" | "complete" | "error";
   message?: string;
   count: number;
 }
@@ -77,6 +82,28 @@ interface SearchResultCardProps {
 const SearchResultCard = ({ result }: SearchResultCardProps) => {
   const config = SOURCE_CONFIG[result.source];
   const SourceIcon = config.icon;
+
+  // Convert result to AnalysisData format
+  const analysisData: AnalysisData = {
+    analyzed: result.analyzed,
+    analysisStatus: result.analysisStatus as AnalysisData["analysisStatus"],
+    reliabilityScore: result.reliabilityScore,
+    reliabilityGrade: result.reliabilityGrade as AnalysisData["reliabilityGrade"],
+    reliabilityColor: result.reliabilityColor as AnalysisData["reliabilityColor"],
+    sentimentLabel: result.sentimentLabel as AnalysisData["sentimentLabel"],
+    sentimentScore: result.sentimentScore,
+    biasLabel: result.biasLabel,
+    biasScore: result.biasScore,
+    factcheckStatus: result.factcheckStatus as AnalysisData["factcheckStatus"],
+    misinfoRisk: result.misinfoRisk as AnalysisData["misinfoRisk"],
+    riskTags: result.riskTags,
+    topics: result.topics,
+    hasDiscussion: result.hasDiscussion,
+    totalCommentCount: result.totalCommentCount,
+    discussionSentiment: result.discussionSentiment,
+  };
+
+  const hasAnalysis = result.source === "database" && (result.analyzed || result.analysisStatus === "pending");
 
   return (
     <Card className={`${config.bgColor} border-l-4 ${config.borderColor} transition-all hover:shadow-md`}>
@@ -99,7 +126,27 @@ const SearchResultCard = ({ result }: SearchResultCardProps) => {
               <h4 className="font-semibold text-sm mb-1 line-clamp-2">{result.title}</h4>
             )}
             {result.snippet && (
-              <p className="text-sm text-muted-foreground line-clamp-3">{result.snippet}</p>
+              <p className="text-sm text-muted-foreground line-clamp-3 mb-2">{result.snippet}</p>
+            )}
+            {/* Analysis Badges - only for database results */}
+            {hasAnalysis && (
+              <div className="mt-2 pt-2 border-t border-border/50">
+                <AnalysisBadges 
+                  data={analysisData} 
+                  size="sm" 
+                  loading={result.analysisStatus === "pending"}
+                />
+              </div>
+            )}
+            {/* Topics */}
+            {result.topics && result.topics.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {result.topics.slice(0, 3).map((topic) => (
+                  <Badge key={topic} variant="secondary" className="text-xs">
+                    {topic}
+                  </Badge>
+                ))}
+              </div>
             )}
           </div>
           {result.url && (
@@ -183,6 +230,9 @@ const SourceStatusIndicator = ({ source, status }: SourceStatusIndicatorProps) =
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm">{config.label}</span>
+          {status.status === "connecting" && (
+            <Loader2 className="h-3 w-3 animate-spin text-yellow-600" />
+          )}
           {status.status === "searching" && (
             <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
           )}
@@ -195,6 +245,7 @@ const SourceStatusIndicator = ({ source, status }: SourceStatusIndicatorProps) =
         </div>
         <p className="text-xs text-muted-foreground truncate">
           {status.status === "idle" && "대기 중"}
+          {status.status === "connecting" && "연결 중..."}
           {status.status === "searching" && (status.message || "검색 중...")}
           {status.status === "complete" && `${status.count}개 결과`}
           {status.status === "error" && (status.message || "오류 발생")}
@@ -214,6 +265,56 @@ interface PriorityUrl {
   name: string;
 }
 
+// Quick action cards for the home page
+const QuickActions = () => (
+  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    <Link to="/deep-search">
+      <Card className="p-4 hover:shadow-md transition-all cursor-pointer border-purple-200 dark:border-purple-800 hover:border-purple-400">
+        <div className="flex flex-col items-center text-center gap-2">
+          <div className="p-3 rounded-full bg-purple-100 dark:bg-purple-900/30">
+            <Sparkles className="h-6 w-6 text-purple-600" />
+          </div>
+          <span className="font-medium text-sm">Deep AI Search</span>
+          <span className="text-xs text-muted-foreground">심층 AI 분석</span>
+        </div>
+      </Card>
+    </Link>
+    <Link to="/fact-check">
+      <Card className="p-4 hover:shadow-md transition-all cursor-pointer border-green-200 dark:border-green-800 hover:border-green-400">
+        <div className="flex flex-col items-center text-center gap-2">
+          <div className="p-3 rounded-full bg-green-100 dark:bg-green-900/30">
+            <Shield className="h-6 w-6 text-green-600" />
+          </div>
+          <span className="font-medium text-sm">팩트체크</span>
+          <span className="text-xs text-muted-foreground">신뢰도 검증</span>
+        </div>
+      </Card>
+    </Link>
+    <Link to="/browser-agent">
+      <Card className="p-4 hover:shadow-md transition-all cursor-pointer border-blue-200 dark:border-blue-800 hover:border-blue-400">
+        <div className="flex flex-col items-center text-center gap-2">
+          <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-900/30">
+            <Bot className="h-6 w-6 text-blue-600" />
+          </div>
+          <span className="font-medium text-sm">브라우저 에이전트</span>
+          <span className="text-xs text-muted-foreground">자동 수집</span>
+        </div>
+      </Card>
+    </Link>
+    <Link to="/url-collections">
+      <Card className="p-4 hover:shadow-md transition-all cursor-pointer border-orange-200 dark:border-orange-800 hover:border-orange-400">
+        <div className="flex flex-col items-center text-center gap-2">
+          <div className="p-3 rounded-full bg-orange-100 dark:bg-orange-900/30">
+            <FolderOpen className="h-6 w-6 text-orange-600" />
+          </div>
+          <span className="font-medium text-sm">URL 컬렉션</span>
+          <span className="text-xs text-muted-foreground">소스 관리</span>
+        </div>
+      </Card>
+    </Link>
+  </div>
+);
+
 const ParallelSearch = () => {
   const { toast } = useToast();
   const location = useLocation();
@@ -225,6 +326,9 @@ const ParallelSearch = () => {
   
   // Priority URLs from URL Collections page
   const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
+  
+  // Connection status state for initial SSE feedback
+  const [connectionStatus, setConnectionStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
   
   // Results state
   const [results, setResults] = useState<UnifiedSearchResult[]>([]);
@@ -291,7 +395,7 @@ const ParallelSearch = () => {
     queryKey: ["unifiedSearch", "health"],
     queryFn: checkUnifiedSearchHealth,
     staleTime: 60_000,
-    retry: 1,
+    retry: 0,
   });
 
   const isHealthy = healthData?.status === "available";
@@ -309,6 +413,7 @@ const ParallelSearch = () => {
     setResults([]);
     setAiContent("");
     setAiComplete(false);
+    setConnectionStatus("idle");
     setSourceStatus({
       database: { status: "idle", count: 0 },
       web: { status: "idle", count: 0 },
@@ -327,12 +432,33 @@ const ParallelSearch = () => {
     
     resetState();
     setIsSearching(true);
+    setConnectionStatus("connecting");
 
     try {
       // Extract URLs from priority list
       const priorityUrlList = priorityUrls.map((p) => p.url);
       const es = await openUnifiedSearchStream(query.trim(), timeWindow, priorityUrlList.length > 0 ? priorityUrlList : undefined);
       eventSourceRef.current = es;
+
+      // Handle initial connection event from server
+      es.addEventListener("connected", (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent).data);
+          setConnectionStatus("connected");
+          toast({
+            title: "연결됨",
+            description: data.message || "검색 시스템에 연결되었습니다.",
+          });
+          // Set all sources to "searching" state
+          setSourceStatus({
+            database: { status: "searching", message: "검색 시작...", count: 0 },
+            web: { status: "searching", message: "검색 시작...", count: 0 },
+            ai: { status: "searching", message: "분석 시작...", count: 0 },
+          });
+        } catch {
+          setConnectionStatus("connected");
+        }
+      });
 
       es.onmessage = (event) => {
         try {
@@ -412,12 +538,14 @@ const ParallelSearch = () => {
       es.addEventListener("error", (errorEvent) => {
         console.error("SSE error:", errorEvent);
         setIsSearching(false);
+        setConnectionStatus("error");
         es.close();
         eventSourceRef.current = null;
       });
 
       es.onerror = () => {
         setIsSearching(false);
+        setConnectionStatus("error");
         es.close();
         eventSourceRef.current = null;
         toast({
@@ -430,6 +558,7 @@ const ParallelSearch = () => {
     } catch (error) {
       console.error("Failed to start search:", error);
       setIsSearching(false);
+      setConnectionStatus("error");
       toast({
         title: "오류",
         description: "검색을 시작할 수 없습니다.",
@@ -444,11 +573,18 @@ const ParallelSearch = () => {
       eventSourceRef.current = null;
     }
     setIsSearching(false);
+    setConnectionStatus("idle");
     toast({
       title: "취소됨",
       description: "검색이 취소되었습니다.",
     });
   }, [toast]);
+
+  // Retry search on error
+  const handleRetry = useCallback(() => {
+    const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+    handleSearch(fakeEvent);
+  }, [handleSearch]);
 
   const filteredResults = activeTab === "all"
     ? results
@@ -459,37 +595,32 @@ const ParallelSearch = () => {
     (s) => s.status === "complete" || s.status === "error"
   ).length / 3 * 100;
 
+  // Check if we should show the home/welcome state
+  const showWelcomeState = !isSearching && results.length === 0 && !aiContent;
+
   return (
     <div className="min-h-screen py-8">
       <div className="container mx-auto px-4 max-w-6xl">
         {/* Header */}
-        <header className="mb-8">
-          <Link
-            to="/"
-            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            메인으로 돌아가기
-          </Link>
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div>
-              <h1 className="text-3xl md:text-4xl font-bold mb-2 bg-gradient-to-r from-blue-600 via-green-600 to-purple-600 bg-clip-text text-transparent">
-                통합 검색
-              </h1>
-              <p className="text-muted-foreground flex items-center gap-2">
-                <Zap className="h-4 w-4" />
-                데이터베이스, 웹, AI를 동시에 검색하여 실시간으로 결과를 표시합니다.
-              </p>
-            </div>
-            {isHealthy && (
-              <Badge variant="outline" className="text-green-600 border-green-600">
-                <Shield className="h-3 w-3 mr-1" />
-                서비스 정상
-              </Badge>
-            )}
-          </div>
+        <header className="mb-8 text-center">
+          <h1 className="text-4xl md:text-5xl font-bold mb-3 bg-gradient-to-r from-blue-600 via-purple-600 to-green-600 bg-clip-text text-transparent">
+            NewsInsight
+          </h1>
+          <p className="text-lg text-muted-foreground mb-2">
+            AI 기반 통합 뉴스 분석 플랫폼
+          </p>
+          <p className="text-sm text-muted-foreground flex items-center justify-center gap-2">
+            <Zap className="h-4 w-4" />
+            데이터베이스, 웹, AI를 동시에 검색하여 실시간으로 결과를 표시합니다.
+          </p>
+          {isHealthy && (
+            <Badge variant="outline" className="mt-3 text-green-600 border-green-600">
+              <Shield className="h-3 w-3 mr-1" />
+              서비스 정상
+            </Badge>
+          )}
           {healthData && !isHealthy && (
-            <div className="mt-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm flex items-center gap-2">
+            <div className="mt-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm flex items-center justify-center gap-2">
               <AlertCircle className="h-4 w-4" />
               통합 검색 서비스가 현재 사용 불가능합니다.
             </div>
@@ -498,7 +629,7 @@ const ParallelSearch = () => {
 
         {/* Priority URLs from URL Collections */}
         {priorityUrls.length > 0 && (
-          <Card className="mb-8 border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-900/10">
+          <Card className="mb-6 border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-900/10">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -522,31 +653,40 @@ const ParallelSearch = () => {
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
-                {priorityUrls.map((item) => (
-                  <Badge
-                    key={item.id}
-                    variant="outline"
-                    className="pl-2 pr-1 py-1 flex items-center gap-1 bg-white dark:bg-gray-800"
-                  >
-                    <LinkIcon className="h-3 w-3 text-orange-500" />
-                    <span className="max-w-[200px] truncate" title={item.url}>
-                      {item.name || new URL(item.url).hostname}
-                    </span>
-                    <button
-                      onClick={() => removePriorityUrl(item.id)}
-                      className="ml-1 p-0.5 rounded hover:bg-muted transition-colors"
+                {priorityUrls.map((item) => {
+                  // Safe URL hostname extraction
+                  let displayName = item.name;
+                  if (!displayName && item.url) {
+                    try {
+                      displayName = new URL(item.url).hostname;
+                    } catch {
+                      displayName = item.url;
+                    }
+                  }
+                  if (!displayName) {
+                    displayName = '알 수 없는 URL';
+                  }
+
+                  return (
+                    <Badge
+                      key={item.id}
+                      variant="outline"
+                      className="pl-2 pr-1 py-1 flex items-center gap-1 bg-white dark:bg-gray-800"
                     >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))}
+                      <LinkIcon className="h-3 w-3 text-orange-500" />
+                      <span className="max-w-[200px] truncate" title={item.url || ''}>
+                        {displayName}
+                      </span>
+                      <button
+                        onClick={() => removePriorityUrl(item.id)}
+                        className="ml-1 p-0.5 rounded hover:bg-muted transition-colors"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  );
+                })}
               </div>
-              <p className="text-xs text-muted-foreground mt-3">
-                <Link to="/url-collections" className="text-orange-600 hover:underline">
-                  URL 컬렉션
-                </Link>
-                에서 더 많은 URL을 추가할 수 있습니다.
-              </p>
             </CardContent>
           </Card>
         )}
@@ -560,8 +700,8 @@ const ParallelSearch = () => {
                   <Input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="검색어를 입력하세요..."
-                    disabled={isSearching || !isHealthy}
+                    placeholder="뉴스 키워드를 입력하세요... (예: AI 기술, 경제 전망, 정치 이슈)"
+                    disabled={isSearching}
                     className="text-lg h-12"
                   />
                 </div>
@@ -581,7 +721,11 @@ const ParallelSearch = () => {
                       취소
                     </Button>
                   ) : (
-                    <Button type="submit" disabled={!query.trim() || !isHealthy}>
+                    <Button
+                      type="submit"
+                      disabled={!query.trim() || isHealthy === false}
+                      size="lg"
+                    >
                       <Search className="h-4 w-4 mr-2" />
                       검색
                     </Button>
@@ -592,19 +736,40 @@ const ParallelSearch = () => {
           </CardContent>
         </Card>
 
+        {/* Quick Actions - Show on welcome state */}
+        {showWelcomeState && <QuickActions />}
+
         {/* Search Progress */}
         {isSearching && (
           <Card className="mb-8">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
                 <Loader2 className="h-5 w-5 animate-spin" />
-                병렬 검색 진행 중...
+                {connectionStatus === "connecting" ? "서버에 연결 중..." : "병렬 검색 진행 중..."}
               </CardTitle>
               <CardDescription>
-                3개의 소스에서 동시에 검색하고 있습니다.
+                {connectionStatus === "connecting" 
+                  ? "검색 서버와 실시간 연결을 설정하고 있습니다..."
+                  : connectionStatus === "connected"
+                    ? "3개의 소스에서 동시에 검색하고 있습니다."
+                    : "연결 대기 중..."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Connection Status Indicator */}
+              {connectionStatus === "connecting" && (
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 text-sm">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>SSE 스트림 연결 대기 중... 첫 이벤트를 기다리고 있습니다.</span>
+                </div>
+              )}
+              {connectionStatus === "connected" && (
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 text-sm">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>서버에 연결됨 - 실시간 결과가 도착하는 대로 표시됩니다.</span>
+                </div>
+              )}
+              
               <Progress value={searchProgress} className="h-2" />
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {(Object.keys(SOURCE_CONFIG) as SourceType[]).map((source) => (
@@ -697,9 +862,37 @@ const ParallelSearch = () => {
           </div>
         )}
 
-        {/* Empty State */}
-        {!isSearching && results.length === 0 && !aiContent && (
-          <div className="text-center py-16">
+        {/* Connection Error State with Retry */}
+        {connectionStatus === "error" && !isSearching && results.length === 0 && (
+          <Card className="mb-8 border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10">
+            <CardContent className="pt-6">
+              <div className="flex flex-col items-center text-center gap-4">
+                <div className="p-4 rounded-full bg-red-100 dark:bg-red-900/30">
+                  <AlertCircle className="h-8 w-8 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg mb-1">연결 오류</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    검색 서버와의 연결에 실패했습니다. 네트워크 연결을 확인하거나 잠시 후 다시 시도해주세요.
+                  </p>
+                  <div className="flex gap-2 justify-center">
+                    <Button onClick={handleRetry} variant="default" className="gap-2">
+                      <RefreshCw className="h-4 w-4" />
+                      다시 시도
+                    </Button>
+                    <Button onClick={resetState} variant="outline">
+                      초기화
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Empty State / Welcome */}
+        {showWelcomeState && (
+          <div className="text-center py-12">
             <div className="inline-flex items-center justify-center gap-4 mb-6">
               <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-900/30">
                 <Database className="h-8 w-8 text-blue-600" />
