@@ -47,6 +47,7 @@ CONSUL_HTTP_TOKEN=secret ./consul_seed.sh production
    - `ANALYSIS_SERVICE_*` → `config/analysis-service/*`
    - `COLLECTOR_SERVICE_*` → `config/collector-service/*`
    - `WEB_CRAWLER_*` → `config/web-crawler/*`
+   - `AUTONOMOUS_CRAWLER_*` → `config/autonomous-crawler/*`
 4. Stores each key-value pair in Consul KV
 5. Reports success/failure for each key
 

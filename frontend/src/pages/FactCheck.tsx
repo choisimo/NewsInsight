@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { useQuery } from "@tanstack/react-query";
 import {
   Search,
@@ -22,6 +23,12 @@ import {
   Info,
   FolderOpen,
   Link as LinkIcon,
+  Save,
+  Download,
+  FileJson,
+  FileText,
+  History,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,7 +39,15 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
+import { useFactCheckStorage, SavedFactCheckResult } from "@/hooks/useFactCheckStorage";
 import {
   openDeepAnalysisStream,
   checkUnifiedSearchHealth,
@@ -348,6 +363,9 @@ const FactCheck = () => {
   
   // Priority URLs from URL Collections page
   const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
+  
+  // History panel toggle
+  const [showHistory, setShowHistory] = useState(false);
 
   // Results
   const [collectedEvidence, setCollectedEvidence] = useState<SourceEvidence[]>([]);
@@ -357,6 +375,16 @@ const FactCheck = () => {
   const [aiComplete, setAiComplete] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  
+  // Fact check storage hook
+  const {
+    savedResults,
+    isLoaded: storageLoaded,
+    saveResult,
+    deleteResult,
+    exportToJson,
+    exportToMarkdown,
+  } = useFactCheckStorage();
 
   // Health check
   const { data: healthData } = useQuery({
@@ -413,6 +441,131 @@ const FactCheck = () => {
       description: "참고 URL이 모두 제거되었습니다.",
     });
   }, [toast]);
+
+  // Save current result
+  const handleSaveResult = useCallback(() => {
+    if (!topic.trim() || verificationResults.length === 0) {
+      toast({
+        title: "저장할 결과가 없습니다",
+        description: "먼저 팩트체크를 실행해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Build evidence summary by source type
+    const bySource: Record<string, number> = {};
+    collectedEvidence.forEach((e) => {
+      const key = e.sourceType || "unknown";
+      bySource[key] = (bySource[key] || 0) + 1;
+    });
+
+    const resultToSave = {
+      topic: topic.trim(),
+      claims: claims.filter((c) => c.trim()),
+      priorityUrls: priorityUrls.map((p) => p.url),
+      verificationResults: verificationResults.map((v) => ({
+        claimId: v.claimId,
+        originalClaim: v.originalClaim,
+        status: v.status,
+        confidenceScore: v.confidenceScore,
+        verificationSummary: v.verificationSummary,
+        supportingCount: v.supportingEvidence.length,
+        contradictingCount: v.contradictingEvidence.length,
+      })),
+      evidenceSummary: {
+        total: collectedEvidence.length,
+        bySource,
+      },
+      credibility: credibility
+        ? {
+            overallScore: credibility.overallScore,
+            verifiedCount: credibility.verifiedCount,
+            totalClaims: credibility.totalClaims,
+            riskLevel: credibility.riskLevel,
+            warnings: credibility.warnings,
+          }
+        : undefined,
+      aiConclusion: aiComplete ? aiConclusion : undefined,
+    };
+
+    const savedId = saveResult(resultToSave);
+    toast({
+      title: "저장됨",
+      description: `팩트체크 결과가 저장되었습니다. (ID: ${savedId.slice(0, 8)}...)`,
+    });
+  }, [
+    topic,
+    claims,
+    priorityUrls,
+    verificationResults,
+    collectedEvidence,
+    credibility,
+    aiConclusion,
+    aiComplete,
+    saveResult,
+    toast,
+  ]);
+
+  // Load a saved result
+  const loadSavedResult = useCallback((saved: SavedFactCheckResult) => {
+    setTopic(saved.topic);
+    setClaims(saved.claims.length > 0 ? saved.claims : [""]);
+    
+    // Reconstruct verification results (simplified)
+    const reconstructed: VerificationResult[] = saved.verificationResults.map((v) => ({
+      claimId: v.claimId,
+      originalClaim: v.originalClaim,
+      status: v.status as VerificationStatus,
+      confidenceScore: v.confidenceScore,
+      verificationSummary: v.verificationSummary,
+      supportingEvidence: [], // Cannot reconstruct full evidence
+      contradictingEvidence: [],
+      relatedConcepts: [],
+    }));
+    setVerificationResults(reconstructed);
+    
+    if (saved.credibility) {
+      setCredibility(saved.credibility);
+    }
+    
+    if (saved.aiConclusion) {
+      setAiConclusion(saved.aiConclusion);
+      setAiComplete(true);
+    }
+    
+    setShowHistory(false);
+    toast({
+      title: "불러오기 완료",
+      description: `"${saved.topic}" 결과를 불러왔습니다.`,
+    });
+  }, [toast]);
+
+  // Handle export
+  const handleExport = useCallback((id: string, format: "json" | "markdown") => {
+    let filename: string | null = null;
+    if (format === "json") {
+      filename = exportToJson(id);
+    } else {
+      filename = exportToMarkdown(id);
+    }
+    
+    if (filename) {
+      toast({
+        title: "내보내기 완료",
+        description: `${filename} 파일이 다운로드되었습니다.`,
+      });
+    }
+  }, [exportToJson, exportToMarkdown, toast]);
+
+  // Handle delete
+  const handleDeleteResult = useCallback((id: string) => {
+    deleteResult(id);
+    toast({
+      title: "삭제됨",
+      description: "저장된 결과가 삭제되었습니다.",
+    });
+  }, [deleteResult, toast]);
 
   // Cleanup
   useEffect(() => {
@@ -607,17 +760,167 @@ const FactCheck = () => {
               </h1>
               <p className="text-muted-foreground flex items-center gap-2">
                 <Shield className="h-4 w-4" />
-                Wikipedia 등 신뢰할 수 있는 출처와 대조하여 주장의 타당성을 검증합니다.
+                Wikipedia, 학술DB, Google Fact Check 등 신뢰할 수 있는 출처와 대조하여 주장의 타당성을 검증합니다.
               </p>
             </div>
-            {isHealthy && (
-              <Badge variant="outline" className="text-green-600 border-green-600">
-                <CheckCircle2 className="h-3 w-3 mr-1" />
-                서비스 정상
-              </Badge>
-            )}
+            <div className="flex items-center gap-2">
+              {/* History Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowHistory(!showHistory)}
+                className="gap-1"
+              >
+                <History className="h-4 w-4" />
+                기록
+                {savedResults.length > 0 && (
+                  <Badge variant="secondary" className="ml-1 h-5 min-w-5 px-1">
+                    {savedResults.length}
+                  </Badge>
+                )}
+              </Button>
+              
+              {/* Save/Export Button */}
+              {verificationResults.length > 0 && aiComplete && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="default" size="sm" className="gap-1">
+                      <Save className="h-4 w-4" />
+                      저장
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={handleSaveResult}>
+                      <Save className="h-4 w-4 mr-2" />
+                      결과 저장
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => {
+                      // Save first, then export
+                      handleSaveResult();
+                      const latest = savedResults[0];
+                      if (latest) {
+                        setTimeout(() => handleExport(latest.id, "json"), 100);
+                      }
+                    }}>
+                      <FileJson className="h-4 w-4 mr-2" />
+                      JSON으로 내보내기
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => {
+                      handleSaveResult();
+                      const latest = savedResults[0];
+                      if (latest) {
+                        setTimeout(() => handleExport(latest.id, "markdown"), 100);
+                      }
+                    }}>
+                      <FileText className="h-4 w-4 mr-2" />
+                      Markdown으로 내보내기
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              
+              {isHealthy && (
+                <Badge variant="outline" className="text-green-600 border-green-600">
+                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                  서비스 정상
+                </Badge>
+              )}
+            </div>
           </div>
         </header>
+
+        {/* History Panel */}
+        {showHistory && storageLoaded && (
+          <Card className="mb-8">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <History className="h-5 w-5" />
+                  저장된 팩트체크 기록
+                </CardTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowHistory(false)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {savedResults.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  저장된 팩트체크 결과가 없습니다.
+                </p>
+              ) : (
+                <ScrollArea className="max-h-[300px]">
+                  <div className="space-y-2">
+                    {savedResults.map((result) => (
+                      <div
+                        key={result.id}
+                        className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="flex-1 min-w-0 mr-4">
+                          <h4 className="font-medium text-sm truncate">{result.topic}</h4>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(result.savedAt).toLocaleString("ko-KR")} · 
+                            {result.verificationResults.length}개 주장 검증
+                            {result.credibility && (
+                              <span className={
+                                result.credibility.riskLevel === "low" ? " text-green-600" :
+                                result.credibility.riskLevel === "medium" ? " text-yellow-600" :
+                                " text-red-600"
+                              }>
+                                {" · "}신뢰도 {Math.round(result.credibility.overallScore * 100)}%
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => loadSavedResult(result)}
+                            title="불러오기"
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" title="내보내기">
+                                <FileText className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleExport(result.id, "json")}>
+                                <FileJson className="h-4 w-4 mr-2" />
+                                JSON
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleExport(result.id, "markdown")}>
+                                <FileText className="h-4 w-4 mr-2" />
+                                Markdown
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteResult(result.id)}
+                            className="text-destructive hover:text-destructive"
+                            title="삭제"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Priority URLs from URL Collections */}
         {priorityUrls.length > 0 && (
@@ -861,12 +1164,11 @@ const FactCheck = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    <pre className="whitespace-pre-wrap font-sans bg-muted p-4 rounded-lg">
-                      {aiConclusion}
-                      {!aiComplete && <span className="animate-pulse">|</span>}
-                    </pre>
-                  </div>
+                  <MarkdownRenderer 
+                    content={aiConclusion} 
+                    isStreaming={!aiComplete}
+                    className="bg-muted/30 p-4 rounded-lg"
+                  />
                 </CardContent>
               </Card>
             )}

@@ -108,6 +108,7 @@ config/{service-name}/{CONFIGURATION_KEY}
 | Analysis Service   | `config/analysis-service/` | `ANALYSIS_SERVICE_`    |
 | Collector Service  | `config/collector-service/` | `COLLECTOR_SERVICE_`  |
 | Web Crawler        | `config/web-crawler/`    | `WEB_CRAWLER_`           |
+| Autonomous Crawler | `config/autonomous-crawler/` | `AUTONOMOUS_CRAWLER_` |
 
 ### Example Keys
 
@@ -133,6 +134,19 @@ config/collector-service/PORT = 8002
 config/collector-service/DATABASE_URL = postgresql://...
 config/collector-service/MAX_CONCURRENT_REQUESTS = 10
 config/collector-service/RSS_FEEDS = https://...,...
+```
+
+**Autonomous Crawler (Python):**
+```
+config/autonomous-crawler/KAFKA_BOOTSTRAP_SERVERS = redpanda-dev:9092
+config/autonomous-crawler/BROWSER_HEADLESS = true
+config/autonomous-crawler/LLM_PROVIDER = openai
+config/autonomous-crawler/LLM_OPENAI_API_KEY = sk-...
+config/autonomous-crawler/SEARCH_BRAVE_API_KEY = BSA...
+config/autonomous-crawler/SEARCH_TAVILY_API_KEY = tvly-...
+config/autonomous-crawler/SEARCH_PERPLEXITY_API_KEY = pplx-...
+config/autonomous-crawler/STEALTH_ENABLED = true
+config/autonomous-crawler/CAPTCHA_ENABLED = true
 ```
 
 ---
@@ -216,6 +230,18 @@ print(f"From Env: {loader.env_loaded_keys}")
 - **Location**: `code/BACKEND-WEB-CRAWLER/`
 - **Status**: Uses existing environment-based configuration
 - **Note**: Flask-based third-party project with extensive env vars; kept as-is for now
+
+### ✅ Autonomous Crawler (Python)
+- **Location**: `backend/autonomous-crawler-service/`
+- **Config File**: `backend/autonomous-crawler-service/src/config/settings.py`
+- **Consul Loader**: `backend/autonomous-crawler-service/src/config/consul.py`
+- **Health Endpoint**: `GET /metrics` (Prometheus metrics)
+- **Required Keys**: 
+  - Kafka: `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_CONSUMER_GROUP_ID`, `KAFKA_BROWSER_TASK_TOPIC`, `KAFKA_CRAWL_RESULT_TOPIC`
+  - Browser: `BROWSER_HEADLESS`, `BROWSER_MAX_CONCURRENT_SESSIONS`, `BROWSER_DEFAULT_TIMEOUT_SECONDS`
+  - LLM: `LLM_PROVIDER`, `LLM_OPENAI_API_KEY`, `LLM_OPENAI_MODEL`, `LLM_ANTHROPIC_API_KEY`, `LLM_ANTHROPIC_MODEL`
+  - Search APIs: `SEARCH_BRAVE_API_KEY`, `SEARCH_TAVILY_API_KEY`, `SEARCH_PERPLEXITY_API_KEY`
+  - Stealth/CAPTCHA: `STEALTH_ENABLED`, `CAPTCHA_ENABLED`
 
 ---
 
@@ -652,6 +678,6 @@ For issues or questions:
 
 ---
 
-**Last Updated**: November 6, 2025  
-**Version**: 1.0.0  
-**Migration Status**: Complete (API Gateway, Analysis Service, Collector Service)
+**Last Updated**: December 3, 2025  
+**Version**: 1.1.0  
+**Migration Status**: Complete (API Gateway, Analysis Service, Collector Service, Autonomous Crawler)

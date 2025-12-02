@@ -23,6 +23,13 @@ python-json-logger>=2.0.7
 # Resilience
 tenacity>=9.0.0
 
+# CAPTCHA Bypass (open-source)
+cloudscraper>=1.2.71
+playwright-stealth>=1.0.6
+SpeechRecognition>=3.10.0
+pydub>=0.25.1
+# hcaptcha-challenger>=0.5.0  # Optional: AI-based hCaptcha solver
+
 # Development (optional)
 pytest>=8.3.0
 pytest-asyncio>=0.24.0

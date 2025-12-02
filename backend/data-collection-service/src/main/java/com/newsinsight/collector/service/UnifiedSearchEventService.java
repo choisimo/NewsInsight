@@ -43,7 +43,7 @@ public class UnifiedSearchEventService {
         public JobMetadata withStatus(String newStatus) {
             return new JobMetadata(jobId, query, window, newStatus, createdAt, 
                     "COMPLETED".equals(newStatus) || "FAILED".equals(newStatus) 
-                            ? System.currentTimeMillis() : completedAt);
+                            ? Long.valueOf(System.currentTimeMillis()) : completedAt);
         }
     }
 

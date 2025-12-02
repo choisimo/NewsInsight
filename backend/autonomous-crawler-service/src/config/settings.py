@@ -116,6 +116,94 @@ class LLMSettings(BaseSettings):
     )
 
 
+class SearchSettings(BaseSettings):
+    """Search provider settings."""
+
+    model_config = SettingsConfigDict(env_prefix="SEARCH_")
+
+    # API Keys
+    brave_api_key: str = Field(
+        default="",
+        description="Brave Search API key",
+    )
+    tavily_api_key: str = Field(
+        default="",
+        description="Tavily Search API key",
+    )
+    perplexity_api_key: str = Field(
+        default="",
+        description="Perplexity API key",
+    )
+    
+    # Configuration
+    timeout: float = Field(
+        default=30.0,
+        description="Timeout for search requests in seconds",
+    )
+    max_results_per_provider: int = Field(
+        default=10,
+        description="Maximum results per search provider",
+    )
+    max_total_results: int = Field(
+        default=30,
+        description="Maximum total aggregated results",
+    )
+    enable_parallel: bool = Field(
+        default=True,
+        description="Enable parallel search across providers",
+    )
+
+
+class StealthSettings(BaseSettings):
+    """Stealth/anti-detection settings."""
+
+    model_config = SettingsConfigDict(env_prefix="STEALTH_")
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable stealth mode for browser",
+    )
+    hide_webdriver: bool = Field(
+        default=True,
+        description="Hide webdriver detection flags",
+    )
+    hide_automation: bool = Field(
+        default=True,
+        description="Hide automation flags",
+    )
+    mask_webgl: bool = Field(
+        default=True,
+        description="Mask WebGL vendor/renderer",
+    )
+    random_user_agent: bool = Field(
+        default=False,
+        description="Use random user agent on each session",
+    )
+
+
+class CaptchaSettings(BaseSettings):
+    """CAPTCHA solving settings."""
+
+    model_config = SettingsConfigDict(env_prefix="CAPTCHA_")
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable CAPTCHA solving",
+    )
+    prefer_audio: bool = Field(
+        default=True,
+        description="Prefer audio challenges for reCAPTCHA",
+    )
+    cloudflare_delay: int = Field(
+        default=10,
+        description="Delay for Cloudflare challenge (seconds)",
+    )
+    max_attempts: int = Field(
+        default=3,
+        description="Maximum CAPTCHA solve attempts",
+    )
+
+
 class MetricsSettings(BaseSettings):
     """Prometheus metrics settings."""
 
@@ -162,6 +250,9 @@ class Settings(BaseSettings):
     kafka: KafkaSettings = Field(default_factory=KafkaSettings)
     browser: BrowserSettings = Field(default_factory=BrowserSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    search: SearchSettings = Field(default_factory=SearchSettings)
+    stealth: StealthSettings = Field(default_factory=StealthSettings)
+    captcha: CaptchaSettings = Field(default_factory=CaptchaSettings)
     metrics: MetricsSettings = Field(default_factory=MetricsSettings)
 
 

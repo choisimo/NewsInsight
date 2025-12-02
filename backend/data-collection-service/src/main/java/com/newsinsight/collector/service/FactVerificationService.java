@@ -3,9 +3,9 @@ package com.newsinsight.collector.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.newsinsight.collector.client.PerplexityClient;
+import com.newsinsight.collector.service.factcheck.FactCheckSource;
 import lombok.Builder;
 import lombok.Data;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -21,8 +21,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * 심층 분석 신뢰성 검증 서비스
@@ -31,13 +33,30 @@ import java.util.regex.Pattern;
  * 주장의 타당성을 검증합니다.
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class FactVerificationService {
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
     private final PerplexityClient perplexityClient;
+    private final List<FactCheckSource> factCheckSources;
+
+    public FactVerificationService(
+            WebClient webClient,
+            ObjectMapper objectMapper,
+            PerplexityClient perplexityClient,
+            List<FactCheckSource> factCheckSources) {
+        this.webClient = webClient;
+        this.objectMapper = objectMapper;
+        this.perplexityClient = perplexityClient;
+        this.factCheckSources = factCheckSources;
+        
+        log.info("FactVerificationService initialized with {} sources: {}", 
+                factCheckSources.size(),
+                factCheckSources.stream()
+                        .map(s -> s.getSourceId() + (s.isAvailable() ? " (active)" : " (disabled)"))
+                        .collect(Collectors.joining(", ")));
+    }
 
     @Value("${collector.crawler.base-url:http://web-crawler:11235}")
     private String crawlerBaseUrl;
@@ -144,10 +163,69 @@ public class FactVerificationService {
     // ============================================
 
     /**
+     * 매우 단순한 언어 감지: 영문 알파벳이 포함되어 있으면 영어(en),
+     * 그렇지 않으면 기본적으로 한국어(ko)로 간주.
+     */
+    private String detectLanguage(String text) {
+        if (text == null || text.isBlank()) {
+            return "ko";
+        }
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+                return "en";
+            }
+        }
+        return "ko";
+    }
+
+    /**
+     * Claim 목록을 하나로 합쳐서 기준 텍스트를 만들고,
+     * evidence.excerpt 와의 자카드 유사도를 이용해 의미 있는 근거만 남긴다.
+     */
+    private List<SourceEvidence> filterEvidenceForClaims(List<SourceEvidence> allEvidence, List<String> claims) {
+        if (allEvidence == null || allEvidence.isEmpty()) {
+            return List.of();
+        }
+        if (claims == null || claims.isEmpty()) {
+            // Claim 정보가 없으면 필터링 없이 그대로 사용
+            return new ArrayList<>(allEvidence);
+        }
+
+        String combinedClaims = claims.stream()
+                .filter(c -> c != null && !c.isBlank())
+                .collect(Collectors.joining(" "));
+        if (combinedClaims.isBlank()) {
+            return new ArrayList<>(allEvidence);
+        }
+
+        List<SourceEvidence> filtered = new ArrayList<>();
+        for (SourceEvidence evidence : allEvidence) {
+            if (evidence == null || evidence.getExcerpt() == null || evidence.getExcerpt().isBlank()) {
+                continue;
+            }
+            double sim = calculateSimilarity(combinedClaims, evidence.getExcerpt());
+            // 너무 낮은 유사도는 제거 (기본 0.1 기준)
+            if (sim >= 0.1) {
+                filtered.add(evidence);
+            }
+        }
+
+        // 너무 많을 경우 상위 N개만 사용 (기본 50개)
+        if (filtered.size() > 50) {
+            return filtered.subList(0, 50);
+        }
+        return filtered;
+    }
+
+    /**
      * 주어진 주제에 대해 심층 분석 및 검증 수행
      */
     public Flux<DeepAnalysisEvent> analyzeAndVerify(String topic, List<String> claims) {
         log.info("Starting deep analysis and verification for topic: {}", topic);
+
+        // 간단한 언어 감지 (영문 알파벳 포함 여부 기준)
+        String language = detectLanguage(topic);
 
         return Flux.create(sink -> {
             // 1. 시작 이벤트
@@ -164,15 +242,27 @@ public class FactVerificationService {
                     .message("관련 개념을 수집하고 있습니다...")
                     .build());
 
-            // 병렬로 Wikipedia 등에서 관련 정보 수집
-            List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(topic);
-            
-            if (!wikiEvidence.isEmpty()) {
+            // 병렬로 모든 신뢰할 수 있는 소스에서 정보 수집
+            List<SourceEvidence> allEvidence = fetchAllSourceEvidence(topic, language);
+
+            // Claim 정보가 있다면, claim과의 유사도 기반으로 근거를 1차 필터링
+            List<SourceEvidence> filteredEvidence = filterEvidenceForClaims(allEvidence, claims);
+
+            if (!filteredEvidence.isEmpty()) {
+                // 소스별 통계 생성
+                var sourceStats = filteredEvidence.stream()
+                        .collect(Collectors.groupingBy(
+                                SourceEvidence::getSourceType,
+                                Collectors.counting()));
+                String statsMessage = sourceStats.entrySet().stream()
+                        .map(e -> e.getKey() + ": " + e.getValue() + "개")
+                        .collect(Collectors.joining(", "));
+                
                 sink.next(DeepAnalysisEvent.builder()
                         .eventType("evidence")
                         .phase("concepts")
-                        .message("신뢰할 수 있는 출처에서 " + wikiEvidence.size() + "개의 정보를 수집했습니다.")
-                        .evidence(wikiEvidence)
+                        .message("신뢰할 수 있는 출처에서 " + filteredEvidence.size() + "개의 유의미한 근거를 수집했습니다. (" + statsMessage + ")")
+                        .evidence(filteredEvidence)
                         .build());
             }
 
@@ -188,7 +278,7 @@ public class FactVerificationService {
                 
                 for (int i = 0; i < claims.size(); i++) {
                     String claim = claims.get(i);
-                    VerificationResult result = verifyClaim(claim, wikiEvidence);
+                    VerificationResult result = verifyClaim(claim, filteredEvidence);
                     verificationResults.add(result);
 
                     sink.next(DeepAnalysisEvent.builder()
@@ -218,7 +308,7 @@ public class FactVerificationService {
                     .build());
 
             if (perplexityClient.isEnabled()) {
-                String synthesisPrompt = buildSynthesisPrompt(topic, wikiEvidence, claims);
+                String synthesisPrompt = buildSynthesisPrompt(topic, filteredEvidence, claims);
                 StringBuilder aiResponse = new StringBuilder();
 
                 perplexityClient.streamCompletion(synthesisPrompt)
@@ -263,6 +353,57 @@ public class FactVerificationService {
     // ============================================
     // Wikipedia & Trusted Source Fetching
     // ============================================
+
+    /**
+     * 모든 등록된 팩트체크 소스에서 병렬로 근거를 수집합니다.
+     */
+    private List<SourceEvidence> fetchAllSourceEvidence(String topic, String language) {
+        List<SourceEvidence> allEvidence = new CopyOnWriteArrayList<>();
+        
+        // 1. 기본 Wikipedia 정보 수집 (기존 로직 유지)
+        List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(topic);
+        allEvidence.addAll(wikiEvidence);
+        
+        // 2. 추가 팩트체크 소스에서 병렬 수집
+        if (factCheckSources != null && !factCheckSources.isEmpty()) {
+            List<Mono<List<SourceEvidence>>> sourceFetches = factCheckSources.stream()
+                    .filter(FactCheckSource::isAvailable)
+                    .map(source -> {
+                        log.debug("Fetching evidence from source: {}", source.getSourceId());
+                        return source.fetchEvidence(topic, language)
+                                .collectList()
+                                .timeout(Duration.ofSeconds(timeoutSeconds))
+                                .doOnNext(evidences -> 
+                                    log.debug("Source {} returned {} evidences", 
+                                            source.getSourceId(), evidences.size()))
+                                .onErrorResume(e -> {
+                                    log.warn("Failed to fetch from {}: {}", 
+                                            source.getSourceId(), e.getMessage());
+                                    return Mono.just(List.of());
+                                });
+                    })
+                    .toList();
+            
+            if (!sourceFetches.isEmpty()) {
+                try {
+                    List<List<SourceEvidence>> results = Flux.merge(sourceFetches)
+                            .collectList()
+                            .block(Duration.ofSeconds(timeoutSeconds * 2));
+                    
+                    if (results != null) {
+                        for (List<SourceEvidence> evidences : results) {
+                            allEvidence.addAll(evidences);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Error during parallel evidence fetch: {}", e.getMessage());
+                }
+            }
+        }
+        
+        log.info("Collected total {} evidence items for topic: {}", allEvidence.size(), topic);
+        return new ArrayList<>(allEvidence);
+    }
 
     private List<SourceEvidence> fetchWikipediaInfo(String topic) {
         List<SourceEvidence> evidenceList = new ArrayList<>();

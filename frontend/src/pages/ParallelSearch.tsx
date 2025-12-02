@@ -24,6 +24,8 @@ import {
   TrendingUp,
   FileText,
   BarChart3,
+  Save,
+  BookmarkPlus,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import { AnalysisBadges, type AnalysisData } from "@/components/AnalysisBadges";
+import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+import { useUrlCollection } from "@/hooks/useUrlCollection";
 import {
   openUnifiedSearchStream,
   checkUnifiedSearchHealth,
@@ -81,9 +85,11 @@ interface SourceStatus {
 
 interface SearchResultCardProps {
   result: UnifiedSearchResult;
+  onSaveUrl?: (result: UnifiedSearchResult) => void;
+  isUrlSaved?: boolean;
 }
 
-const SearchResultCard = ({ result }: SearchResultCardProps) => {
+const SearchResultCard = ({ result, onSaveUrl, isUrlSaved = false }: SearchResultCardProps) => {
   const config = SOURCE_CONFIG[result.source];
   const SourceIcon = config.icon;
 
@@ -153,17 +159,39 @@ const SearchResultCard = ({ result }: SearchResultCardProps) => {
               </div>
             )}
           </div>
-          {result.url && (
-            <a
-              href={result.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="shrink-0 p-2 rounded-md hover:bg-muted transition-colors"
-              title="원문 보기"
-            >
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          )}
+          <div className="flex flex-col gap-2">
+            {result.url && (
+              <>
+                <a
+                  href={result.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 p-2 rounded-md hover:bg-muted transition-colors"
+                  title="원문 보기"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+                {onSaveUrl && (
+                  <button
+                    onClick={() => onSaveUrl(result)}
+                    disabled={isUrlSaved}
+                    className={`shrink-0 p-2 rounded-md transition-colors ${
+                      isUrlSaved 
+                        ? "text-green-600 cursor-default" 
+                        : "hover:bg-muted text-muted-foreground hover:text-foreground"
+                    }`}
+                    title={isUrlSaved ? "컬렉션에 저장됨" : "컬렉션에 저장"}
+                  >
+                    {isUrlSaved ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <BookmarkPlus className="h-4 w-4" />
+                    )}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -173,9 +201,11 @@ const SearchResultCard = ({ result }: SearchResultCardProps) => {
 interface AIStreamCardProps {
   content: string;
   isComplete: boolean;
+  onSave?: () => void;
+  isSaved?: boolean;
 }
 
-const AIStreamCard = ({ content, isComplete }: AIStreamCardProps) => {
+const AIStreamCard = ({ content, isComplete, onSave, isSaved = false }: AIStreamCardProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
 
   if (!content) return null;
@@ -195,20 +225,40 @@ const AIStreamCard = ({ content, isComplete }: AIStreamCardProps) => {
                 <CheckCircle2 className="h-4 w-4 text-green-600" />
               )}
             </div>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm">
-                {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </Button>
-            </CollapsibleTrigger>
+            <div className="flex items-center gap-2">
+              {isComplete && onSave && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onSave}
+                  disabled={isSaved}
+                  className={isSaved ? "text-green-600 border-green-600" : ""}
+                >
+                  {isSaved ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 mr-1" />
+                      저장됨
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-1" />
+                      분석 저장
+                    </>
+                  )}
+                </Button>
+              )}
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm">
+                  {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </Button>
+              </CollapsibleTrigger>
+            </div>
           </div>
         </CardHeader>
         <CollapsibleContent>
           <CardContent>
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <pre className="whitespace-pre-wrap font-sans text-sm bg-white/50 dark:bg-black/20 p-4 rounded-lg">
-                {content}
-                {!isComplete && <span className="animate-pulse">|</span>}
-              </pre>
+            <div className="bg-white/50 dark:bg-black/20 p-4 rounded-lg">
+              <MarkdownRenderer content={content} isStreaming={!isComplete} />
             </div>
           </CardContent>
         </CollapsibleContent>
@@ -294,7 +344,7 @@ const QuickActions = () => (
         </div>
       </Card>
     </Link>
-    <Link to="/browser-agent">
+    <Link to="/ai-agent">
       <Card className="p-4 hover:shadow-md transition-all cursor-pointer border-blue-200 dark:border-blue-800 hover:border-blue-400">
         <div className="flex flex-col items-center text-center gap-2">
           <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-900/30">
@@ -322,6 +372,7 @@ const QuickActions = () => (
 const ParallelSearch = () => {
   const { toast } = useToast();
   const location = useLocation();
+  const { addUrl, addFolder, collection, urlExists } = useUrlCollection();
   
   const [query, setQuery] = useState("");
   const [timeWindow, setTimeWindow] = useState("7d");
@@ -342,6 +393,12 @@ const ParallelSearch = () => {
   const [results, setResults] = useState<UnifiedSearchResult[]>([]);
   const [aiContent, setAiContent] = useState("");
   const [aiComplete, setAiComplete] = useState(false);
+  
+  // Saved analysis state
+  const [isAnalysisSaved, setIsAnalysisSaved] = useState(false);
+  
+  // Track URLs already added to collection during this session
+  const addedUrlsRef = useRef<Set<string>>(new Set());
   
   // Source status
   const [sourceStatus, setSourceStatus] = useState<Record<SourceType, SourceStatus>>({
@@ -507,6 +564,8 @@ const ParallelSearch = () => {
     setConnectionStatus("idle");
     setCurrentJobId(null);
     setJobStatus("idle");
+    setIsAnalysisSaved(false);
+    addedUrlsRef.current.clear();
     setSourceStatus({
       database: { status: "idle", count: 0 },
       web: { status: "idle", count: 0 },
@@ -520,6 +579,138 @@ const ParallelSearch = () => {
     url.searchParams.delete("jobId");
     window.history.replaceState({}, document.title, url.pathname);
   }, []);
+
+  // Auto-save new URLs to collection
+  const autoSaveUrl = useCallback((result: UnifiedSearchResult) => {
+    if (!result.url || addedUrlsRef.current.has(result.url)) {
+      return; // Skip if no URL or already added in this session
+    }
+    
+    // Check if URL already exists in collection
+    if (urlExists(result.url)) {
+      return; // Skip if already exists
+    }
+    
+    // Find or create "Auto-saved" folder
+    let autoSavedFolderId = 'root';
+    const autoSavedFolder = collection.root.children.find(
+      (item) => item.type === 'folder' && item.name === '자동 저장됨'
+    );
+    
+    if (!autoSavedFolder) {
+      autoSavedFolderId = addFolder('root', '자동 저장됨', '검색 결과에서 자동으로 저장된 URL');
+    } else {
+      autoSavedFolderId = autoSavedFolder.id;
+    }
+    
+    // Add URL to collection
+    addUrl(
+      autoSavedFolderId,
+      result.url,
+      result.title || undefined,
+      result.snippet || undefined,
+      result.topics || undefined
+    );
+    
+    // Mark as added in this session
+    addedUrlsRef.current.add(result.url);
+    
+    // Show toast notification
+    toast({
+      title: "URL 저장됨",
+      description: `"${result.title || result.url}"이(가) 컬렉션에 추가되었습니다.`,
+    });
+  }, [addUrl, addFolder, urlExists, collection.root.children, toast]);
+
+  // Save AI analysis result
+  const handleSaveAnalysis = useCallback(() => {
+    if (!aiContent || !query) return;
+    
+    const analysisKey = `newsinsight-analysis-${Date.now()}`;
+    const analysisData = {
+      id: analysisKey,
+      query,
+      content: aiContent,
+      timestamp: new Date().toISOString(),
+      jobId: currentJobId,
+      resultCount: results.length,
+    };
+    
+    try {
+      // Get existing analyses
+      const existingStr = localStorage.getItem('newsinsight-saved-analyses');
+      const existing = existingStr ? JSON.parse(existingStr) : [];
+      
+      // Add new analysis
+      existing.unshift(analysisData);
+      
+      // Keep only the last 50 analyses
+      const trimmed = existing.slice(0, 50);
+      
+      localStorage.setItem('newsinsight-saved-analyses', JSON.stringify(trimmed));
+      
+      setIsAnalysisSaved(true);
+      toast({
+        title: "분석 저장됨",
+        description: `"${query}" 분석 결과가 저장되었습니다.`,
+      });
+    } catch (e) {
+      console.error('Failed to save analysis:', e);
+      toast({
+        title: "저장 실패",
+        description: "분석 결과를 저장하는 데 실패했습니다.",
+        variant: "destructive",
+      });
+    }
+  }, [aiContent, query, currentJobId, results.length, toast]);
+
+  // Manual URL save handler for individual results
+  const handleManualSaveUrl = useCallback((result: UnifiedSearchResult) => {
+    if (!result.url) return;
+    
+    // Check if already saved
+    if (urlExists(result.url) || addedUrlsRef.current.has(result.url)) {
+      toast({
+        title: "이미 저장됨",
+        description: "이 URL은 이미 컬렉션에 저장되어 있습니다.",
+      });
+      return;
+    }
+    
+    // Find or create "수동 저장" folder
+    let manualFolderId = 'root';
+    const manualFolder = collection.root.children.find(
+      (item) => item.type === 'folder' && item.name === '수동 저장됨'
+    );
+    
+    if (!manualFolder) {
+      manualFolderId = addFolder('root', '수동 저장됨', '검색 결과에서 수동으로 저장한 URL');
+    } else {
+      manualFolderId = manualFolder.id;
+    }
+    
+    // Add URL to collection
+    addUrl(
+      manualFolderId,
+      result.url,
+      result.title || undefined,
+      result.snippet || undefined,
+      result.topics || undefined
+    );
+    
+    // Mark as added
+    addedUrlsRef.current.add(result.url);
+    
+    toast({
+      title: "URL 저장됨",
+      description: `"${result.title || result.url}"이(가) 컬렉션에 추가되었습니다.`,
+    });
+  }, [addUrl, addFolder, urlExists, collection.root.children, toast]);
+
+  // Check if a URL is saved in this session or collection
+  const isUrlSaved = useCallback((url: string): boolean => {
+    return urlExists(url) || addedUrlsRef.current.has(url);
+  }, [urlExists]);
 
   // Setup event handlers for SSE stream
   const setupEventHandlers = useCallback((es: EventSource, jobId: string) => {
@@ -568,7 +759,8 @@ const ParallelSearch = () => {
       try {
         const data = JSON.parse((event as MessageEvent).data);
         if (data.result) {
-          setResults((prev) => [...prev, data.result as UnifiedSearchResult]);
+          const newResult = data.result as UnifiedSearchResult;
+          setResults((prev) => [...prev, newResult]);
           const source = data.source as SourceType;
           setSourceStatus((prev) => ({
             ...prev,
@@ -577,6 +769,11 @@ const ParallelSearch = () => {
               count: prev[source].count + 1,
             },
           }));
+          
+          // Auto-save new URLs from web source
+          if (source === 'web' && newResult.url) {
+            autoSaveUrl(newResult);
+          }
         }
       } catch (e) {
         console.error("Failed to parse result event:", e);
@@ -706,7 +903,7 @@ const ParallelSearch = () => {
         eventSourceRef.current = null;
       }
     };
-  }, [toast, results.length]);
+  }, [toast, results.length, autoSaveUrl]);
 
   const handleSearch = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1016,7 +1213,12 @@ const ParallelSearch = () => {
 
             {/* AI Analysis (if available) */}
             {aiContent && (
-              <AIStreamCard content={aiContent} isComplete={aiComplete} />
+              <AIStreamCard 
+                content={aiContent} 
+                isComplete={aiComplete}
+                onSave={handleSaveAnalysis}
+                isSaved={isAnalysisSaved}
+              />
             )}
 
             {/* Results List */}
@@ -1049,7 +1251,12 @@ const ParallelSearch = () => {
                       <div className="space-y-4">
                         {filteredResults.length > 0 ? (
                           filteredResults.map((result) => (
-                            <SearchResultCard key={result.id} result={result} />
+                            <SearchResultCard 
+                              key={result.id} 
+                              result={result}
+                              onSaveUrl={handleManualSaveUrl}
+                              isUrlSaved={result.url ? isUrlSaved(result.url) : false}
+                            />
                           ))
                         ) : (
                           <div className="text-center py-8 text-muted-foreground">

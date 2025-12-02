@@ -224,3 +224,50 @@ collector:
     cleanup-days: ${COLLECTOR_SERVICE_DEEP_SEARCH_CLEANUP_DAYS:${DEEP_SEARCH_CLEANUP_DAYS:7}}
     # Cron expression for cleanup job (3 AM daily)
     cleanup-cron: ${COLLECTOR_SERVICE_DEEP_SEARCH_CLEANUP_CRON:${DEEP_SEARCH_CLEANUP_CRON:0 0 3 * * ?}}
+    # Use integrated crawler instead of webhook (multi-strategy: Crawl4AI, Browser-Use, Direct HTTP)
+    use-integrated-crawler: ${COLLECTOR_DEEP_SEARCH_USE_INTEGRATED:${DEEP_SEARCH_USE_INTEGRATED:true}}
+    # Fallback to webhook when integrated crawler fails or finds no evidence
+    fallback-to-integrated: ${COLLECTOR_DEEP_SEARCH_FALLBACK_TO_WEBHOOK:${DEEP_SEARCH_FALLBACK_TO_WEBHOOK:true}}
+
+  # Integrated Crawler Configuration (multi-strategy crawling)
+  integrated-crawler:
+    # Maximum crawl depth (how many links deep to follow)
+    max-depth: ${COLLECTOR_INTEGRATED_CRAWLER_MAX_DEPTH:2}
+    # Maximum pages to crawl per job
+    max-pages: ${COLLECTOR_INTEGRATED_CRAWLER_MAX_PAGES:20}
+    # Timeout per page crawl in seconds
+    timeout-seconds: ${COLLECTOR_INTEGRATED_CRAWLER_TIMEOUT_SECONDS:30}
+    # Number of concurrent crawls
+    concurrent-crawls: ${COLLECTOR_INTEGRATED_CRAWLER_CONCURRENT:5}
+
+  # Browser-Use API Configuration (for JS-rendered content)
+  browser-use:
+    base-url: ${COLLECTOR_BROWSER_USE_BASE_URL:${BROWSER_USE_API_URL:http://browser-use-api:8500}}
+
+  # AI Dove Configuration (for evidence analysis)
+  ai-dove:
+    enabled: ${COLLECTOR_AI_DOVE_ENABLED:${AI_DOVE_ENABLED:true}}
+    base-url: ${COLLECTOR_AI_DOVE_BASE_URL:${AI_DOVE_BASE_URL:https://workflow.nodove.com/webhook/aidove}}
+
+  # Fact Check Sources Configuration
+  fact-check:
+    # Timeout for all fact-check API calls
+    timeout-seconds: ${COLLECTOR_FACT_CHECK_TIMEOUT_SECONDS:15}
+    
+    # CrossRef - Academic paper search (free, no API key required)
+    crossref:
+      enabled: ${COLLECTOR_CROSSREF_ENABLED:true}
+      # Email for polite pool (faster rate limits)
+      mailto: ${COLLECTOR_CROSSREF_MAILTO:newsinsight@example.com}
+    
+    # OpenAlex - Open academic database (free, no API key required)
+    openalex:
+      enabled: ${COLLECTOR_OPENALEX_ENABLED:true}
+      # Email for polite pool
+      mailto: ${COLLECTOR_OPENALEX_MAILTO:newsinsight@example.com}
+    
+    # Google Fact Check Tools API (requires API key)
+    # Get API key: https://developers.google.com/fact-check/tools/api
+    google:
+      enabled: ${COLLECTOR_GOOGLE_FACTCHECK_ENABLED:false}
+      api-key: ${COLLECTOR_GOOGLE_FACTCHECK_API_KEY:}

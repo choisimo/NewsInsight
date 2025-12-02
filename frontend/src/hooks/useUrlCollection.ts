@@ -490,6 +490,39 @@ export function useUrlCollection() {
     });
   }, [updateCollection]);
 
+  // Check if a URL already exists in the collection
+  const urlExists = useCallback((url: string): boolean => {
+    const checkRecursive = (items: TreeItem[]): boolean => {
+      for (const item of items) {
+        if (item.type === 'url' && item.url === url) {
+          return true;
+        } else if (item.type === 'folder') {
+          if (checkRecursive(item.children)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+    return checkRecursive([collection.root]);
+  }, [collection.root]);
+
+  // Get all URLs in the collection (flattened)
+  const getAllUrls = useCallback((): UrlItem[] => {
+    const urls: UrlItem[] = [];
+    const collectRecursive = (items: TreeItem[]) => {
+      for (const item of items) {
+        if (item.type === 'url') {
+          urls.push(item);
+        } else if (item.type === 'folder') {
+          collectRecursive(item.children);
+        }
+      }
+    };
+    collectRecursive([collection.root]);
+    return urls;
+  }, [collection.root]);
+
   return {
     collection,
     selectedItems,
@@ -511,6 +544,8 @@ export function useUrlCollection() {
     
     // Data access
     getSelectedUrls,
+    urlExists,
+    getAllUrls,
     
     // Import/Export
     exportToJson,
