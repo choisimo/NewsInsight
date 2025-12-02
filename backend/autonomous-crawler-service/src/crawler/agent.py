@@ -6,7 +6,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -20,6 +19,16 @@ from pydantic import BaseModel
 from src.config import Settings
 from src.crawler.policies import CrawlPolicy, get_policy_prompt
 from src.kafka.messages import BrowserTaskMessage, CrawlResultMessage
+from src.captcha.stealth import (
+    StealthConfig,
+    apply_stealth_to_playwright_async,
+    get_undetected_browser_args,
+)
+from src.captcha import CaptchaSolverOrchestrator, CaptchaType
+from src.search.orchestrator import ParallelSearchOrchestrator
+from src.search.brave import BraveSearchProvider
+from src.search.tavily import TavilySearchProvider
+from src.search.perplexity import PerplexitySearchProvider
 
 logger = structlog.get_logger(__name__)
 
@@ -85,6 +94,9 @@ class AutonomousCrawlerAgent:
         self.settings = settings
         self._browser_session: BrowserSession | None = None
         self._llm = self._create_llm()
+        self._search_orchestrator: ParallelSearchOrchestrator | None = None
+        self._captcha_solver: CaptchaSolverOrchestrator | None = None
+        self._stealth_config = StealthConfig()
 
     def _create_llm(self) -> ChatOpenAI | ChatAnthropic:
         """Create the LLM instance based on settings."""
@@ -105,21 +117,110 @@ class AutonomousCrawlerAgent:
                 max_tokens=llm_settings.max_tokens,
             )
 
+    def _get_search_orchestrator(self) -> ParallelSearchOrchestrator:
+        """Get or create the search orchestrator with configured providers."""
+        if self._search_orchestrator is None:
+            providers = []
+            search_settings = self.settings.search
+            
+            # Add Brave Search if API key is configured
+            if search_settings.brave_api_key:
+                providers.append(BraveSearchProvider(search_settings.brave_api_key))
+                logger.info("Brave Search provider enabled")
+            
+            # Add Tavily if API key is configured
+            if search_settings.tavily_api_key:
+                providers.append(TavilySearchProvider(search_settings.tavily_api_key))
+                logger.info("Tavily Search provider enabled")
+            
+            # Add Perplexity if API key is configured
+            if search_settings.perplexity_api_key:
+                providers.append(PerplexitySearchProvider(search_settings.perplexity_api_key))
+                logger.info("Perplexity Search provider enabled")
+            
+            if not providers:
+                logger.warning("No search providers configured - API search disabled")
+            
+            self._search_orchestrator = ParallelSearchOrchestrator(
+                providers=providers,
+                timeout=search_settings.timeout,
+                deduplicate=True,
+            )
+        
+        return self._search_orchestrator
+
+    def _get_captcha_solver(self) -> CaptchaSolverOrchestrator:
+        """Get or create the CAPTCHA solver orchestrator."""
+        if self._captcha_solver is None:
+            self._captcha_solver = CaptchaSolverOrchestrator()
+        return self._captcha_solver
+
     async def _get_browser_session(self) -> BrowserSession:
-        """Get or create the browser session."""
+        """Get or create the browser session with stealth configuration."""
         if self._browser_session is None:
+            stealth_settings = self.settings.stealth
+            
+            # Build browser args for stealth mode
+            extra_args = []
+            if stealth_settings.enabled:
+                extra_args = get_undetected_browser_args()
+                logger.info("Stealth mode enabled for browser session")
+            
             profile = BrowserProfile(
                 headless=self.settings.browser.headless,
                 disable_security=True,  # Required for some sites
+                extra_chromium_args=extra_args,
             )
             self._browser_session = BrowserSession(browser_profile=profile)
         return self._browser_session
+
+    async def search_before_crawl(
+        self,
+        query: str,
+        max_results: int = 20,
+    ) -> list[str]:
+        """
+        Perform API-based search before browser crawling.
+        
+        Returns list of URLs to visit based on search results.
+        Useful for bypassing search engine CAPTCHAs.
+        """
+        orchestrator = self._get_search_orchestrator()
+        
+        if not orchestrator.providers:
+            logger.warning("No search providers available")
+            return []
+        
+        try:
+            result = await orchestrator.search_news(
+                query=query,
+                max_results_per_provider=self.settings.search.max_results_per_provider,
+            )
+            
+            urls = [r.url for r in result.results[:max_results]]
+            
+            logger.info(
+                "Search completed",
+                query=query,
+                results_count=len(urls),
+                providers_used=result.providers_used,
+            )
+            
+            return urls
+            
+        except Exception as e:
+            logger.error("Search failed", query=query, error=str(e))
+            return []
 
     async def close(self) -> None:
         """Close the browser and cleanup resources."""
         if self._browser_session:
             await self._browser_session.stop()
             self._browser_session = None
+        
+        if self._search_orchestrator:
+            await self._search_orchestrator.close_all()
+            self._search_orchestrator = None
 
     async def execute_task(self, task: BrowserTaskMessage) -> list[CrawlResultMessage]:
         """

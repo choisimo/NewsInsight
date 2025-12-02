@@ -24,6 +24,8 @@ import {
   TrendingUp,
   FileText,
   BarChart3,
+  Save,
+  BookmarkPlus,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,11 +37,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import { AnalysisBadges, type AnalysisData } from "@/components/AnalysisBadges";
+import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+import { useUrlCollection } from "@/hooks/useUrlCollection";
 import {
   openUnifiedSearchStream,
   checkUnifiedSearchHealth,
+  startUnifiedSearchJob,
+  openUnifiedSearchJobStream,
+  getUnifiedSearchJobStatus,
   type UnifiedSearchResult,
   type UnifiedSearchEvent,
+  type UnifiedSearchJob,
 } from "@/lib/api";
 
 // Source configuration with icons and colors
@@ -77,9 +85,11 @@ interface SourceStatus {
 
 interface SearchResultCardProps {
   result: UnifiedSearchResult;
+  onSaveUrl?: (result: UnifiedSearchResult) => void;
+  isUrlSaved?: boolean;
 }
 
-const SearchResultCard = ({ result }: SearchResultCardProps) => {
+const SearchResultCard = ({ result, onSaveUrl, isUrlSaved = false }: SearchResultCardProps) => {
   const config = SOURCE_CONFIG[result.source];
   const SourceIcon = config.icon;
 
@@ -149,17 +159,39 @@ const SearchResultCard = ({ result }: SearchResultCardProps) => {
               </div>
             )}
           </div>
-          {result.url && (
-            <a
-              href={result.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="shrink-0 p-2 rounded-md hover:bg-muted transition-colors"
-              title="원문 보기"
-            >
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          )}
+          <div className="flex flex-col gap-2">
+            {result.url && (
+              <>
+                <a
+                  href={result.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 p-2 rounded-md hover:bg-muted transition-colors"
+                  title="원문 보기"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+                {onSaveUrl && (
+                  <button
+                    onClick={() => onSaveUrl(result)}
+                    disabled={isUrlSaved}
+                    className={`shrink-0 p-2 rounded-md transition-colors ${
+                      isUrlSaved 
+                        ? "text-green-600 cursor-default" 
+                        : "hover:bg-muted text-muted-foreground hover:text-foreground"
+                    }`}
+                    title={isUrlSaved ? "컬렉션에 저장됨" : "컬렉션에 저장"}
+                  >
+                    {isUrlSaved ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <BookmarkPlus className="h-4 w-4" />
+                    )}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -169,9 +201,11 @@ const SearchResultCard = ({ result }: SearchResultCardProps) => {
 interface AIStreamCardProps {
   content: string;
   isComplete: boolean;
+  onSave?: () => void;
+  isSaved?: boolean;
 }
 
-const AIStreamCard = ({ content, isComplete }: AIStreamCardProps) => {
+const AIStreamCard = ({ content, isComplete, onSave, isSaved = false }: AIStreamCardProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
 
   if (!content) return null;
@@ -191,20 +225,40 @@ const AIStreamCard = ({ content, isComplete }: AIStreamCardProps) => {
                 <CheckCircle2 className="h-4 w-4 text-green-600" />
               )}
             </div>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm">
-                {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </Button>
-            </CollapsibleTrigger>
+            <div className="flex items-center gap-2">
+              {isComplete && onSave && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onSave}
+                  disabled={isSaved}
+                  className={isSaved ? "text-green-600 border-green-600" : ""}
+                >
+                  {isSaved ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 mr-1" />
+                      저장됨
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-1" />
+                      분석 저장
+                    </>
+                  )}
+                </Button>
+              )}
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm">
+                  {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </Button>
+              </CollapsibleTrigger>
+            </div>
           </div>
         </CardHeader>
         <CollapsibleContent>
           <CardContent>
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <pre className="whitespace-pre-wrap font-sans text-sm bg-white/50 dark:bg-black/20 p-4 rounded-lg">
-                {content}
-                {!isComplete && <span className="animate-pulse">|</span>}
-              </pre>
+            <div className="bg-white/50 dark:bg-black/20 p-4 rounded-lg">
+              <MarkdownRenderer content={content} isStreaming={!isComplete} />
             </div>
           </CardContent>
         </CollapsibleContent>
@@ -290,7 +344,7 @@ const QuickActions = () => (
         </div>
       </Card>
     </Link>
-    <Link to="/browser-agent">
+    <Link to="/ai-agent">
       <Card className="p-4 hover:shadow-md transition-all cursor-pointer border-blue-200 dark:border-blue-800 hover:border-blue-400">
         <div className="flex flex-col items-center text-center gap-2">
           <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-900/30">
@@ -318,11 +372,16 @@ const QuickActions = () => (
 const ParallelSearch = () => {
   const { toast } = useToast();
   const location = useLocation();
+  const { addUrl, addFolder, collection, urlExists } = useUrlCollection();
   
   const [query, setQuery] = useState("");
   const [timeWindow, setTimeWindow] = useState("7d");
   const [isSearching, setIsSearching] = useState(false);
   const [activeTab, setActiveTab] = useState<"all" | SourceType>("all");
+  
+  // Job-based search state
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<string>("idle");
   
   // Priority URLs from URL Collections page
   const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
@@ -334,6 +393,12 @@ const ParallelSearch = () => {
   const [results, setResults] = useState<UnifiedSearchResult[]>([]);
   const [aiContent, setAiContent] = useState("");
   const [aiComplete, setAiComplete] = useState(false);
+  
+  // Saved analysis state
+  const [isAnalysisSaved, setIsAnalysisSaved] = useState(false);
+  
+  // Track URLs already added to collection during this session
+  const addedUrlsRef = useRef<Set<string>>(new Set());
   
   // Source status
   const [sourceStatus, setSourceStatus] = useState<Record<SourceType, SourceStatus>>({
@@ -366,6 +431,89 @@ const ParallelSearch = () => {
       }
     }
   }, [location.state]);
+  
+  // Restore jobId from URL query params or sessionStorage on mount
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const jobIdFromUrl = urlParams.get("jobId");
+    const storedJobId = sessionStorage.getItem("parallelSearch_currentJobId");
+    const storedQuery = sessionStorage.getItem("parallelSearch_query");
+    
+    const jobIdToRestore = jobIdFromUrl || storedJobId;
+    
+    if (jobIdToRestore) {
+      // Restore job state
+      setCurrentJobId(jobIdToRestore);
+      if (storedQuery) {
+        setQuery(storedQuery);
+      }
+      
+      // Check job status and reconnect if still active
+      getUnifiedSearchJobStatus(jobIdToRestore)
+        .then((job) => {
+          setQuery(job.query);
+          setTimeWindow(job.window);
+          setJobStatus(job.status);
+          
+          if (job.status === "PENDING" || job.status === "IN_PROGRESS") {
+            // Reconnect to SSE stream
+            reconnectToJob(jobIdToRestore);
+          } else if (job.status === "COMPLETED") {
+            toast({
+              title: "검색 완료됨",
+              description: "이전 검색이 이미 완료되었습니다. 새 검색을 시작하세요.",
+            });
+          } else if (job.status === "FAILED") {
+            toast({
+              title: "검색 실패",
+              description: "이전 검색이 실패했습니다. 새 검색을 시작하세요.",
+              variant: "destructive",
+            });
+          }
+        })
+        .catch(() => {
+          // Job not found, clear stored state
+          sessionStorage.removeItem("parallelSearch_currentJobId");
+          sessionStorage.removeItem("parallelSearch_query");
+          setCurrentJobId(null);
+        });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  
+  // Function to reconnect to an existing job
+  const reconnectToJob = useCallback(async (jobId: string) => {
+    setIsSearching(true);
+    setConnectionStatus("connecting");
+    
+    // Set all sources to "searching" state
+    setSourceStatus({
+      database: { status: "searching", message: "재연결 중...", count: 0 },
+      web: { status: "searching", message: "재연결 중...", count: 0 },
+      ai: { status: "searching", message: "재연결 중...", count: 0 },
+    });
+    
+    try {
+      const es = await openUnifiedSearchJobStream(jobId);
+      eventSourceRef.current = es;
+      
+      setupEventHandlers(es, jobId);
+      
+      toast({
+        title: "재연결됨",
+        description: "검색 스트림에 다시 연결되었습니다.",
+      });
+    } catch (error) {
+      console.error("Failed to reconnect to job:", error);
+      setIsSearching(false);
+      setConnectionStatus("error");
+      toast({
+        title: "재연결 실패",
+        description: "검색 스트림에 다시 연결할 수 없습니다.",
+        variant: "destructive",
+      });
+    }
+  }, [toast]);
   
   // Remove a priority URL
   const removePriorityUrl = useCallback((id: string) => {
@@ -414,12 +562,348 @@ const ParallelSearch = () => {
     setAiContent("");
     setAiComplete(false);
     setConnectionStatus("idle");
+    setCurrentJobId(null);
+    setJobStatus("idle");
+    setIsAnalysisSaved(false);
+    addedUrlsRef.current.clear();
     setSourceStatus({
       database: { status: "idle", count: 0 },
       web: { status: "idle", count: 0 },
       ai: { status: "idle", count: 0 },
     });
+    // Clear stored job info
+    sessionStorage.removeItem("parallelSearch_currentJobId");
+    sessionStorage.removeItem("parallelSearch_query");
+    // Update URL to remove jobId
+    const url = new URL(window.location.href);
+    url.searchParams.delete("jobId");
+    window.history.replaceState({}, document.title, url.pathname);
   }, []);
+
+  // Auto-save new URLs to collection
+  const autoSaveUrl = useCallback((result: UnifiedSearchResult) => {
+    if (!result.url || addedUrlsRef.current.has(result.url)) {
+      return; // Skip if no URL or already added in this session
+    }
+    
+    // Check if URL already exists in collection
+    if (urlExists(result.url)) {
+      return; // Skip if already exists
+    }
+    
+    // Find or create "Auto-saved" folder
+    let autoSavedFolderId = 'root';
+    const autoSavedFolder = collection.root.children.find(
+      (item) => item.type === 'folder' && item.name === '자동 저장됨'
+    );
+    
+    if (!autoSavedFolder) {
+      autoSavedFolderId = addFolder('root', '자동 저장됨', '검색 결과에서 자동으로 저장된 URL');
+    } else {
+      autoSavedFolderId = autoSavedFolder.id;
+    }
+    
+    // Add URL to collection
+    addUrl(
+      autoSavedFolderId,
+      result.url,
+      result.title || undefined,
+      result.snippet || undefined,
+      result.topics || undefined
+    );
+    
+    // Mark as added in this session
+    addedUrlsRef.current.add(result.url);
+    
+    // Show toast notification
+    toast({
+      title: "URL 저장됨",
+      description: `"${result.title || result.url}"이(가) 컬렉션에 추가되었습니다.`,
+    });
+  }, [addUrl, addFolder, urlExists, collection.root.children, toast]);
+
+  // Save AI analysis result
+  const handleSaveAnalysis = useCallback(() => {
+    if (!aiContent || !query) return;
+    
+    const analysisKey = `newsinsight-analysis-${Date.now()}`;
+    const analysisData = {
+      id: analysisKey,
+      query,
+      content: aiContent,
+      timestamp: new Date().toISOString(),
+      jobId: currentJobId,
+      resultCount: results.length,
+    };
+    
+    try {
+      // Get existing analyses
+      const existingStr = localStorage.getItem('newsinsight-saved-analyses');
+      const existing = existingStr ? JSON.parse(existingStr) : [];
+      
+      // Add new analysis
+      existing.unshift(analysisData);
+      
+      // Keep only the last 50 analyses
+      const trimmed = existing.slice(0, 50);
+      
+      localStorage.setItem('newsinsight-saved-analyses', JSON.stringify(trimmed));
+      
+      setIsAnalysisSaved(true);
+      toast({
+        title: "분석 저장됨",
+        description: `"${query}" 분석 결과가 저장되었습니다.`,
+      });
+    } catch (e) {
+      console.error('Failed to save analysis:', e);
+      toast({
+        title: "저장 실패",
+        description: "분석 결과를 저장하는 데 실패했습니다.",
+        variant: "destructive",
+      });
+    }
+  }, [aiContent, query, currentJobId, results.length, toast]);
+
+  // Manual URL save handler for individual results
+  const handleManualSaveUrl = useCallback((result: UnifiedSearchResult) => {
+    if (!result.url) return;
+    
+    // Check if already saved
+    if (urlExists(result.url) || addedUrlsRef.current.has(result.url)) {
+      toast({
+        title: "이미 저장됨",
+        description: "이 URL은 이미 컬렉션에 저장되어 있습니다.",
+      });
+      return;
+    }
+    
+    // Find or create "수동 저장" folder
+    let manualFolderId = 'root';
+    const manualFolder = collection.root.children.find(
+      (item) => item.type === 'folder' && item.name === '수동 저장됨'
+    );
+    
+    if (!manualFolder) {
+      manualFolderId = addFolder('root', '수동 저장됨', '검색 결과에서 수동으로 저장한 URL');
+    } else {
+      manualFolderId = manualFolder.id;
+    }
+    
+    // Add URL to collection
+    addUrl(
+      manualFolderId,
+      result.url,
+      result.title || undefined,
+      result.snippet || undefined,
+      result.topics || undefined
+    );
+    
+    // Mark as added
+    addedUrlsRef.current.add(result.url);
+    
+    toast({
+      title: "URL 저장됨",
+      description: `"${result.title || result.url}"이(가) 컬렉션에 추가되었습니다.`,
+    });
+  }, [addUrl, addFolder, urlExists, collection.root.children, toast]);
+
+  // Check if a URL is saved in this session or collection
+  const isUrlSaved = useCallback((url: string): boolean => {
+    return urlExists(url) || addedUrlsRef.current.has(url);
+  }, [urlExists]);
+
+  // Setup event handlers for SSE stream
+  const setupEventHandlers = useCallback((es: EventSource, jobId: string) => {
+    // Handle job_status event (initial status on connection)
+    es.addEventListener("job_status", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        setConnectionStatus("connected");
+        setJobStatus(data.status);
+        if (data.query) setQuery(data.query);
+        if (data.window) setTimeWindow(data.window);
+        
+        // Set all sources to "searching" state if job is active
+        if (data.status === "PENDING" || data.status === "IN_PROGRESS") {
+          setSourceStatus({
+            database: { status: "searching", message: "검색 중...", count: 0 },
+            web: { status: "searching", message: "검색 중...", count: 0 },
+            ai: { status: "searching", message: "분석 중...", count: 0 },
+          });
+        }
+      } catch (e) {
+        console.error("Failed to parse job_status event:", e);
+      }
+    });
+
+    // Handle status event (source status updates)
+    es.addEventListener("status", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        const source = data.source as SourceType;
+        setSourceStatus((prev) => ({
+          ...prev,
+          [source]: {
+            status: "searching",
+            message: data.message,
+            count: prev[source].count,
+          },
+        }));
+      } catch (e) {
+        console.error("Failed to parse status event:", e);
+      }
+    });
+
+    // Handle result event
+    es.addEventListener("result", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        if (data.result) {
+          const newResult = data.result as UnifiedSearchResult;
+          setResults((prev) => [...prev, newResult]);
+          const source = data.source as SourceType;
+          setSourceStatus((prev) => ({
+            ...prev,
+            [source]: {
+              ...prev[source],
+              count: prev[source].count + 1,
+            },
+          }));
+          
+          // Auto-save new URLs from web source
+          if (source === 'web' && newResult.url) {
+            autoSaveUrl(newResult);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to parse result event:", e);
+      }
+    });
+
+    // Handle ai_chunk event
+    es.addEventListener("ai_chunk", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        if (data.message) {
+          setAiContent((prev) => prev + data.message);
+        }
+      } catch (e) {
+        console.error("Failed to parse ai_chunk event:", e);
+      }
+    });
+
+    // Handle source_complete event
+    es.addEventListener("source_complete", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        const source = data.source as SourceType;
+        setSourceStatus((prev) => ({
+          ...prev,
+          [source]: {
+            status: "complete",
+            message: data.message,
+            count: data.totalCount ?? prev[source].count,
+          },
+        }));
+        if (source === "ai") {
+          setAiComplete(true);
+        }
+      } catch (e) {
+        console.error("Failed to parse source_complete event:", e);
+      }
+    });
+
+    // Handle source_error event
+    es.addEventListener("source_error", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        const source = data.source as SourceType;
+        setSourceStatus((prev) => ({
+          ...prev,
+          [source]: {
+            status: "error",
+            message: data.message,
+            count: prev[source].count,
+          },
+        }));
+      } catch (e) {
+        console.error("Failed to parse source_error event:", e);
+      }
+    });
+
+    // Handle done event (all sources completed)
+    es.addEventListener("done", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        setIsSearching(false);
+        setJobStatus("COMPLETED");
+        es.close();
+        eventSourceRef.current = null;
+        
+        // Clear stored job since it's complete
+        sessionStorage.removeItem("parallelSearch_currentJobId");
+        
+        toast({
+          title: "검색 완료",
+          description: `${data.totalResults || results.length}개의 결과를 찾았습니다.`,
+        });
+      } catch (e) {
+        console.error("Failed to parse done event:", e);
+        setIsSearching(false);
+      }
+    });
+
+    // Handle job_error event
+    es.addEventListener("job_error", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        setIsSearching(false);
+        setJobStatus("FAILED");
+        setConnectionStatus("error");
+        es.close();
+        eventSourceRef.current = null;
+        
+        sessionStorage.removeItem("parallelSearch_currentJobId");
+        
+        toast({
+          title: "검색 오류",
+          description: data.error || "검색 중 오류가 발생했습니다.",
+          variant: "destructive",
+        });
+      } catch (e) {
+        console.error("Failed to parse job_error event:", e);
+      }
+    });
+
+    // Handle error event
+    es.addEventListener("error", () => {
+      setIsSearching(false);
+      setConnectionStatus("error");
+      es.close();
+      eventSourceRef.current = null;
+      toast({
+        title: "연결 오류",
+        description: "검색 스트림 연결이 끊어졌습니다.",
+        variant: "destructive",
+      });
+    });
+
+    // Handle heartbeat (keep connection status as connected)
+    es.addEventListener("heartbeat", () => {
+      setConnectionStatus("connected");
+    });
+
+    // Handle generic onerror
+    es.onerror = () => {
+      // Only handle if not already handled by specific error events
+      if (eventSourceRef.current === es) {
+        setIsSearching(false);
+        setConnectionStatus("error");
+        es.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, [toast, results.length, autoSaveUrl]);
 
   const handleSearch = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -435,125 +919,40 @@ const ParallelSearch = () => {
     setConnectionStatus("connecting");
 
     try {
-      // Extract URLs from priority list
-      const priorityUrlList = priorityUrls.map((p) => p.url);
-      const es = await openUnifiedSearchStream(query.trim(), timeWindow, priorityUrlList.length > 0 ? priorityUrlList : undefined);
+      // Step 1: Create a new search job
+      const job = await startUnifiedSearchJob(query.trim(), timeWindow);
+      
+      setCurrentJobId(job.jobId);
+      setJobStatus(job.status);
+      
+      // Store job info for reconnection after page refresh
+      sessionStorage.setItem("parallelSearch_currentJobId", job.jobId);
+      sessionStorage.setItem("parallelSearch_query", query.trim());
+      
+      // Update URL with jobId for sharing/bookmarking
+      const url = new URL(window.location.href);
+      url.searchParams.set("jobId", job.jobId);
+      window.history.replaceState({}, document.title, url.toString());
+      
+      // Step 2: Connect to SSE stream for this job
+      const es = await openUnifiedSearchJobStream(job.jobId);
       eventSourceRef.current = es;
-
-      // Handle initial connection event from server
-      es.addEventListener("connected", (event) => {
-        try {
-          const data = JSON.parse((event as MessageEvent).data);
-          setConnectionStatus("connected");
-          toast({
-            title: "연결됨",
-            description: data.message || "검색 시스템에 연결되었습니다.",
-          });
-          // Set all sources to "searching" state
-          setSourceStatus({
-            database: { status: "searching", message: "검색 시작...", count: 0 },
-            web: { status: "searching", message: "검색 시작...", count: 0 },
-            ai: { status: "searching", message: "분석 시작...", count: 0 },
-          });
-        } catch {
-          setConnectionStatus("connected");
-        }
+      
+      // Set all sources to "searching" state immediately
+      setSourceStatus({
+        database: { status: "searching", message: "검색 시작...", count: 0 },
+        web: { status: "searching", message: "검색 시작...", count: 0 },
+        ai: { status: "searching", message: "분석 시작...", count: 0 },
       });
-
-      es.onmessage = (event) => {
-        try {
-          const data: UnifiedSearchEvent = JSON.parse(event.data);
-          
-          switch (data.eventType) {
-            case "status":
-              setSourceStatus((prev) => ({
-                ...prev,
-                [data.source]: {
-                  status: "searching",
-                  message: data.message,
-                  count: prev[data.source].count,
-                },
-              }));
-              break;
-
-            case "result":
-              if (data.result) {
-                setResults((prev) => [...prev, data.result!]);
-                setSourceStatus((prev) => ({
-                  ...prev,
-                  [data.source]: {
-                    ...prev[data.source],
-                    count: prev[data.source].count + 1,
-                  },
-                }));
-              }
-              break;
-
-            case "ai_chunk":
-              if (data.message) {
-                setAiContent((prev) => prev + data.message);
-              }
-              break;
-
-            case "complete":
-              setSourceStatus((prev) => ({
-                ...prev,
-                [data.source]: {
-                  status: "complete",
-                  message: data.message,
-                  count: data.totalCount ?? prev[data.source].count,
-                },
-              }));
-              if (data.source === "ai") {
-                setAiComplete(true);
-              }
-              break;
-
-            case "error":
-              setSourceStatus((prev) => ({
-                ...prev,
-                [data.source]: {
-                  status: "error",
-                  message: data.message,
-                  count: prev[data.source].count,
-                },
-              }));
-              break;
-          }
-        } catch (parseError) {
-          console.error("Failed to parse SSE event:", parseError);
-        }
-      };
-
-      es.addEventListener("done", () => {
-        setIsSearching(false);
-        es.close();
-        eventSourceRef.current = null;
-        toast({
-          title: "검색 완료",
-          description: `${results.length}개의 결과를 찾았습니다.`,
-        });
+      
+      setConnectionStatus("connected");
+      toast({
+        title: "검색 시작",
+        description: `검색 Job이 생성되었습니다. (${job.jobId.substring(0, 8)}...)`,
       });
-
-      es.addEventListener("error", (errorEvent) => {
-        console.error("SSE error:", errorEvent);
-        setIsSearching(false);
-        setConnectionStatus("error");
-        es.close();
-        eventSourceRef.current = null;
-      });
-
-      es.onerror = () => {
-        setIsSearching(false);
-        setConnectionStatus("error");
-        es.close();
-        eventSourceRef.current = null;
-        toast({
-          title: "검색 오류",
-          description: "검색 중 오류가 발생했습니다. 다시 시도해주세요.",
-          variant: "destructive",
-        });
-      };
+      
+      // Setup event handlers
+      setupEventHandlers(es, job.jobId);
 
     } catch (error) {
       console.error("Failed to start search:", error);
@@ -565,7 +964,7 @@ const ParallelSearch = () => {
         variant: "destructive",
       });
     }
-  }, [query, timeWindow, priorityUrls, isSearching, resetState, toast, results.length]);
+  }, [query, timeWindow, isSearching, resetState, toast, setupEventHandlers]);
 
   const handleCancel = useCallback(() => {
     if (eventSourceRef.current) {
@@ -574,6 +973,9 @@ const ParallelSearch = () => {
     }
     setIsSearching(false);
     setConnectionStatus("idle");
+    setJobStatus("idle");
+    // Clear stored job info
+    sessionStorage.removeItem("parallelSearch_currentJobId");
     toast({
       title: "취소됨",
       description: "검색이 취소되었습니다.",
@@ -751,7 +1153,7 @@ const ParallelSearch = () => {
                 {connectionStatus === "connecting" 
                   ? "검색 서버와 실시간 연결을 설정하고 있습니다..."
                   : connectionStatus === "connected"
-                    ? "3개의 소스에서 동시에 검색하고 있습니다."
+                    ? <>3개의 소스에서 동시에 검색하고 있습니다. {currentJobId && <span className="text-xs opacity-60">(Job: {currentJobId.substring(0, 8)}...)</span>}</>
                     : "연결 대기 중..."}
               </CardDescription>
             </CardHeader>
@@ -811,7 +1213,12 @@ const ParallelSearch = () => {
 
             {/* AI Analysis (if available) */}
             {aiContent && (
-              <AIStreamCard content={aiContent} isComplete={aiComplete} />
+              <AIStreamCard 
+                content={aiContent} 
+                isComplete={aiComplete}
+                onSave={handleSaveAnalysis}
+                isSaved={isAnalysisSaved}
+              />
             )}
 
             {/* Results List */}
@@ -844,7 +1251,12 @@ const ParallelSearch = () => {
                       <div className="space-y-4">
                         {filteredResults.length > 0 ? (
                           filteredResults.map((result) => (
-                            <SearchResultCard key={result.id} result={result} />
+                            <SearchResultCard 
+                              key={result.id} 
+                              result={result}
+                              onSaveUrl={handleManualSaveUrl}
+                              isUrlSaved={result.url ? isUrlSaved(result.url) : false}
+                            />
                           ))
                         ) : (
                           <div className="text-center py-8 text-muted-foreground">

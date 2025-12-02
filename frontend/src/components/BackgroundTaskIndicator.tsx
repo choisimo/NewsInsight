@@ -12,6 +12,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import { cancelDeepSearch } from '@/lib/api';
 
 // ============================================
 // Task Item Component
@@ -23,7 +24,7 @@ interface TaskItemProps {
   onRemove: (id: string) => void;
 }
 
-const TaskItem = ({ task, onNavigate, onRemove }: TaskItemProps) => {
+const TaskItem = ({ task, onNavigate, onRemove, onCancel }: TaskItemProps & { onCancel?: (task: BackgroundTask) => void }) => {
   const getStatusIcon = () => {
     switch (task.status) {
       case 'pending':
@@ -159,6 +160,17 @@ const TaskItem = ({ task, onNavigate, onRemove }: TaskItemProps) => {
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
+          {isActive && onCancel && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-red-500"
+              onClick={() => onCancel(task)}
+              title="작업 취소"
+            >
+              <XCircle className="h-3.5 w-3.5" />
+            </Button>
+          )}
           {!isActive && (
             <Button
               variant="ghost"
@@ -190,11 +202,31 @@ export function BackgroundTaskIndicator() {
     activeTaskCount,
     removeTask,
     clearCompletedTasks,
+    updateTask,
   } = useBackgroundTasks();
 
   const handleNavigate = (url: string) => {
     setOpen(false);
     navigate(url);
+  };
+
+  const handleCancelTask = async (task: BackgroundTask) => {
+    if (task.status !== 'pending' && task.status !== 'running') {
+      return;
+    }
+
+    try {
+      if (task.type === 'deep-search') {
+        await cancelDeepSearch(task.id);
+      }
+    } catch (error) {
+      console.error('Failed to cancel background task:', error);
+    } finally {
+      updateTask(task.id, {
+        status: 'cancelled',
+        completedAt: new Date().toISOString(),
+      });
+    }
   };
 
   const allTasks = [...activeTasks, ...completedTasks];
@@ -236,7 +268,7 @@ export function BackgroundTaskIndicator() {
       </PopoverTrigger>
       
       <PopoverContent 
-        className="w-96 p-0" 
+        className="w-96 p-0 max-h-[80vh] flex flex-col" 
         align="end"
         sideOffset={8}
       >
@@ -252,7 +284,7 @@ export function BackgroundTaskIndicator() {
           </Button>
         </div>
         
-        <ScrollArea className="max-h-[400px]">
+        <ScrollArea className="flex-1">
           <div className="p-3 space-y-4">
             {/* Active Tasks */}
             {activeTasks.length > 0 && (
@@ -268,6 +300,7 @@ export function BackgroundTaskIndicator() {
                       task={task}
                       onNavigate={handleNavigate}
                       onRemove={removeTask}
+                      onCancel={handleCancelTask}
                     />
                   ))}
                 </div>
@@ -288,6 +321,7 @@ export function BackgroundTaskIndicator() {
                       task={task}
                       onNavigate={handleNavigate}
                       onRemove={removeTask}
+                      onCancel={handleCancelTask}
                     />
                   ))}
                 </div>

@@ -124,6 +124,8 @@ get_service_name() {
         echo "collector-service"
     elif [[ "$key" =~ ^WEB_CRAWLER_ ]]; then
         echo "web-crawler"
+    elif [[ "$key" =~ ^AUTONOMOUS_CRAWLER_ ]]; then
+        echo "autonomous-crawler"
     else
         echo ""
     fi
@@ -146,6 +148,9 @@ strip_service_prefix() {
             ;;
         "web-crawler")
             echo "${key#WEB_CRAWLER_}"
+            ;;
+        "autonomous-crawler")
+            echo "${key#AUTONOMOUS_CRAWLER_}"
             ;;
         *)
             echo "$key"
@@ -256,22 +261,25 @@ list_loaded_keys() {
     log_info "Listing loaded keys by service..."
     echo ""
     
-    local services=("api-gateway" "analysis-service" "collector-service" "web-crawler")
+    local services=("api-gateway" "analysis-service" "collector-service" "web-crawler" "autonomous-crawler")
     
     for service in "${services[@]}"; do
         log_info "Service: $service"
         
         local response
-        response=$(curl -sf "${CONSUL_ADDR}/v1/kv/config/${service}/?keys" 2>&1)
+        local http_code
         
-        if [[ $? -eq 0 ]]; then
+        # Use curl with error handling - don't fail on 404
+        response=$(curl -s "${CONSUL_ADDR}/v1/kv/config/${service}/?keys" 2>/dev/null) || true
+        
+        if [[ -n "$response" && "$response" != "null" && "$response" != "" ]]; then
             if command -v jq &> /dev/null; then
-                echo "$response" | jq -r '.[]' | sed 's/^/  - /'
+                echo "$response" | jq -r '.[]' 2>/dev/null | sed 's/^/  - /' || log_warning "  No keys found"
             else
                 echo "$response"
             fi
         else
-            log_warning "  No keys found or error accessing Consul"
+            log_warning "  No keys found for this service"
         fi
         echo ""
     done

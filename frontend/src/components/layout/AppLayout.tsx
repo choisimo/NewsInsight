@@ -37,7 +37,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     { to: '/', icon: <Search className="h-4 w-4" />, label: '통합 검색' },
     { to: '/deep-search', icon: <Brain className="h-4 w-4" />, label: 'Deep Search' },
     { to: '/fact-check', icon: <Shield className="h-4 w-4" />, label: '팩트체크' },
-    { to: '/browser-agent', icon: <Bot className="h-4 w-4" />, label: '브라우저 에이전트' },
+    { to: '/ai-agent', icon: <Bot className="h-4 w-4" />, label: '브라우저 에이전트' },
     { to: '/url-collections', icon: <FolderOpen className="h-4 w-4" />, label: 'URL 컬렉션' },
   ];
 

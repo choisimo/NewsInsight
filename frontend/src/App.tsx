@@ -30,7 +30,7 @@ const App = () => (
               <Route path="/search" element={<Navigate to="/" replace />} />
               <Route path="/fact-check" element={<FactCheck />} />
               <Route path="/deep-search" element={<DeepSearch />} />
-              <Route path="/browser-agent" element={<BrowserAgent />} />
+              <Route path="/ai-agent" element={<BrowserAgent />} />
               <Route path="/url-collections" element={<UrlCollections />} />
               <Route path="/admin/sources" element={<AdminSources />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

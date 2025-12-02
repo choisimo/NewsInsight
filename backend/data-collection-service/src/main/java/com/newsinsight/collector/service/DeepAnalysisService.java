@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -33,6 +34,11 @@ import java.util.stream.Collectors;
  * Service for managing deep AI search operations.
  * Handles job creation, callback processing, and result retrieval.
  * Publishes SSE events via DeepSearchEventService for real-time updates.
+ * 
+ * Supports two crawling modes:
+ * 1. Webhook mode: Uses n8n webhook for AI-powered crawling
+ * 2. Integrated mode: Uses IntegratedCrawlerService with multiple strategies
+ *    (Crawl4AI, Browser-Use, Direct HTTP, Search Engines)
  */
 @Service
 @RequiredArgsConstructor
@@ -43,6 +49,7 @@ public class DeepAnalysisService {
     private final CrawlJobRepository crawlJobRepository;
     private final CrawlEvidenceRepository crawlEvidenceRepository;
     private final DeepSearchEventService deepSearchEventService;
+    private final IntegratedCrawlerService integratedCrawlerService;
 
     @Value("${collector.deep-search.timeout-minutes:30}")
     private int timeoutMinutes;
@@ -53,13 +60,23 @@ public class DeepAnalysisService {
     @Value("${collector.deep-search.callback-token:}")
     private String expectedCallbackToken;
 
+    @Value("${collector.deep-search.use-integrated-crawler:true}")
+    private boolean useIntegratedCrawler;
+
+    @Value("${collector.deep-search.fallback-to-integrated:true}")
+    private boolean fallbackToIntegrated;
+
     /**
      * Start a new deep search job
      */
     @Transactional
     public DeepSearchJobDto startDeepSearch(String topic, String baseUrl) {
-        if (!deepAISearchClient.isEnabled()) {
-            throw new IllegalStateException("Deep AI search is disabled");
+        // Check if any crawling method is available
+        boolean webhookEnabled = deepAISearchClient.isEnabled();
+        boolean integratedEnabled = useIntegratedCrawler && integratedCrawlerService.isAvailable();
+        
+        if (!webhookEnabled && !integratedEnabled) {
+            throw new IllegalStateException("No deep search method available. Both webhook and integrated crawler are disabled.");
         }
 
         String jobId = generateJobId();
@@ -73,19 +90,26 @@ public class DeepAnalysisService {
                 .build();
 
         crawlJobRepository.save(job);
-        log.info("Created deep search job: id={}, topic={}", jobId, topic);
+        log.info("Created deep search job: id={}, topic={}, webhookEnabled={}, integratedEnabled={}", 
+                jobId, topic, webhookEnabled, integratedEnabled);
 
         // Publish initial status via SSE
         deepSearchEventService.publishStatusUpdate(jobId, "PENDING", "Job created, starting search...");
 
-        // Trigger n8n workflow asynchronously
-        triggerSearchAsync(jobId, topic, baseUrl);
+        // Choose crawling method
+        if (useIntegratedCrawler && integratedEnabled) {
+            // Prefer integrated crawler when enabled
+            triggerIntegratedSearchAsync(jobId, topic, baseUrl, webhookEnabled && fallbackToIntegrated);
+        } else if (webhookEnabled) {
+            // Use webhook if integrated is disabled
+            triggerSearchAsync(jobId, topic, baseUrl);
+        }
 
         return toJobDto(job);
     }
 
     /**
-     * Async method to trigger the search
+     * Async method to trigger the search via webhook
      */
     @Async
     public void triggerSearchAsync(String jobId, String topic, String baseUrl) {
@@ -113,6 +137,147 @@ public class DeepAnalysisService {
             deepSearchEventService.publishError(jobId, e.getMessage());
             log.error("Exception triggering deep search: jobId={}", jobId, e);
         }
+    }
+
+    /**
+     * Async method to trigger search using IntegratedCrawlerService
+     */
+    @Async
+    public void triggerIntegratedSearchAsync(String jobId, String topic, String baseUrl, boolean fallbackToWebhook) {
+        try {
+            log.info("Starting integrated crawl: jobId={}, topic={}", jobId, topic);
+            
+            // Publish progress update
+            deepSearchEventService.publishProgressUpdate(jobId, 10, "Starting integrated crawler...");
+            updateJobStatus(jobId, CrawlJobStatus.IN_PROGRESS);
+            deepSearchEventService.publishStatusUpdate(jobId, "IN_PROGRESS", "Integrated crawl in progress...");
+
+            // Build crawl request
+            IntegratedCrawlerService.CrawlRequest request;
+            if (baseUrl != null && !baseUrl.isBlank()) {
+                request = IntegratedCrawlerService.CrawlRequest.forUrl(topic, baseUrl);
+            } else {
+                request = IntegratedCrawlerService.CrawlRequest.forTopic(topic);
+            }
+
+            // Create progress callback
+            IntegratedCrawlerService.CrawlProgressCallback callback = new IntegratedCrawlerService.CrawlProgressCallback() {
+                @Override
+                public void onProgress(int current, int total, String message) {
+                    // Scale progress from 10-90%
+                    int scaledProgress = 10 + (int)((current / (double) Math.max(total, 1)) * 80);
+                    deepSearchEventService.publishProgressUpdate(jobId, scaledProgress, message);
+                }
+
+                @Override
+                public void onPageCrawled(com.newsinsight.collector.dto.CrawledPage page) {
+                    log.debug("Page crawled for job {}: {}", jobId, page.url());
+                }
+
+                @Override
+                public void onEvidenceFound(EvidenceDto evidence) {
+                    deepSearchEventService.publishEvidence(jobId, evidence);
+                }
+
+                @Override
+                public void onError(String url, String error) {
+                    log.warn("Crawl error for job {} at {}: {}", jobId, url, error);
+                }
+            };
+
+            // Execute crawl
+            IntegratedCrawlerService.CrawlResult result = integratedCrawlerService
+                    .crawl(request, callback)
+                    .block();
+
+            if (result != null && !result.evidence().isEmpty()) {
+                // Save evidence to database
+                List<CrawlEvidence> evidenceEntities = result.evidence().stream()
+                        .map(e -> CrawlEvidence.builder()
+                                .jobId(jobId)
+                                .url(e.getUrl())
+                                .title(e.getTitle())
+                                .stance(parseStance(e.getStance()))
+                                .snippet(e.getSnippet())
+                                .source(e.getSource())
+                                .build())
+                        .toList();
+                crawlEvidenceRepository.saveAll(evidenceEntities);
+
+                // Update job as completed
+                CrawlJob job = crawlJobRepository.findById(jobId).orElse(null);
+                if (job != null) {
+                    job.markCompleted(evidenceEntities.size());
+                    crawlJobRepository.save(job);
+                }
+
+                // Publish completion
+                deepSearchEventService.publishProgressUpdate(jobId, 100, "Completed");
+                deepSearchEventService.publishComplete(jobId, toJobDto(job));
+                
+                log.info("Integrated crawl completed: jobId={}, evidence={}", jobId, evidenceEntities.size());
+            } else {
+                // No evidence found - try fallback if enabled
+                if (fallbackToWebhook && deepAISearchClient.isEnabled()) {
+                    log.info("No evidence from integrated crawler, falling back to webhook: jobId={}", jobId);
+                    deepSearchEventService.publishProgressUpdate(jobId, 50, "Fallback to webhook crawler...");
+                    triggerWebhookFallback(jobId, topic, baseUrl);
+                } else {
+                    // Mark as completed with no evidence
+                    CrawlJob job = crawlJobRepository.findById(jobId).orElse(null);
+                    if (job != null) {
+                        job.markCompleted(0);
+                        crawlJobRepository.save(job);
+                    }
+                    deepSearchEventService.publishProgressUpdate(jobId, 100, "Completed (no evidence found)");
+                    deepSearchEventService.publishComplete(jobId, toJobDto(job));
+                    log.info("Integrated crawl completed with no evidence: jobId={}", jobId);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Integrated crawl failed: jobId={}, error={}", jobId, e.getMessage(), e);
+            
+            // Try fallback to webhook if enabled
+            if (fallbackToWebhook && deepAISearchClient.isEnabled()) {
+                log.info("Integrated crawler failed, falling back to webhook: jobId={}", jobId);
+                deepSearchEventService.publishProgressUpdate(jobId, 50, "Fallback to webhook crawler...");
+                triggerWebhookFallback(jobId, topic, baseUrl);
+            } else {
+                updateJobStatus(jobId, CrawlJobStatus.FAILED, "Integrated crawler failed: " + e.getMessage());
+                deepSearchEventService.publishError(jobId, "Crawl failed: " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Fallback to webhook-based crawling when integrated crawler fails
+     */
+    private void triggerWebhookFallback(String jobId, String topic, String baseUrl) {
+        try {
+            var response = deepAISearchClient.triggerSearchSync(jobId, topic, baseUrl);
+            if (response.success()) {
+                deepSearchEventService.publishStatusUpdate(jobId, "IN_PROGRESS", "Webhook crawl in progress...");
+                log.info("Webhook fallback triggered: jobId={}", jobId);
+            } else {
+                updateJobStatus(jobId, CrawlJobStatus.FAILED, response.message());
+                deepSearchEventService.publishError(jobId, response.message());
+            }
+        } catch (Exception e) {
+            updateJobStatus(jobId, CrawlJobStatus.FAILED, "Webhook fallback failed: " + e.getMessage());
+            deepSearchEventService.publishError(jobId, "Webhook fallback failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Parse stance string to EvidenceStance enum
+     */
+    private EvidenceStance parseStance(String stance) {
+        if (stance == null) return EvidenceStance.NEUTRAL;
+        return switch (stance.toLowerCase()) {
+            case "pro" -> EvidenceStance.PRO;
+            case "con" -> EvidenceStance.CON;
+            default -> EvidenceStance.NEUTRAL;
+        };
     }
 
     /**

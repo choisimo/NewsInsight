@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 from contextlib import asynccontextmanager
@@ -11,6 +12,7 @@ import structlog
 from prometheus_client import start_http_server
 
 from src.config import Settings, get_settings
+from src.config.consul import load_config_from_consul, wait_for_consul, CONSUL_ENABLED
 from src.crawler import AutonomousCrawlerAgent
 from src.kafka import BrowserTaskConsumer, CrawlResultProducer
 from src.kafka.messages import BrowserTaskMessage
@@ -176,6 +178,15 @@ class CrawlerService:
 
 async def main_async() -> None:
     """Async main function."""
+    # Load configuration from Consul (if enabled)
+    consul_keys, env_keys = [], []
+    if CONSUL_ENABLED:
+        # Wait for Consul to be available
+        if wait_for_consul(max_attempts=30, delay=2.0):
+            consul_keys, env_keys = load_config_from_consul()
+        else:
+            print("WARNING: Consul not available, using environment variables only", file=sys.stderr)
+    
     settings = get_settings()
     configure_logging(settings)
 
@@ -184,6 +195,8 @@ async def main_async() -> None:
         "Initializing autonomous-crawler-service",
         kafka_servers=settings.kafka.bootstrap_servers,
         llm_provider=settings.llm.provider,
+        consul_enabled=CONSUL_ENABLED,
+        consul_keys_loaded=len(consul_keys),
     )
 
     service = CrawlerService(settings)
