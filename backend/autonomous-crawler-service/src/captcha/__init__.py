@@ -11,7 +11,75 @@ from typing import Any
 
 import structlog
 
+# Import submodules
+from src.captcha.stealth import (
+    StealthConfig,
+    EnhancedStealthConfig,
+    apply_stealth_to_playwright_async,
+    get_undetected_browser_args,
+    get_nopecha_extension_path,
+    get_stealth_browser_args_with_extensions,
+)
+from src.captcha.nopecha import (
+    NopeCHAConfig,
+    NopeCHAExtensionManager,
+    NopeCHAAPI,
+    solve_captcha_with_nopecha,
+)
+from src.captcha.undetected import (
+    UndetectedConfig,
+    AdvancedStealthPatcher,
+    HumanBehaviorSimulator,
+    create_undetected_driver,
+    get_enhanced_browser_args,
+)
+from src.captcha.camoufox_driver import (
+    CamoufoxConfig,
+    CamoufoxHelper,
+    create_camoufox_browser,
+    create_camoufox_browser_sync,
+    get_recommended_camoufox_config,
+    is_camoufox_available,
+)
+
 logger = structlog.get_logger(__name__)
+
+# Re-export for convenience
+__all__ = [
+    # Core CAPTCHA types and solvers
+    "CaptchaType",
+    "CaptchaSolution",
+    "CaptchaSolver",
+    "CaptchaSolverOrchestrator",
+    "AudioRecaptchaSolver",
+    "HCaptchaChallenger",
+    "CloudflareBypasser",
+    # Stealth
+    "StealthConfig",
+    "EnhancedStealthConfig",
+    "apply_stealth_to_playwright_async",
+    "get_undetected_browser_args",
+    "get_nopecha_extension_path",
+    "get_stealth_browser_args_with_extensions",
+    # NopeCHA
+    "NopeCHAConfig",
+    "NopeCHAExtensionManager",
+    "NopeCHAAPI",
+    "solve_captcha_with_nopecha",
+    # Undetected ChromeDriver
+    "UndetectedConfig",
+    "AdvancedStealthPatcher",
+    "HumanBehaviorSimulator",
+    "create_undetected_driver",
+    "get_enhanced_browser_args",
+    # Camoufox
+    "CamoufoxConfig",
+    "CamoufoxHelper",
+    "create_camoufox_browser",
+    "create_camoufox_browser_sync",
+    "get_recommended_camoufox_config",
+    "is_camoufox_available",
+]
 
 
 class CaptchaType(str, Enum):

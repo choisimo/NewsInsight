@@ -79,6 +79,15 @@ class BrowserSettings(BaseSettings):
         default="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         description="User agent string for browser",
     )
+    is_docker_env: bool = Field(
+        default=False,
+        description="Whether running in Docker environment (enables no-sandbox, etc.)",
+    )
+    # Browser backend selection
+    backend: Literal["playwright", "camoufox"] = Field(
+        default="playwright",
+        description="Browser backend: 'playwright' (Chrome/Chromium) or 'camoufox' (Firefox anti-detect)",
+    )
 
 
 class LLMSettings(BaseSettings):
@@ -179,6 +188,70 @@ class StealthSettings(BaseSettings):
         default=False,
         description="Use random user agent on each session",
     )
+    # NopeCHA CAPTCHA solver extension
+    use_nopecha: bool = Field(
+        default=True,
+        description="Enable NopeCHA extension for automatic CAPTCHA solving",
+    )
+    nopecha_api_key: str = Field(
+        default="",
+        description="NopeCHA API key (optional, for faster solving)",
+    )
+    # Advanced stealth patches
+    use_advanced_patches: bool = Field(
+        default=True,
+        description="Apply advanced JavaScript patches for bot detection bypass",
+    )
+    # Human behavior simulation
+    simulate_human_behavior: bool = Field(
+        default=True,
+        description="Simulate human-like mouse movements and scrolling",
+    )
+
+
+class CamoufoxSettings(BaseSettings):
+    """Camoufox Firefox-based anti-detect browser settings."""
+
+    model_config = SettingsConfigDict(env_prefix="CAMOUFOX_")
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable Camoufox as alternative browser (when BROWSER_BACKEND=camoufox)",
+    )
+    humanize: bool = Field(
+        default=True,
+        description="Enable human-like behavior simulation",
+    )
+    humanize_level: int = Field(
+        default=2,
+        ge=1,
+        le=3,
+        description="Humanization level (1=low, 2=medium, 3=high)",
+    )
+    geoip: bool = Field(
+        default=True,
+        description="Enable GeoIP-based fingerprint matching",
+    )
+    block_webrtc: bool = Field(
+        default=True,
+        description="Block WebRTC to prevent IP leaks",
+    )
+    block_images: bool = Field(
+        default=False,
+        description="Block images for faster loading",
+    )
+    locale: str = Field(
+        default="ko-KR",
+        description="Browser locale",
+    )
+    timezone: str = Field(
+        default="Asia/Seoul",
+        description="Browser timezone",
+    )
+    os_type: Literal["windows", "macos", "linux", "random"] = Field(
+        default="random",
+        description="OS fingerprint type",
+    )
 
 
 class CaptchaSettings(BaseSettings):
@@ -253,6 +326,7 @@ class Settings(BaseSettings):
     search: SearchSettings = Field(default_factory=SearchSettings)
     stealth: StealthSettings = Field(default_factory=StealthSettings)
     captcha: CaptchaSettings = Field(default_factory=CaptchaSettings)
+    camoufox: CamoufoxSettings = Field(default_factory=CamoufoxSettings)
     metrics: MetricsSettings = Field(default_factory=MetricsSettings)
 
 

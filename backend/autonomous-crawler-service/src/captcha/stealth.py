@@ -1,11 +1,16 @@
 """Stealth browser configuration for bot detection bypass."""
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+
+# Extension paths for CAPTCHA bypass
+EXTENSION_CACHE_DIR = Path("/tmp/browser-extensions")
 
 
 @dataclass
@@ -189,3 +194,145 @@ def get_undetected_browser_args() -> list[str]:
         "--use-mock-keychain",
         "--ignore-certificate-errors",
     ]
+
+
+async def get_nopecha_extension_path(api_key: str = "") -> str | None:
+    """
+    Download and configure NopeCHA extension for browser use.
+    
+    Args:
+        api_key: Optional NopeCHA API key for faster solving
+        
+    Returns:
+        Path to the extracted extension directory, or None if failed
+    """
+    try:
+        from src.captcha.nopecha import NopeCHAConfig, NopeCHAExtensionManager
+        
+        config = NopeCHAConfig(
+            api_key=api_key,
+            enabled=True,
+            auto_solve=True,
+            use_audio_challenge=True,
+            cache_dir=EXTENSION_CACHE_DIR / "nopecha",
+        )
+        
+        manager = NopeCHAExtensionManager(config)
+        ext_path = await manager.download_extension()
+        
+        logger.info("NopeCHA extension ready", path=str(ext_path))
+        return str(ext_path)
+        
+    except Exception as e:
+        logger.error("Failed to setup NopeCHA extension", error=str(e))
+        return None
+
+
+def get_stealth_browser_args_with_extensions(
+    extension_paths: list[str] | None = None,
+    include_docker_args: bool = False,
+) -> list[str]:
+    """
+    Get Chrome args for stealth browsing with extension support.
+    
+    Args:
+        extension_paths: List of paths to unpacked extensions
+        include_docker_args: Include Docker-specific args
+        
+    Returns:
+        List of Chrome arguments
+    """
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-features=IsolateOrigins,site-per-process,AutomationControlled",
+        "--disable-infobars",
+        "--disable-popup-blocking",
+        "--disable-notifications",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--no-service-autorun",
+        "--disable-background-networking",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-breakpad",
+        "--disable-component-update",
+        "--disable-default-apps",
+        "--disable-hang-monitor",
+        "--disable-ipc-flooding-protection",
+        "--disable-renderer-backgrounding",
+        "--disable-sync",
+        "--disable-client-side-phishing-detection",
+        "--disable-domain-reliability",
+        "--metrics-recording-only",
+        "--safebrowsing-disable-auto-update",
+        "--enable-webgl",
+        "--enable-accelerated-2d-canvas",
+        "--enable-features=NetworkService,NetworkServiceInProcess",
+        "--ignore-certificate-errors",
+        "--ignore-ssl-errors",
+        "--allow-running-insecure-content",
+        "--password-store=basic",
+        "--use-mock-keychain",
+        "--log-level=3",
+    ]
+    
+    # Add extension paths (requires extensions to NOT be disabled)
+    if extension_paths:
+        # Remove --disable-extensions if present
+        args = [a for a in args if a != "--disable-extensions"]
+        
+        # Add load-extension args
+        for ext_path in extension_paths:
+            if ext_path:
+                args.append(f"--load-extension={ext_path}")
+                
+        # Also add to disable-extensions-except
+        valid_paths = [p for p in extension_paths if p]
+        if valid_paths:
+            args.append(f"--disable-extensions-except={','.join(valid_paths)}")
+    else:
+        args.append("--disable-extensions")
+    
+    if include_docker_args:
+        args.extend([
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu-sandbox",
+            "--disable-setuid-sandbox",
+            "--no-zygote",
+            "--single-process",
+        ])
+    
+    return args
+
+
+@dataclass
+class EnhancedStealthConfig(StealthConfig):
+    """Enhanced stealth configuration with extension support."""
+    
+    # NopeCHA settings - ENABLED by default
+    use_nopecha: bool = True
+    nopecha_api_key: str = ""
+    
+    # Camoufox as alternative - can be enabled via settings
+    use_camoufox: bool = False
+    
+    # Human-like behavior - ENABLED by default
+    enable_human_simulation: bool = True
+    
+    # Extension paths
+    extension_paths: list[str] = field(default_factory=list)
+    
+    async def setup_extensions(self) -> None:
+        """Download and configure required extensions."""
+        if self.use_nopecha:
+            nopecha_path = await get_nopecha_extension_path(self.nopecha_api_key)
+            if nopecha_path and nopecha_path not in self.extension_paths:
+                self.extension_paths.append(nopecha_path)
+    
+    def get_browser_args(self, include_docker: bool = False) -> list[str]:
+        """Get Chrome args with configured extensions."""
+        return get_stealth_browser_args_with_extensions(
+            extension_paths=self.extension_paths if self.extension_paths else None,
+            include_docker_args=include_docker,
+        )

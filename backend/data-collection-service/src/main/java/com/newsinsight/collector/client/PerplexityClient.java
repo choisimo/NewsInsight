@@ -2,25 +2,31 @@ package com.newsinsight.collector.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
+import io.netty.channel.ChannelOption;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
+import reactor.netty.http.client.HttpClient;
 
+import jakarta.annotation.PostConstruct;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class PerplexityClient {
 
-    private final WebClient webClient;
     private final ObjectMapper objectMapper;
+    private WebClient perplexityWebClient;
 
     @Value("${PERPLEXITY_API_KEY:}")
     private String apiKey;
@@ -30,6 +36,34 @@ public class PerplexityClient {
 
     @Value("${PERPLEXITY_MODEL:llama-3.1-sonar-large-128k-online}")
     private String model;
+
+    @Value("${collector.perplexity.timeout-seconds:120}")
+    private int timeoutSeconds;
+
+    public PerplexityClient(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @PostConstruct
+    public void init() {
+        // Create dedicated WebClient with longer timeout for AI streaming
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 30000)
+                .responseTimeout(Duration.ofSeconds(timeoutSeconds))
+                .doOnConnected(conn ->
+                        conn.addHandlerLast(new ReadTimeoutHandler(timeoutSeconds, TimeUnit.SECONDS))
+                            .addHandlerLast(new WriteTimeoutHandler(timeoutSeconds, TimeUnit.SECONDS))
+                )
+                .followRedirect(true);
+
+        this.perplexityWebClient = WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .defaultHeader("User-Agent", "NewsInsight-Collector/1.0")
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+                .build();
+
+        log.info("PerplexityClient initialized with timeout: {}s, enabled: {}", timeoutSeconds, isEnabled());
+    }
 
     /**
      * Check if Perplexity API is enabled (API key is configured)
@@ -51,7 +85,9 @@ public class PerplexityClient {
                 "messages", List.of(Map.of("role", "user", "content", prompt))
         );
 
-        return webClient.post()
+        log.debug("Calling Perplexity API: {} with timeout {}s", url, timeoutSeconds);
+
+        return perplexityWebClient.post()
                 .uri(url)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -59,7 +95,11 @@ public class PerplexityClient {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToFlux(String.class)
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .doOnSubscribe(s -> log.debug("Starting Perplexity stream request"))
                 .doOnNext(chunk -> log.debug("Perplexity raw chunk: {}", chunk))
+                .doOnError(e -> log.error("Perplexity API error: {}", e.getMessage()))
+                .doOnComplete(() -> log.debug("Perplexity stream completed"))
                 .flatMap(this::extractTextFromChunk);
     }
 
