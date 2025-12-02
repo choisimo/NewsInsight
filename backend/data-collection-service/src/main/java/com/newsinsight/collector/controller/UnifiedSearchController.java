@@ -3,9 +3,11 @@ package com.newsinsight.collector.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.newsinsight.collector.service.AnalysisEventService;
 import com.newsinsight.collector.service.FactVerificationService;
+import com.newsinsight.collector.service.UnifiedSearchEventService;
 import com.newsinsight.collector.service.UnifiedSearchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
@@ -17,6 +19,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * 통합 검색 컨트롤러
@@ -31,6 +34,7 @@ import java.util.Set;
 public class UnifiedSearchController {
 
     private final UnifiedSearchService unifiedSearchService;
+    private final UnifiedSearchEventService unifiedSearchEventService;
     private final FactVerificationService factVerificationService;
     private final AnalysisEventService analysisEventService;
     private final ObjectMapper objectMapper;
@@ -143,6 +147,99 @@ public class UnifiedSearchController {
                 ));
     }
 
+    // ============================================
+    // Job-based Search API (supports SSE reconnection)
+    // ============================================
+
+    /**
+     * Start a new search job.
+     * Returns immediately with jobId. Results are streamed via SSE.
+     * 
+     * @param request Search request with query and window
+     * @return 202 Accepted with job details
+     */
+    @PostMapping("/jobs")
+    public ResponseEntity<Map<String, Object>> startSearchJob(@RequestBody SearchJobRequest request) {
+        if (request.getQuery() == null || request.getQuery().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Query is required"
+            ));
+        }
+
+        String jobId = UUID.randomUUID().toString();
+        String window = request.getWindow() != null ? request.getWindow() : "7d";
+        
+        log.info("Starting search job: {} for query: '{}', window: {}", jobId, request.getQuery(), window);
+
+        // Create job in event service
+        var metadata = unifiedSearchEventService.createJob(jobId, request.getQuery(), window);
+        
+        // Start async search execution
+        unifiedSearchService.executeSearchAsync(jobId, request.getQuery(), window);
+
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
+                "jobId", jobId,
+                "query", request.getQuery(),
+                "window", window,
+                "status", metadata.status(),
+                "createdAt", metadata.createdAt(),
+                "streamUrl", "/api/v1/search/jobs/" + jobId + "/stream"
+        ));
+    }
+
+    /**
+     * Get job status.
+     * 
+     * @param jobId The job ID
+     * @return Job status
+     */
+    @GetMapping("/jobs/{jobId}")
+    public ResponseEntity<Map<String, Object>> getJobStatus(@PathVariable String jobId) {
+        var metadata = unifiedSearchEventService.getJobMetadata(jobId);
+        
+        if (metadata == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "jobId", metadata.jobId(),
+                "query", metadata.query(),
+                "window", metadata.window(),
+                "status", metadata.status(),
+                "createdAt", metadata.createdAt(),
+                "completedAt", metadata.completedAt() != null ? metadata.completedAt() : ""
+        ));
+    }
+
+    /**
+     * Stream search job results via SSE.
+     * Supports reconnection - client can reconnect with same jobId.
+     * 
+     * @param jobId The job ID
+     * @return SSE event stream
+     */
+    @GetMapping(value = "/jobs/{jobId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<Object>> streamJobResults(@PathVariable String jobId) {
+        log.info("SSE connection request for search job: {}", jobId);
+
+        if (!unifiedSearchEventService.hasJob(jobId)) {
+            return Flux.just(ServerSentEvent.builder()
+                    .event("error")
+                    .data(Map.of("error", "Job not found: " + jobId))
+                    .build());
+        }
+
+        return unifiedSearchEventService.getJobEventStream(jobId)
+                .timeout(Duration.ofMinutes(5))
+                .onErrorResume(e -> {
+                    log.error("SSE stream error for job: {}", jobId, e);
+                    return Flux.just(ServerSentEvent.builder()
+                            .event("error")
+                            .data(Map.of("error", e.getMessage()))
+                            .build());
+                });
+    }
+
     /**
      * 검색 서비스 상태 확인
      */
@@ -248,6 +345,27 @@ public class UnifiedSearchController {
 
         public void setClaims(List<String> claims) {
             this.claims = claims;
+        }
+    }
+
+    public static class SearchJobRequest {
+        private String query;
+        private String window;
+
+        public String getQuery() {
+            return query;
+        }
+
+        public void setQuery(String query) {
+            this.query = query;
+        }
+
+        public String getWindow() {
+            return window;
+        }
+
+        public void setWindow(String window) {
+            this.window = window;
         }
     }
 }

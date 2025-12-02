@@ -20,6 +20,7 @@ import org.jsoup.Jsoup;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -34,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -55,6 +57,7 @@ public class UnifiedSearchService {
     private final PerplexityClient perplexityClient;
     private final Crawl4aiClient crawl4aiClient;
     private final CrawlSearchService crawlSearchService;
+    private final UnifiedSearchEventService unifiedSearchEventService;
 
     private static final int SNIPPET_MAX_LENGTH = 200;
     private static final int MAX_DB_RESULTS = 20;
@@ -529,5 +532,192 @@ public class UnifiedSearchService {
         }
 
         return text.substring(0, cut).trim() + "...";
+    }
+
+    // ============================================
+    // Async Job-based Search (for SSE reconnection support)
+    // ============================================
+
+    /**
+     * Execute search asynchronously for a job.
+     * Results are published to UnifiedSearchEventService.
+     * This allows SSE reconnection with the same jobId.
+     *
+     * @param jobId The job ID
+     * @param query Search query
+     * @param window Time window (1d, 7d, 30d)
+     */
+    @Async
+    public void executeSearchAsync(String jobId, String query, String window) {
+        log.info("Starting async search for job: {}, query: '{}', window: {}", jobId, query, window);
+        
+        unifiedSearchEventService.updateJobStatus(jobId, "IN_PROGRESS");
+        
+        AtomicInteger totalResults = new AtomicInteger(0);
+        AtomicInteger completedSources = new AtomicInteger(0);
+        
+        try {
+            // Execute all three searches in parallel
+            CompletableFuture<Void> dbFuture = CompletableFuture.runAsync(() -> 
+                    executeDbSearch(jobId, query, window, totalResults));
+            
+            CompletableFuture<Void> webFuture = CompletableFuture.runAsync(() -> 
+                    executeWebSearch(jobId, query, window, totalResults));
+            
+            CompletableFuture<Void> aiFuture = CompletableFuture.runAsync(() -> 
+                    executeAiSearch(jobId, query, window, totalResults));
+            
+            // Wait for all to complete
+            CompletableFuture.allOf(dbFuture, webFuture, aiFuture)
+                    .thenRun(() -> {
+                        log.info("All sources completed for job: {}, total results: {}", 
+                                jobId, totalResults.get());
+                        unifiedSearchEventService.publishJobComplete(jobId, totalResults.get());
+                    })
+                    .exceptionally(ex -> {
+                        log.error("Error in async search for job: {}", jobId, ex);
+                        unifiedSearchEventService.publishJobError(jobId, ex.getMessage());
+                        return null;
+                    });
+                    
+        } catch (Exception e) {
+            log.error("Failed to start async search for job: {}", jobId, e);
+            unifiedSearchEventService.publishJobError(jobId, e.getMessage());
+        }
+    }
+
+    private void executeDbSearch(String jobId, String query, String window, AtomicInteger totalResults) {
+        try {
+            unifiedSearchEventService.publishStatusUpdate(jobId, "database", "저장된 뉴스에서 검색 중...");
+            
+            LocalDateTime since = calculateSinceDate(window);
+            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
+                    Sort.by(Sort.Direction.DESC, "publishedDate")
+                            .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+
+            Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(
+                    query, since, pageRequest);
+
+            // Batch load analysis data
+            List<Long> articleIds = page.getContent().stream()
+                    .map(CollectedData::getId)
+                    .filter(id -> id != null)
+                    .toList();
+            
+            Map<Long, ArticleAnalysis> analysisMap = articleIds.isEmpty() 
+                    ? Map.of()
+                    : articleAnalysisRepository.findByArticleIdIn(articleIds).stream()
+                            .collect(Collectors.toMap(ArticleAnalysis::getArticleId, Function.identity()));
+            
+            Map<Long, ArticleDiscussion> discussionMap = articleIds.isEmpty()
+                    ? Map.of()
+                    : articleDiscussionRepository.findByArticleIdIn(articleIds).stream()
+                            .collect(Collectors.toMap(ArticleDiscussion::getArticleId, Function.identity()));
+
+            int count = 0;
+            for (CollectedData data : page.getContent()) {
+                ArticleAnalysis analysis = data.getId() != null ? analysisMap.get(data.getId()) : null;
+                ArticleDiscussion discussion = data.getId() != null ? discussionMap.get(data.getId()) : null;
+                
+                SearchResult result = convertToSearchResult(data, analysis, discussion);
+                unifiedSearchEventService.publishResult(jobId, "database", result);
+                count++;
+                totalResults.incrementAndGet();
+            }
+
+            unifiedSearchEventService.publishSourceComplete(jobId, "database", "저장된 뉴스 검색 완료", count);
+            
+        } catch (Exception e) {
+            log.error("Database search failed for job: {}", jobId, e);
+            unifiedSearchEventService.publishSourceError(jobId, "database", "데이터베이스 검색 오류: " + e.getMessage());
+        }
+    }
+
+    private void executeWebSearch(String jobId, String query, String window, AtomicInteger totalResults) {
+        try {
+            unifiedSearchEventService.publishStatusUpdate(jobId, "web", "웹에서 최신 정보 수집 중...");
+            
+            List<String> searchUrls = generateSearchUrls(query, window);
+            int successCount = 0;
+
+            for (String url : searchUrls) {
+                try {
+                    Crawl4aiClient.CrawlResult crawlResult = crawl4aiClient.crawl(url);
+                    if (crawlResult != null && crawlResult.getContent() != null) {
+                        SearchResult result = SearchResult.builder()
+                                .id(UUID.randomUUID().toString())
+                                .source("web")
+                                .sourceLabel("웹 검색")
+                                .title(crawlResult.getTitle() != null ? crawlResult.getTitle() : extractTitleFromUrl(url))
+                                .snippet(buildSnippet(crawlResult.getContent()))
+                                .url(url)
+                                .build();
+
+                        unifiedSearchEventService.publishResult(jobId, "web", result);
+                        successCount++;
+                        totalResults.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    log.debug("Failed to crawl URL {} for job {}: {}", url, jobId, e.getMessage());
+                }
+            }
+
+            unifiedSearchEventService.publishSourceComplete(jobId, "web", "웹 검색 완료", successCount);
+            
+        } catch (Exception e) {
+            log.error("Web search failed for job: {}", jobId, e);
+            unifiedSearchEventService.publishSourceError(jobId, "web", "웹 검색 오류");
+        }
+    }
+
+    private void executeAiSearch(String jobId, String query, String window, AtomicInteger totalResults) {
+        // AI search disabled check
+        if (!perplexityClient.isEnabled() && !crawlSearchService.isAvailable()) {
+            unifiedSearchEventService.publishStatusUpdate(jobId, "ai", "AI 분석 기능이 비활성화되어 있습니다.");
+            unifiedSearchEventService.publishSourceComplete(jobId, "ai", "AI 분석 비활성화", 0);
+            return;
+        }
+
+        try {
+            unifiedSearchEventService.publishStatusUpdate(jobId, "ai", "AI가 관련 정보를 분석하고 있습니다...");
+            
+            String prompt = buildAISearchPrompt(query, window);
+            
+            Flux<String> aiStream;
+            if (perplexityClient.isEnabled()) {
+                aiStream = perplexityClient.streamCompletion(prompt);
+            } else {
+                aiStream = crawlSearchService.searchAndAnalyze(query, window);
+            }
+
+            StringBuilder fullResponse = new StringBuilder();
+            
+            // Block and collect all AI response (since we're in async context)
+            aiStream
+                    .doOnNext(chunk -> {
+                        fullResponse.append(chunk);
+                        unifiedSearchEventService.publishAiChunk(jobId, chunk);
+                    })
+                    .blockLast(Duration.ofMinutes(2));
+
+            // Publish final AI result
+            SearchResult aiResult = SearchResult.builder()
+                    .id(UUID.randomUUID().toString())
+                    .source("ai")
+                    .sourceLabel("AI 분석")
+                    .title("'" + query + "' AI 분석 결과")
+                    .snippet(fullResponse.length() > SNIPPET_MAX_LENGTH
+                            ? fullResponse.substring(0, SNIPPET_MAX_LENGTH) + "..."
+                            : fullResponse.toString())
+                    .build();
+
+            unifiedSearchEventService.publishResult(jobId, "ai", aiResult);
+            totalResults.incrementAndGet();
+            unifiedSearchEventService.publishSourceComplete(jobId, "ai", "AI 분석 완료", 1);
+            
+        } catch (Exception e) {
+            log.error("AI search failed for job: {}", jobId, e);
+            unifiedSearchEventService.publishSourceError(jobId, "ai", "AI 분석 오류");
+        }
     }
 }

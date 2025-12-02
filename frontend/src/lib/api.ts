@@ -751,3 +751,76 @@ export const checkUnifiedSearchHealth = async (): Promise<{
   const response = await client.get('/api/v1/search/health');
   return response.data;
 };
+
+// ============================================
+// Job-based Unified Search API (supports SSE reconnection)
+// ============================================
+
+/**
+ * Search job response from the API
+ */
+export interface UnifiedSearchJob {
+  jobId: string;
+  query: string;
+  window: string;
+  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+  createdAt: number;
+  completedAt?: number;
+  streamUrl: string;
+}
+
+/**
+ * Start a new unified search job.
+ * Returns immediately with job details; results are delivered via SSE.
+ */
+export const startUnifiedSearchJob = async (
+  query: string,
+  window: string = '7d',
+): Promise<UnifiedSearchJob> => {
+  const client = await getApiClient();
+  const response = await client.post<UnifiedSearchJob>('/api/v1/search/jobs', {
+    query,
+    window,
+  });
+  return response.data;
+};
+
+/**
+ * Get the status of a unified search job.
+ */
+export const getUnifiedSearchJobStatus = async (jobId: string): Promise<UnifiedSearchJob> => {
+  const client = await getApiClient();
+  const response = await client.get<UnifiedSearchJob>(`/api/v1/search/jobs/${jobId}`);
+  return response.data;
+};
+
+/**
+ * Get the SSE stream URL for a unified search job.
+ */
+export const getUnifiedSearchJobStreamUrl = async (jobId: string): Promise<string> => {
+  const initialBase = resolveInitialBaseUrl();
+  const baseURL = await fetchConfiguredBaseUrl(initialBase);
+  const effectiveBaseURL = baseURL || (typeof globalThis.window !== 'undefined' ? globalThis.window.location.origin : '');
+  return `${effectiveBaseURL}/api/v1/search/jobs/${jobId}/stream`;
+};
+
+/**
+ * Open SSE stream for unified search job results.
+ * Supports reconnection - client can reconnect with same jobId.
+ * 
+ * Event types:
+ * - job_status: Initial job status on connection
+ * - status: Source status update (database, web, ai)
+ * - result: Search result from a source
+ * - ai_chunk: AI response chunk for streaming
+ * - source_complete: A source finished searching
+ * - source_error: A source encountered an error
+ * - done: All sources completed
+ * - job_error: Job failed
+ * - heartbeat: Keep-alive signal
+ */
+export const openUnifiedSearchJobStream = async (jobId: string): Promise<EventSource> => {
+  const url = await getUnifiedSearchJobStreamUrl(jobId);
+  return new EventSource(url);
+};
+

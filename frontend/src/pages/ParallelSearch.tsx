@@ -38,8 +38,12 @@ import { AnalysisBadges, type AnalysisData } from "@/components/AnalysisBadges";
 import {
   openUnifiedSearchStream,
   checkUnifiedSearchHealth,
+  startUnifiedSearchJob,
+  openUnifiedSearchJobStream,
+  getUnifiedSearchJobStatus,
   type UnifiedSearchResult,
   type UnifiedSearchEvent,
+  type UnifiedSearchJob,
 } from "@/lib/api";
 
 // Source configuration with icons and colors
@@ -324,6 +328,10 @@ const ParallelSearch = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [activeTab, setActiveTab] = useState<"all" | SourceType>("all");
   
+  // Job-based search state
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<string>("idle");
+  
   // Priority URLs from URL Collections page
   const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
   
@@ -366,6 +374,89 @@ const ParallelSearch = () => {
       }
     }
   }, [location.state]);
+  
+  // Restore jobId from URL query params or sessionStorage on mount
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const jobIdFromUrl = urlParams.get("jobId");
+    const storedJobId = sessionStorage.getItem("parallelSearch_currentJobId");
+    const storedQuery = sessionStorage.getItem("parallelSearch_query");
+    
+    const jobIdToRestore = jobIdFromUrl || storedJobId;
+    
+    if (jobIdToRestore) {
+      // Restore job state
+      setCurrentJobId(jobIdToRestore);
+      if (storedQuery) {
+        setQuery(storedQuery);
+      }
+      
+      // Check job status and reconnect if still active
+      getUnifiedSearchJobStatus(jobIdToRestore)
+        .then((job) => {
+          setQuery(job.query);
+          setTimeWindow(job.window);
+          setJobStatus(job.status);
+          
+          if (job.status === "PENDING" || job.status === "IN_PROGRESS") {
+            // Reconnect to SSE stream
+            reconnectToJob(jobIdToRestore);
+          } else if (job.status === "COMPLETED") {
+            toast({
+              title: "검색 완료됨",
+              description: "이전 검색이 이미 완료되었습니다. 새 검색을 시작하세요.",
+            });
+          } else if (job.status === "FAILED") {
+            toast({
+              title: "검색 실패",
+              description: "이전 검색이 실패했습니다. 새 검색을 시작하세요.",
+              variant: "destructive",
+            });
+          }
+        })
+        .catch(() => {
+          // Job not found, clear stored state
+          sessionStorage.removeItem("parallelSearch_currentJobId");
+          sessionStorage.removeItem("parallelSearch_query");
+          setCurrentJobId(null);
+        });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  
+  // Function to reconnect to an existing job
+  const reconnectToJob = useCallback(async (jobId: string) => {
+    setIsSearching(true);
+    setConnectionStatus("connecting");
+    
+    // Set all sources to "searching" state
+    setSourceStatus({
+      database: { status: "searching", message: "재연결 중...", count: 0 },
+      web: { status: "searching", message: "재연결 중...", count: 0 },
+      ai: { status: "searching", message: "재연결 중...", count: 0 },
+    });
+    
+    try {
+      const es = await openUnifiedSearchJobStream(jobId);
+      eventSourceRef.current = es;
+      
+      setupEventHandlers(es, jobId);
+      
+      toast({
+        title: "재연결됨",
+        description: "검색 스트림에 다시 연결되었습니다.",
+      });
+    } catch (error) {
+      console.error("Failed to reconnect to job:", error);
+      setIsSearching(false);
+      setConnectionStatus("error");
+      toast({
+        title: "재연결 실패",
+        description: "검색 스트림에 다시 연결할 수 없습니다.",
+        variant: "destructive",
+      });
+    }
+  }, [toast]);
   
   // Remove a priority URL
   const removePriorityUrl = useCallback((id: string) => {
@@ -414,12 +505,208 @@ const ParallelSearch = () => {
     setAiContent("");
     setAiComplete(false);
     setConnectionStatus("idle");
+    setCurrentJobId(null);
+    setJobStatus("idle");
     setSourceStatus({
       database: { status: "idle", count: 0 },
       web: { status: "idle", count: 0 },
       ai: { status: "idle", count: 0 },
     });
+    // Clear stored job info
+    sessionStorage.removeItem("parallelSearch_currentJobId");
+    sessionStorage.removeItem("parallelSearch_query");
+    // Update URL to remove jobId
+    const url = new URL(window.location.href);
+    url.searchParams.delete("jobId");
+    window.history.replaceState({}, document.title, url.pathname);
   }, []);
+
+  // Setup event handlers for SSE stream
+  const setupEventHandlers = useCallback((es: EventSource, jobId: string) => {
+    // Handle job_status event (initial status on connection)
+    es.addEventListener("job_status", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        setConnectionStatus("connected");
+        setJobStatus(data.status);
+        if (data.query) setQuery(data.query);
+        if (data.window) setTimeWindow(data.window);
+        
+        // Set all sources to "searching" state if job is active
+        if (data.status === "PENDING" || data.status === "IN_PROGRESS") {
+          setSourceStatus({
+            database: { status: "searching", message: "검색 중...", count: 0 },
+            web: { status: "searching", message: "검색 중...", count: 0 },
+            ai: { status: "searching", message: "분석 중...", count: 0 },
+          });
+        }
+      } catch (e) {
+        console.error("Failed to parse job_status event:", e);
+      }
+    });
+
+    // Handle status event (source status updates)
+    es.addEventListener("status", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        const source = data.source as SourceType;
+        setSourceStatus((prev) => ({
+          ...prev,
+          [source]: {
+            status: "searching",
+            message: data.message,
+            count: prev[source].count,
+          },
+        }));
+      } catch (e) {
+        console.error("Failed to parse status event:", e);
+      }
+    });
+
+    // Handle result event
+    es.addEventListener("result", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        if (data.result) {
+          setResults((prev) => [...prev, data.result as UnifiedSearchResult]);
+          const source = data.source as SourceType;
+          setSourceStatus((prev) => ({
+            ...prev,
+            [source]: {
+              ...prev[source],
+              count: prev[source].count + 1,
+            },
+          }));
+        }
+      } catch (e) {
+        console.error("Failed to parse result event:", e);
+      }
+    });
+
+    // Handle ai_chunk event
+    es.addEventListener("ai_chunk", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        if (data.message) {
+          setAiContent((prev) => prev + data.message);
+        }
+      } catch (e) {
+        console.error("Failed to parse ai_chunk event:", e);
+      }
+    });
+
+    // Handle source_complete event
+    es.addEventListener("source_complete", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        const source = data.source as SourceType;
+        setSourceStatus((prev) => ({
+          ...prev,
+          [source]: {
+            status: "complete",
+            message: data.message,
+            count: data.totalCount ?? prev[source].count,
+          },
+        }));
+        if (source === "ai") {
+          setAiComplete(true);
+        }
+      } catch (e) {
+        console.error("Failed to parse source_complete event:", e);
+      }
+    });
+
+    // Handle source_error event
+    es.addEventListener("source_error", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        const source = data.source as SourceType;
+        setSourceStatus((prev) => ({
+          ...prev,
+          [source]: {
+            status: "error",
+            message: data.message,
+            count: prev[source].count,
+          },
+        }));
+      } catch (e) {
+        console.error("Failed to parse source_error event:", e);
+      }
+    });
+
+    // Handle done event (all sources completed)
+    es.addEventListener("done", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        setIsSearching(false);
+        setJobStatus("COMPLETED");
+        es.close();
+        eventSourceRef.current = null;
+        
+        // Clear stored job since it's complete
+        sessionStorage.removeItem("parallelSearch_currentJobId");
+        
+        toast({
+          title: "검색 완료",
+          description: `${data.totalResults || results.length}개의 결과를 찾았습니다.`,
+        });
+      } catch (e) {
+        console.error("Failed to parse done event:", e);
+        setIsSearching(false);
+      }
+    });
+
+    // Handle job_error event
+    es.addEventListener("job_error", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        setIsSearching(false);
+        setJobStatus("FAILED");
+        setConnectionStatus("error");
+        es.close();
+        eventSourceRef.current = null;
+        
+        sessionStorage.removeItem("parallelSearch_currentJobId");
+        
+        toast({
+          title: "검색 오류",
+          description: data.error || "검색 중 오류가 발생했습니다.",
+          variant: "destructive",
+        });
+      } catch (e) {
+        console.error("Failed to parse job_error event:", e);
+      }
+    });
+
+    // Handle error event
+    es.addEventListener("error", () => {
+      setIsSearching(false);
+      setConnectionStatus("error");
+      es.close();
+      eventSourceRef.current = null;
+      toast({
+        title: "연결 오류",
+        description: "검색 스트림 연결이 끊어졌습니다.",
+        variant: "destructive",
+      });
+    });
+
+    // Handle heartbeat (keep connection status as connected)
+    es.addEventListener("heartbeat", () => {
+      setConnectionStatus("connected");
+    });
+
+    // Handle generic onerror
+    es.onerror = () => {
+      // Only handle if not already handled by specific error events
+      if (eventSourceRef.current === es) {
+        setIsSearching(false);
+        setConnectionStatus("error");
+        es.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, [toast, results.length]);
 
   const handleSearch = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -435,125 +722,40 @@ const ParallelSearch = () => {
     setConnectionStatus("connecting");
 
     try {
-      // Extract URLs from priority list
-      const priorityUrlList = priorityUrls.map((p) => p.url);
-      const es = await openUnifiedSearchStream(query.trim(), timeWindow, priorityUrlList.length > 0 ? priorityUrlList : undefined);
+      // Step 1: Create a new search job
+      const job = await startUnifiedSearchJob(query.trim(), timeWindow);
+      
+      setCurrentJobId(job.jobId);
+      setJobStatus(job.status);
+      
+      // Store job info for reconnection after page refresh
+      sessionStorage.setItem("parallelSearch_currentJobId", job.jobId);
+      sessionStorage.setItem("parallelSearch_query", query.trim());
+      
+      // Update URL with jobId for sharing/bookmarking
+      const url = new URL(window.location.href);
+      url.searchParams.set("jobId", job.jobId);
+      window.history.replaceState({}, document.title, url.toString());
+      
+      // Step 2: Connect to SSE stream for this job
+      const es = await openUnifiedSearchJobStream(job.jobId);
       eventSourceRef.current = es;
-
-      // Handle initial connection event from server
-      es.addEventListener("connected", (event) => {
-        try {
-          const data = JSON.parse((event as MessageEvent).data);
-          setConnectionStatus("connected");
-          toast({
-            title: "연결됨",
-            description: data.message || "검색 시스템에 연결되었습니다.",
-          });
-          // Set all sources to "searching" state
-          setSourceStatus({
-            database: { status: "searching", message: "검색 시작...", count: 0 },
-            web: { status: "searching", message: "검색 시작...", count: 0 },
-            ai: { status: "searching", message: "분석 시작...", count: 0 },
-          });
-        } catch {
-          setConnectionStatus("connected");
-        }
+      
+      // Set all sources to "searching" state immediately
+      setSourceStatus({
+        database: { status: "searching", message: "검색 시작...", count: 0 },
+        web: { status: "searching", message: "검색 시작...", count: 0 },
+        ai: { status: "searching", message: "분석 시작...", count: 0 },
       });
-
-      es.onmessage = (event) => {
-        try {
-          const data: UnifiedSearchEvent = JSON.parse(event.data);
-          
-          switch (data.eventType) {
-            case "status":
-              setSourceStatus((prev) => ({
-                ...prev,
-                [data.source]: {
-                  status: "searching",
-                  message: data.message,
-                  count: prev[data.source].count,
-                },
-              }));
-              break;
-
-            case "result":
-              if (data.result) {
-                setResults((prev) => [...prev, data.result!]);
-                setSourceStatus((prev) => ({
-                  ...prev,
-                  [data.source]: {
-                    ...prev[data.source],
-                    count: prev[data.source].count + 1,
-                  },
-                }));
-              }
-              break;
-
-            case "ai_chunk":
-              if (data.message) {
-                setAiContent((prev) => prev + data.message);
-              }
-              break;
-
-            case "complete":
-              setSourceStatus((prev) => ({
-                ...prev,
-                [data.source]: {
-                  status: "complete",
-                  message: data.message,
-                  count: data.totalCount ?? prev[data.source].count,
-                },
-              }));
-              if (data.source === "ai") {
-                setAiComplete(true);
-              }
-              break;
-
-            case "error":
-              setSourceStatus((prev) => ({
-                ...prev,
-                [data.source]: {
-                  status: "error",
-                  message: data.message,
-                  count: prev[data.source].count,
-                },
-              }));
-              break;
-          }
-        } catch (parseError) {
-          console.error("Failed to parse SSE event:", parseError);
-        }
-      };
-
-      es.addEventListener("done", () => {
-        setIsSearching(false);
-        es.close();
-        eventSourceRef.current = null;
-        toast({
-          title: "검색 완료",
-          description: `${results.length}개의 결과를 찾았습니다.`,
-        });
+      
+      setConnectionStatus("connected");
+      toast({
+        title: "검색 시작",
+        description: `검색 Job이 생성되었습니다. (${job.jobId.substring(0, 8)}...)`,
       });
-
-      es.addEventListener("error", (errorEvent) => {
-        console.error("SSE error:", errorEvent);
-        setIsSearching(false);
-        setConnectionStatus("error");
-        es.close();
-        eventSourceRef.current = null;
-      });
-
-      es.onerror = () => {
-        setIsSearching(false);
-        setConnectionStatus("error");
-        es.close();
-        eventSourceRef.current = null;
-        toast({
-          title: "검색 오류",
-          description: "검색 중 오류가 발생했습니다. 다시 시도해주세요.",
-          variant: "destructive",
-        });
-      };
+      
+      // Setup event handlers
+      setupEventHandlers(es, job.jobId);
 
     } catch (error) {
       console.error("Failed to start search:", error);
@@ -565,7 +767,7 @@ const ParallelSearch = () => {
         variant: "destructive",
       });
     }
-  }, [query, timeWindow, priorityUrls, isSearching, resetState, toast, results.length]);
+  }, [query, timeWindow, isSearching, resetState, toast, setupEventHandlers]);
 
   const handleCancel = useCallback(() => {
     if (eventSourceRef.current) {
@@ -574,6 +776,9 @@ const ParallelSearch = () => {
     }
     setIsSearching(false);
     setConnectionStatus("idle");
+    setJobStatus("idle");
+    // Clear stored job info
+    sessionStorage.removeItem("parallelSearch_currentJobId");
     toast({
       title: "취소됨",
       description: "검색이 취소되었습니다.",
@@ -751,7 +956,7 @@ const ParallelSearch = () => {
                 {connectionStatus === "connecting" 
                   ? "검색 서버와 실시간 연결을 설정하고 있습니다..."
                   : connectionStatus === "connected"
-                    ? "3개의 소스에서 동시에 검색하고 있습니다."
+                    ? <>3개의 소스에서 동시에 검색하고 있습니다. {currentJobId && <span className="text-xs opacity-60">(Job: {currentJobId.substring(0, 8)}...)</span>}</>
                     : "연결 대기 중..."}
               </CardDescription>
             </CardHeader>
