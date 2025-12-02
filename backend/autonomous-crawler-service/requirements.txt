@@ -30,6 +30,12 @@ SpeechRecognition>=3.10.0
 pydub>=0.25.1
 # hcaptcha-challenger>=0.5.0  # Optional: AI-based hCaptcha solver
 
+# Anti-Detect Browsers (open-source)
+undetected-chromedriver>=3.5.0  # Patched ChromeDriver for bot detection bypass
+camoufox[geoip]>=0.4.0  # Firefox-based anti-detect browser with fingerprint spoofing
+
+# Note: After installing camoufox, run: python -m camoufox fetch
+
 # Development (optional)
 pytest>=8.3.0
 pytest-asyncio>=0.24.0

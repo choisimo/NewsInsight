@@ -21,10 +21,23 @@ from src.crawler.policies import CrawlPolicy, get_policy_prompt
 from src.kafka.messages import BrowserTaskMessage, CrawlResultMessage
 from src.captcha.stealth import (
     StealthConfig,
+    EnhancedStealthConfig,
     apply_stealth_to_playwright_async,
     get_undetected_browser_args,
+    get_stealth_browser_args_with_extensions,
 )
-from src.captcha import CaptchaSolverOrchestrator, CaptchaType
+from src.captcha import (
+    CaptchaSolverOrchestrator,
+    CaptchaType,
+    AdvancedStealthPatcher,
+    HumanBehaviorSimulator,
+    # Camoufox
+    CamoufoxConfig,
+    CamoufoxHelper,
+    create_camoufox_browser,
+    get_recommended_camoufox_config,
+    is_camoufox_available,
+)
 from src.search.orchestrator import ParallelSearchOrchestrator
 from src.search.brave import BraveSearchProvider
 from src.search.tavily import TavilySearchProvider
@@ -88,15 +101,31 @@ class AutonomousCrawlerAgent:
 
     Consumes BrowserTaskMessage from Kafka and produces CrawlResultMessage
     for each extracted article.
+    
+    Supports two browser backends:
+    - Playwright (Chrome/Chromium) with stealth patches and NopeCHA extension
+    - Camoufox (Firefox-based) anti-detect browser with built-in fingerprint spoofing
     """
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._browser_session: BrowserSession | None = None
+        self._camoufox_browser: Any = None  # Camoufox browser instance
         self._llm = self._create_llm()
         self._search_orchestrator: ParallelSearchOrchestrator | None = None
         self._captcha_solver: CaptchaSolverOrchestrator | None = None
-        self._stealth_config = StealthConfig()
+        self._stealth_config = EnhancedStealthConfig(
+            use_nopecha=getattr(settings.stealth, 'use_nopecha', True),
+            nopecha_api_key=getattr(settings.stealth, 'nopecha_api_key', ""),
+            use_camoufox=getattr(settings.browser, 'backend', 'playwright') == 'camoufox',
+            enable_human_simulation=getattr(settings.stealth, 'simulate_human_behavior', True),
+        )
+        
+        # Determine browser backend
+        self._use_camoufox = getattr(settings.browser, 'backend', 'playwright') == 'camoufox'
+        if self._use_camoufox and not is_camoufox_available():
+            logger.warning("Camoufox requested but not available, falling back to Playwright")
+            self._use_camoufox = False
 
     def _create_llm(self) -> ChatOpenAI | ChatAnthropic:
         """Create the LLM instance based on settings."""
@@ -156,15 +185,32 @@ class AutonomousCrawlerAgent:
         return self._captcha_solver
 
     async def _get_browser_session(self) -> BrowserSession:
-        """Get or create the browser session with stealth configuration."""
+        """Get or create the browser session with enhanced stealth configuration."""
+        # Use Camoufox if configured
+        if self._use_camoufox:
+            return await self._get_camoufox_session()
+        
+        # Use Playwright with stealth
         if self._browser_session is None:
             stealth_settings = self.settings.stealth
+            
+            # Setup extensions if NopeCHA is enabled
+            if self._stealth_config.use_nopecha:
+                await self._stealth_config.setup_extensions()
+                logger.info("NopeCHA extension configured for CAPTCHA bypass")
             
             # Build browser args for stealth mode
             extra_args = []
             if stealth_settings.enabled:
-                extra_args = get_undetected_browser_args()
-                logger.info("Stealth mode enabled for browser session")
+                if self._stealth_config.extension_paths:
+                    # Use enhanced args with extension support
+                    extra_args = self._stealth_config.get_browser_args(
+                        include_docker=getattr(self.settings.browser, 'is_docker_env', False)
+                    )
+                else:
+                    extra_args = get_undetected_browser_args()
+                logger.info("Stealth mode enabled for browser session", 
+                           extensions_loaded=len(self._stealth_config.extension_paths))
             
             profile = BrowserProfile(
                 headless=self.settings.browser.headless,
@@ -173,6 +219,67 @@ class AutonomousCrawlerAgent:
             )
             self._browser_session = BrowserSession(browser_profile=profile)
         return self._browser_session
+    
+    async def _get_camoufox_session(self) -> Any:
+        """Get or create Camoufox browser session."""
+        if self._camoufox_browser is None:
+            camoufox_settings = getattr(self.settings, 'camoufox', None)
+            
+            # Build Camoufox config
+            if camoufox_settings:
+                config = CamoufoxConfig(
+                    headless=self.settings.browser.headless,
+                    humanize=camoufox_settings.humanize,
+                    humanize_level=camoufox_settings.humanize_level,
+                    locale=camoufox_settings.locale,
+                    timezone=camoufox_settings.timezone,
+                    geoip=camoufox_settings.geoip,
+                    block_webrtc=camoufox_settings.block_webrtc,
+                    block_images=camoufox_settings.block_images,
+                    os=camoufox_settings.os_type if camoufox_settings.os_type != "random" else None,
+                )
+            else:
+                # Use recommended config for Cloudflare bypass
+                config = get_recommended_camoufox_config(
+                    purpose="cloudflare",
+                    headless=self.settings.browser.headless,
+                )
+            
+            self._camoufox_browser = await create_camoufox_browser(config)
+            
+            if self._camoufox_browser:
+                logger.info("Camoufox browser created",
+                           headless=config.headless,
+                           humanize=config.humanize,
+                           humanize_level=config.humanize_level)
+            else:
+                logger.error("Failed to create Camoufox browser, falling back to Playwright")
+                self._use_camoufox = False
+                return await self._get_browser_session()
+        
+        return self._camoufox_browser
+    
+    async def _get_camoufox_page(self) -> Any:
+        """Get a new page from Camoufox browser."""
+        browser = await self._get_camoufox_session()
+        if browser:
+            try:
+                page = await browser.new_page()
+                logger.debug("Created new Camoufox page")
+                return page
+            except Exception as e:
+                logger.error("Failed to create Camoufox page", error=str(e))
+        return None
+    
+    async def _apply_page_stealth(self, page) -> None:
+        """Apply advanced stealth patches to a page."""
+        # Apply playwright_stealth or manual patches
+        await apply_stealth_to_playwright_async(page, self._stealth_config)
+        
+        # Apply advanced stealth patches from undetected module
+        await AdvancedStealthPatcher.apply_to_page(page)
+        
+        logger.debug("Applied advanced stealth patches to page")
 
     async def search_before_crawl(
         self,
@@ -218,9 +325,159 @@ class AutonomousCrawlerAgent:
             await self._browser_session.stop()
             self._browser_session = None
         
+        if self._camoufox_browser:
+            try:
+                await self._camoufox_browser.close()
+            except Exception as e:
+                logger.debug("Error closing Camoufox browser", error=str(e))
+            self._camoufox_browser = None
+        
         if self._search_orchestrator:
             await self._search_orchestrator.close_all()
             self._search_orchestrator = None
+
+    async def crawl_with_camoufox(
+        self,
+        url: str,
+        extract_content: bool = True,
+        wait_for_cloudflare: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Crawl a URL using Camoufox browser for maximum anti-detection.
+        
+        Args:
+            url: URL to crawl
+            extract_content: Whether to extract page content
+            wait_for_cloudflare: Whether to wait for Cloudflare challenge
+            
+        Returns:
+            Dictionary with page content and metadata
+        """
+        page = await self._get_camoufox_page()
+        if not page:
+            return {"error": "Failed to create Camoufox page"}
+        
+        try:
+            # Navigate to URL
+            await page.goto(url, wait_until="domcontentloaded")
+            
+            # Wait for Cloudflare challenge if needed
+            if wait_for_cloudflare:
+                passed = await CamoufoxHelper.wait_for_cloudflare(page, timeout=30)
+                if not passed:
+                    logger.warning("Cloudflare challenge may not have completed", url=url)
+            
+            # Simulate human behavior
+            if self._stealth_config.enable_human_simulation:
+                await asyncio.sleep(1)  # Brief pause
+            
+            # Extract content
+            if extract_content:
+                content = await CamoufoxHelper.extract_page_content(page)
+                content["success"] = True
+                return content
+            
+            return {
+                "success": True,
+                "url": url,
+                "title": await page.title(),
+            }
+            
+        except Exception as e:
+            logger.error("Camoufox crawl failed", url=url, error=str(e))
+            return {"error": str(e), "success": False}
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+    async def _detect_and_handle_captcha(self, page) -> bool:
+        """
+        Detect and attempt to handle CAPTCHAs on a page.
+        
+        Args:
+            page: Playwright page object
+            
+        Returns:
+            True if CAPTCHA was detected and handled (or not detected), 
+            False if CAPTCHA was detected but could not be handled
+        """
+        try:
+            # Check for common CAPTCHA indicators
+            captcha_selectors = {
+                CaptchaType.RECAPTCHA_V2: [
+                    "iframe[src*='recaptcha']",
+                    ".g-recaptcha",
+                    "#recaptcha",
+                ],
+                CaptchaType.HCAPTCHA: [
+                    "iframe[src*='hcaptcha']",
+                    ".h-captcha",
+                ],
+                CaptchaType.CLOUDFLARE: [
+                    "#challenge-running",
+                    ".cf-browser-verification",
+                    "iframe[src*='turnstile']",
+                    "#cf-turnstile",
+                ],
+            }
+            
+            detected_type = None
+            for captcha_type, selectors in captcha_selectors.items():
+                for selector in selectors:
+                    try:
+                        element = await page.query_selector(selector)
+                        if element:
+                            is_visible = await element.is_visible()
+                            if is_visible:
+                                detected_type = captcha_type
+                                logger.info("CAPTCHA detected", 
+                                           type=captcha_type.value, 
+                                           selector=selector)
+                                break
+                    except Exception:
+                        continue
+                if detected_type:
+                    break
+            
+            if not detected_type:
+                return True  # No CAPTCHA detected
+            
+            # Try to solve the CAPTCHA
+            solver = self._get_captcha_solver()
+            result = await solver.solve(detected_type, page=page)
+            
+            if result.success:
+                logger.info("CAPTCHA solved successfully", 
+                           type=detected_type.value,
+                           solver=result.solver_used,
+                           time_ms=result.time_ms)
+                # Wait for page to update after CAPTCHA solve
+                await asyncio.sleep(2)
+                return True
+            else:
+                logger.warning("CAPTCHA solve failed", 
+                              type=detected_type.value,
+                              error=result.error)
+                return False
+                
+        except Exception as e:
+            logger.error("Error in CAPTCHA detection/handling", error=str(e))
+            return False
+
+    async def _simulate_human_behavior(self, page) -> None:
+        """Simulate human-like behavior on a page to avoid detection."""
+        try:
+            # Random mouse movements
+            await HumanBehaviorSimulator.random_mouse_movements(page, count=2)
+            
+            # Random scroll
+            await HumanBehaviorSimulator.human_scroll(page, "down", 200)
+            await asyncio.sleep(HumanBehaviorSimulator.random_delay(500, 1000))
+            
+        except Exception as e:
+            logger.debug("Human behavior simulation failed", error=str(e))
 
     async def execute_task(self, task: BrowserTaskMessage) -> list[CrawlResultMessage]:
         """
