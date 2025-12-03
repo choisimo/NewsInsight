@@ -39,6 +39,7 @@ import { useToast } from "@/hooks/use-toast";
 import { AnalysisBadges, type AnalysisData } from "@/components/AnalysisBadges";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { useUrlCollection } from "@/hooks/useUrlCollection";
+import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
 import {
   openUnifiedSearchStream,
   checkUnifiedSearchHealth,
@@ -373,6 +374,7 @@ const ParallelSearch = () => {
   const { toast } = useToast();
   const location = useLocation();
   const { addUrl, addFolder, collection, urlExists } = useUrlCollection();
+  const { saveUnifiedSearch, saveFailedSearch } = useAutoSaveSearch();
   
   const [query, setQuery] = useState("");
   const [timeWindow, setTimeWindow] = useState("7d");
@@ -382,6 +384,9 @@ const ParallelSearch = () => {
   // Job-based search state
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string>("idle");
+  
+  // Track search start time for duration calculation
+  const [searchStartTime, setSearchStartTime] = useState<number | null>(null);
   
   // Priority URLs from URL Collections page
   const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
@@ -547,6 +552,33 @@ const ParallelSearch = () => {
   });
 
   const isHealthy = healthData?.status === "available";
+
+  // Auto-save unified search results when job completes
+  useEffect(() => {
+    if (jobStatus === "COMPLETED" && results.length > 0 && query.trim()) {
+      const durationMs = searchStartTime ? Date.now() - searchStartTime : undefined;
+      
+      // Build AI summary object if available
+      const aiSummary = aiContent ? { content: aiContent, complete: aiComplete } : undefined;
+      
+      saveUnifiedSearch(
+        query.trim(),
+        results.map((r) => ({
+          id: r.id,
+          source: r.source,
+          title: r.title,
+          snippet: r.snippet,
+          url: r.url,
+          publishedAt: r.publishedAt,
+          reliabilityScore: r.reliabilityScore,
+          sentimentLabel: r.sentimentLabel,
+        })),
+        aiSummary,
+        durationMs,
+        timeWindow,
+      );
+    }
+  }, [jobStatus, results, query, aiContent, aiComplete, timeWindow, searchStartTime, saveUnifiedSearch]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -917,6 +949,7 @@ const ParallelSearch = () => {
     resetState();
     setIsSearching(true);
     setConnectionStatus("connecting");
+    setSearchStartTime(Date.now()); // Track start time for duration
 
     try {
       // Step 1: Create a new search job
@@ -958,13 +991,18 @@ const ParallelSearch = () => {
       console.error("Failed to start search:", error);
       setIsSearching(false);
       setConnectionStatus("error");
+      
+      // Auto-save failed search
+      const durationMs = searchStartTime ? Date.now() - searchStartTime : undefined;
+      saveFailedSearch('UNIFIED', query, error instanceof Error ? error.message : 'Unknown error', durationMs);
+      
       toast({
         title: "오류",
         description: "검색을 시작할 수 없습니다.",
         variant: "destructive",
       });
     }
-  }, [query, timeWindow, isSearching, resetState, toast, setupEventHandlers]);
+  }, [query, timeWindow, isSearching, resetState, toast, setupEventHandlers, searchStartTime, saveFailedSearch]);
 
   const handleCancel = useCallback(() => {
     if (eventSourceRef.current) {

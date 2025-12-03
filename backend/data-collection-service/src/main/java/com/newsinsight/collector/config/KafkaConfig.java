@@ -6,6 +6,7 @@ import com.newsinsight.collector.dto.AiTaskRequestMessage;
 import com.newsinsight.collector.dto.BrowserTaskMessage;
 import com.newsinsight.collector.dto.CrawlCommandMessage;
 import com.newsinsight.collector.dto.CrawlResultMessage;
+import com.newsinsight.collector.dto.SearchHistoryMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -303,6 +304,43 @@ public class KafkaConfig {
         ConcurrentKafkaListenerContainerFactory<String, CrawlResultMessage> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(crawlResultConsumerFactory());
+        factory.setConcurrency(consumerConcurrency);
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
+        factory.setCommonErrorHandler(kafkaErrorHandler);
+        return factory;
+    }
+
+    // ========== Search History Producer (for async persistence) ==========
+
+    @Bean
+    public ProducerFactory<String, SearchHistoryMessage> searchHistoryProducerFactory() {
+        return new DefaultKafkaProducerFactory<>(buildProducerProps());
+    }
+
+    @Bean
+    public KafkaTemplate<String, SearchHistoryMessage> searchHistoryKafkaTemplate() {
+        KafkaTemplate<String, SearchHistoryMessage> template = new KafkaTemplate<>(searchHistoryProducerFactory());
+        template.setObservationEnabled(true);
+        return template;
+    }
+
+    // ========== Search History Consumer ==========
+
+    @Bean
+    public ConsumerFactory<String, SearchHistoryMessage> searchHistoryConsumerFactory() {
+        return new DefaultKafkaConsumerFactory<>(
+                buildConsumerProps("search-history"),
+                new StringDeserializer(),
+                new JsonDeserializer<>(SearchHistoryMessage.class)
+        );
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, SearchHistoryMessage> searchHistoryKafkaListenerContainerFactory(
+            CommonErrorHandler kafkaErrorHandler) {
+        ConcurrentKafkaListenerContainerFactory<String, SearchHistoryMessage> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(searchHistoryConsumerFactory());
         factory.setConcurrency(consumerConcurrency);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
         factory.setCommonErrorHandler(kafkaErrorHandler);

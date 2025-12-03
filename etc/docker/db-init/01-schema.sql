@@ -451,3 +451,55 @@ ON CONFLICT (addon_key) DO UPDATE SET
     config = EXCLUDED.config,
     timeout_ms = EXCLUDED.timeout_ms,
     updated_at = CURRENT_TIMESTAMP;
+
+-- ============================================
+-- Search History Tables (for persistence of search results)
+-- ============================================
+
+-- Enable pg_trgm extension for similarity search (if not already enabled)
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- Search history table
+CREATE TABLE IF NOT EXISTS search_history (
+    id BIGSERIAL PRIMARY KEY,
+    external_id VARCHAR(64) UNIQUE,
+    search_type VARCHAR(32) NOT NULL,
+    query VARCHAR(1024) NOT NULL,
+    time_window VARCHAR(16),
+    user_id VARCHAR(64),
+    session_id VARCHAR(64),
+    parent_search_id BIGINT REFERENCES search_history(id) ON DELETE SET NULL,
+    depth_level INTEGER DEFAULT 0,
+    result_count INTEGER DEFAULT 0,
+    results JSONB,
+    ai_summary JSONB,
+    discovered_urls JSONB,
+    fact_check_results JSONB,
+    credibility_score DOUBLE PRECISION,
+    stance_distribution JSONB,
+    metadata JSONB,
+    bookmarked BOOLEAN DEFAULT FALSE,
+    tags JSONB,
+    notes TEXT,
+    duration_ms BIGINT,
+    error_message VARCHAR(2048),
+    success BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+-- Indexes for search history
+CREATE INDEX IF NOT EXISTS idx_search_history_type ON search_history (search_type);
+CREATE INDEX IF NOT EXISTS idx_search_history_query ON search_history (query);
+CREATE INDEX IF NOT EXISTS idx_search_history_query_trgm ON search_history USING gin (query gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_search_history_created_at ON search_history (created_at);
+CREATE INDEX IF NOT EXISTS idx_search_history_user_id ON search_history (user_id);
+CREATE INDEX IF NOT EXISTS idx_search_history_parent_id ON search_history (parent_search_id);
+CREATE INDEX IF NOT EXISTS idx_search_history_session_id ON search_history (session_id);
+CREATE INDEX IF NOT EXISTS idx_search_history_bookmarked ON search_history (bookmarked) WHERE bookmarked = TRUE;
+CREATE INDEX IF NOT EXISTS idx_search_history_external_id ON search_history (external_id);
+
+-- Ensure search type values
+ALTER TABLE search_history
+    ADD CONSTRAINT search_history_type_check
+    CHECK (search_type IN ('UNIFIED', 'DEEP_SEARCH', 'FACT_CHECK', 'BROWSER_AGENT'));

@@ -19,19 +19,41 @@ import {
   List,
   Wifi,
   WifiOff,
+  Layers,
+  ArrowDownRight,
+  History,
+  ChevronRight,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { InsightFlow } from "@/components/insight";
 import { useDeepSearchSSE } from "@/hooks/useDeepSearchSSE";
 import { useBackgroundTasks } from "@/contexts/BackgroundTaskContext";
+import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
 import {
   startDeepSearch,
+  startDrilldownSearch,
   getDeepSearchStatus,
   getDeepSearchResult,
   cancelDeepSearch,
@@ -39,6 +61,7 @@ import {
   type DeepSearchJob,
   type DeepSearchResult,
   type Evidence,
+  type DrilldownRequest,
 } from "@/lib/api";
 
 const STATUS_CONFIG = {
@@ -58,9 +81,11 @@ const STANCE_CONFIG = {
 
 interface EvidenceCardProps {
   evidence: Evidence;
+  onDrilldown?: (evidence: Evidence) => void;
+  drilldownEnabled?: boolean;
 }
 
-const EvidenceCard = ({ evidence }: EvidenceCardProps) => {
+const EvidenceCard = ({ evidence, onDrilldown, drilldownEnabled = true }: EvidenceCardProps) => {
   const stanceInfo = STANCE_CONFIG[evidence.stance];
   const StanceIcon = stanceInfo.icon;
 
@@ -83,15 +108,35 @@ const EvidenceCard = ({ evidence }: EvidenceCardProps) => {
             )}
             <p className="text-sm text-muted-foreground line-clamp-3">{evidence.snippet}</p>
           </div>
-          <a
-            href={evidence.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 p-2 rounded-md hover:bg-muted transition-colors"
-            title="원문 보기"
-          >
-            <ExternalLink className="h-4 w-4" />
-          </a>
+          <div className="flex flex-col gap-1">
+            <a
+              href={evidence.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 p-2 rounded-md hover:bg-muted transition-colors"
+              title="원문 보기"
+            >
+              <ExternalLink className="h-4 w-4" />
+            </a>
+            {drilldownEnabled && onDrilldown && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => onDrilldown(evidence)}
+                      className="shrink-0 p-2 rounded-md hover:bg-primary/10 transition-colors text-primary"
+                      title="심층 조사"
+                    >
+                      <ArrowDownRight className="h-4 w-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>이 주제로 심층 조사</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -170,18 +215,39 @@ const StanceChart = ({ distribution }: StanceChartProps) => {
 const isTerminalStatus = (status: string) => 
   ['COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT'].includes(status);
 
+// Drilldown history item
+interface DrilldownHistoryItem {
+  jobId: string;
+  topic: string;
+  parentJobId?: string;
+  depth: number;
+  createdAt: string;
+}
+
 const DeepSearch = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const { getTask } = useBackgroundTasks();
+  const { saveDeepSearch, saveFailedSearch } = useAutoSaveSearch();
+  
+  // Track search start time for duration calculation
+  const [searchStartTime, setSearchStartTime] = useState<number | null>(null);
   
   const [topic, setTopic] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [activeStance, setActiveStance] = useState<"all" | "pro" | "con" | "neutral">("all");
   const [viewMode, setViewMode] = useState<"insight" | "list">("insight");
+  
+  // Drilldown state
+  const [drilldownHistory, setDrilldownHistory] = useState<DrilldownHistoryItem[]>([]);
+  const [currentDepth, setCurrentDepth] = useState(0);
+  const [drilldownDialogOpen, setDrilldownDialogOpen] = useState(false);
+  const [selectedEvidence, setSelectedEvidence] = useState<Evidence | null>(null);
+  const [focusAspect, setFocusAspect] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
 
   // Load jobId from URL params or background task
   useEffect(() => {
@@ -190,6 +256,41 @@ const DeepSearch = () => {
       setCurrentJobId(jobIdFromUrl);
     }
   }, [searchParams, currentJobId]);
+
+  // Load query from URL params (e.g., from FactCheck page)
+  useEffect(() => {
+    const queryFromUrl = searchParams.get('q');
+    const fromFactCheck = searchParams.get('fromFactCheck') === 'true';
+    
+    if (queryFromUrl && !currentJobId) {
+      setTopic(queryFromUrl);
+      
+      // Show toast if coming from FactCheck
+      if (fromFactCheck) {
+        toast({
+          title: "팩트체크에서 연결됨",
+          description: "해당 주제에 대해 Deep Search를 시작할 수 있습니다.",
+        });
+        // Clear the fromFactCheck param to prevent showing toast again
+        const newParams = new URLSearchParams(searchParams);
+        newParams.delete('fromFactCheck');
+        setSearchParams(newParams, { replace: true });
+      }
+      
+      // Handle fromAgent parameter
+      const fromAgent = searchParams.get('fromAgent') === 'true';
+      if (fromAgent) {
+        toast({
+          title: "Browser Agent에서 연결됨",
+          description: "추출된 데이터에 대해 Deep Search를 시작할 수 있습니다.",
+        });
+        // Clear the fromAgent param to prevent showing toast again
+        const newParams = new URLSearchParams(searchParams);
+        newParams.delete('fromAgent');
+        setSearchParams(newParams, { replace: true });
+      }
+    }
+  }, [searchParams, currentJobId, setSearchParams, toast]);
 
   // React Query: 서비스 헬스 체크
   const { data: healthData } = useQuery({
@@ -223,6 +324,17 @@ const DeepSearch = () => {
         title: "분석 완료",
         description: `${result.evidence.length}개의 증거를 수집했습니다.`,
       });
+      
+      // Auto-save search results
+      const durationMs = searchStartTime ? Date.now() - searchStartTime : undefined;
+      saveDeepSearch(
+        result.jobId,
+        result.topic,
+        result.evidence as Array<Record<string, unknown>>,
+        result.stanceDistribution as Record<string, unknown>,
+        durationMs,
+        drilldownHistory.length > 0 ? undefined : undefined, // Will be set if this is a drilldown
+      );
     },
     onError: (error) => {
       toast({
@@ -230,6 +342,10 @@ const DeepSearch = () => {
         description: error,
         variant: "destructive",
       });
+      
+      // Auto-save failed search
+      const durationMs = searchStartTime ? Date.now() - searchStartTime : undefined;
+      saveFailedSearch('DEEP_SEARCH', topic, error, durationMs);
     },
   });
 
@@ -258,6 +374,7 @@ const DeepSearch = () => {
     onSuccess: (job) => {
       setCurrentJobId(job.jobId);
       setSearchParams({ jobId: job.jobId });
+      setSearchStartTime(Date.now()); // Track start time
       toast({
         title: "분석 시작",
         description: "Deep AI Search를 시작했습니다. 백그라운드에서 계속 실행됩니다.",
@@ -290,6 +407,42 @@ const DeepSearch = () => {
     },
   });
 
+  // React Query: 드릴다운 검색 Mutation
+  const drilldownMutation = useMutation({
+    mutationFn: startDrilldownSearch,
+    onSuccess: (job) => {
+      // 현재 결과를 히스토리에 저장
+      if (result) {
+        setDrilldownHistory(prev => [...prev, {
+          jobId: currentJobId!,
+          topic: result.topic,
+          parentJobId: undefined,
+          depth: currentDepth,
+          createdAt: new Date().toISOString(),
+        }]);
+      }
+      
+      setCurrentJobId(job.jobId);
+      setCurrentDepth(prev => prev + 1);
+      setSearchParams({ jobId: job.jobId });
+      setDrilldownDialogOpen(false);
+      setSelectedEvidence(null);
+      setFocusAspect("");
+      
+      toast({
+        title: "심층 조사 시작",
+        description: `'${selectedEvidence?.title || '선택한 증거'}'에 대한 심층 분석을 시작합니다.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "오류",
+        description: error.response?.data?.message || error.message || "심층 조사 시작에 실패했습니다.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (!topic.trim() || startMutation.isPending) return;
@@ -317,9 +470,54 @@ const DeepSearch = () => {
     setBaseUrl("");
     setActiveStance("all");
     setSearchParams({});
+    setDrilldownHistory([]);
+    setCurrentDepth(0);
     queryClient.removeQueries({ queryKey: ['deepSearch', 'job'] });
     queryClient.removeQueries({ queryKey: ['deepSearch', 'result'] });
   }, [queryClient, setSearchParams]);
+
+  // 드릴다운 핸들러
+  const handleDrilldown = useCallback((evidence: Evidence) => {
+    setSelectedEvidence(evidence);
+    setDrilldownDialogOpen(true);
+  }, []);
+
+  // 드릴다운 실행
+  const executeDrilldown = useCallback(() => {
+    if (!selectedEvidence || !result) return;
+    
+    drilldownMutation.mutate({
+      parentTopic: result.topic,
+      parentJobId: currentJobId || undefined,
+      evidence: {
+        url: selectedEvidence.url,
+        title: selectedEvidence.title,
+        snippet: selectedEvidence.snippet,
+        stance: selectedEvidence.stance,
+      },
+      focusAspect: focusAspect.trim() || undefined,
+      depth: currentDepth,
+    });
+  }, [selectedEvidence, result, currentJobId, focusAspect, currentDepth, drilldownMutation]);
+
+  // 히스토리에서 이전 결과로 이동
+  const navigateToHistory = useCallback((item: DrilldownHistoryItem) => {
+    setCurrentJobId(item.jobId);
+    setCurrentDepth(item.depth);
+    setSearchParams({ jobId: item.jobId });
+    setTopic(item.topic);
+    
+    // 현재 항목 이후의 히스토리 제거
+    setDrilldownHistory(prev => {
+      const index = prev.findIndex(h => h.jobId === item.jobId);
+      return prev.slice(0, index);
+    });
+    
+    toast({
+      title: "이전 분석으로 이동",
+      description: `'${item.topic}' 분석 결과를 불러옵니다.`,
+    });
+  }, [setSearchParams, toast]);
 
   const filteredEvidence = result?.evidence.filter(
     (e) => activeStance === "all" || e.stance === activeStance
@@ -370,16 +568,40 @@ const DeepSearch = () => {
             <ArrowLeft className="h-4 w-4" />
             메인으로 돌아가기
           </Link>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
-              <h1 className="text-3xl md:text-4xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-                Deep AI Search
-              </h1>
+              <div className="flex items-center gap-2 mb-2">
+                <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                  Deep AI Search
+                </h1>
+                {currentDepth > 0 && (
+                  <Badge variant="secondary" className="flex items-center gap-1">
+                    <Layers className="h-3 w-3" />
+                    깊이 {currentDepth}
+                  </Badge>
+                )}
+              </div>
               <p className="text-muted-foreground">
                 AI 기반 심층 분석으로 주제에 대한 다양한 입장과 증거를 수집합니다.
               </p>
             </div>
-            {connectionStatusBadge()}
+            <div className="flex items-center gap-2">
+              {connectionStatusBadge()}
+              {drilldownHistory.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowHistory(!showHistory)}
+                  className="gap-1"
+                >
+                  <History className="h-4 w-4" />
+                  분석 기록
+                  <Badge variant="secondary" className="ml-1 h-5 min-w-5 px-1">
+                    {drilldownHistory.length}
+                  </Badge>
+                </Button>
+              )}
+            </div>
           </div>
           {isHealthy === false && (
             <div className="mt-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm flex items-center gap-2">
@@ -388,6 +610,88 @@ const DeepSearch = () => {
             </div>
           )}
         </header>
+
+        {/* Drilldown History Breadcrumb */}
+        {drilldownHistory.length > 0 && showHistory && (
+          <Card className="mb-6 border-primary/20 bg-primary/5">
+            <CardContent className="py-4">
+              <div className="flex items-center gap-2 text-sm overflow-x-auto">
+                <span className="text-muted-foreground shrink-0">분석 경로:</span>
+                {drilldownHistory.map((item, index) => (
+                  <div key={item.jobId} className="flex items-center shrink-0">
+                    <button
+                      onClick={() => navigateToHistory(item)}
+                      className="px-2 py-1 rounded hover:bg-primary/10 transition-colors text-primary underline-offset-2 hover:underline"
+                    >
+                      {item.topic.length > 30 ? `${item.topic.substring(0, 30)}...` : item.topic}
+                    </button>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground mx-1" />
+                  </div>
+                ))}
+                <Badge variant="default" className="shrink-0">
+                  현재: {result?.topic || topic || '새 분석'}
+                </Badge>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Drilldown Dialog */}
+        <Dialog open={drilldownDialogOpen} onOpenChange={setDrilldownDialogOpen}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <ArrowDownRight className="h-5 w-5 text-primary" />
+                심층 조사
+              </DialogTitle>
+              <DialogDescription>
+                선택한 증거를 기반으로 더 깊이 파고드는 분석을 시작합니다.
+              </DialogDescription>
+            </DialogHeader>
+            {selectedEvidence && (
+              <div className="space-y-4 py-4">
+                <div className="p-3 rounded-lg bg-muted">
+                  <p className="text-sm font-medium mb-1">{selectedEvidence.title || '제목 없음'}</p>
+                  <p className="text-xs text-muted-foreground line-clamp-2">{selectedEvidence.snippet}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    집중 분석할 측면 (선택사항)
+                  </label>
+                  <Input
+                    value={focusAspect}
+                    onChange={(e) => setFocusAspect(e.target.value)}
+                    placeholder="예: 경제적 영향, 환경적 측면, 사회적 논쟁 등"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    비워두면 증거의 제목/내용을 기반으로 분석합니다.
+                  </p>
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDrilldownDialogOpen(false)}>
+                취소
+              </Button>
+              <Button 
+                onClick={executeDrilldown}
+                disabled={drilldownMutation.isPending}
+              >
+                {drilldownMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    시작 중...
+                  </>
+                ) : (
+                  <>
+                    <ArrowDownRight className="h-4 w-4 mr-2" />
+                    심층 조사 시작
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Search Form */}
         <Card className="mb-8">
@@ -629,7 +933,12 @@ const DeepSearch = () => {
                       <TabsContent value={activeStance} className="space-y-4">
                         {filteredEvidence.length > 0 ? (
                           filteredEvidence.map((evidence) => (
-                            <EvidenceCard key={evidence.id} evidence={evidence} />
+                            <EvidenceCard 
+                              key={evidence.id} 
+                              evidence={evidence}
+                              onDrilldown={handleDrilldown}
+                              drilldownEnabled={!isProcessing}
+                            />
                           ))
                         ) : (
                           <div className="text-center py-8 text-muted-foreground">

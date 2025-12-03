@@ -293,6 +293,48 @@ export const checkDeepSearchHealth = async (): Promise<{
 };
 
 /**
+ * Drill-down request for deeper investigation on a specific evidence.
+ */
+export interface DrilldownRequest {
+  /** Original topic of the parent search */
+  parentTopic: string;
+  /** Job ID of the parent search (for tracking) */
+  parentJobId?: string;
+  /** The evidence item to drill down on */
+  evidence: {
+    url: string;
+    title?: string;
+    snippet: string;
+    stance: 'pro' | 'con' | 'neutral';
+  };
+  /** Specific aspect to focus on (optional) */
+  focusAspect?: string;
+  /** Depth level of drilling (default: 1) */
+  depth?: number;
+}
+
+/**
+ * Start a drill-down deep search based on a specific evidence item.
+ * This allows users to dig deeper into a particular aspect or claim.
+ */
+export const startDrilldownSearch = async (request: DrilldownRequest): Promise<DeepSearchJob> => {
+  const client = await getApiClient();
+  
+  // Generate a focused topic based on the evidence
+  const focusedTopic = request.focusAspect 
+    ? `${request.focusAspect} - ${request.parentTopic}`
+    : request.evidence.title || request.evidence.snippet.substring(0, 100);
+  
+  const response = await client.post<DeepSearchJob>('/api/v1/analysis/deep', {
+    topic: focusedTopic,
+    baseUrl: request.evidence.url,
+    parentJobId: request.parentJobId,
+    depth: (request.depth || 0) + 1,
+  });
+  return response.data;
+};
+
+/**
  * Get the SSE stream URL for a deep search job.
  * This URL can be used with EventSource for real-time updates.
  */
@@ -823,4 +865,268 @@ export const openUnifiedSearchJobStream = async (jobId: string): Promise<EventSo
   const url = await getUnifiedSearchJobStreamUrl(jobId);
   return new EventSource(url);
 };
+
+// ============================================
+// Search History API
+// ============================================
+
+/**
+ * Search type enumeration
+ */
+export type SearchHistoryType = 'UNIFIED' | 'DEEP_SEARCH' | 'FACT_CHECK' | 'BROWSER_AGENT';
+
+/**
+ * Search history record
+ */
+export interface SearchHistoryRecord {
+  id: number;
+  externalId?: string;
+  searchType: SearchHistoryType;
+  query: string;
+  timeWindow?: string;
+  userId?: string;
+  sessionId?: string;
+  parentSearchId?: number;
+  depthLevel?: number;
+  resultCount?: number;
+  results?: Array<Record<string, unknown>>;
+  aiSummary?: Record<string, unknown>;
+  discoveredUrls?: string[];
+  factCheckResults?: Array<Record<string, unknown>>;
+  credibilityScore?: number;
+  stanceDistribution?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  bookmarked?: boolean;
+  tags?: string[];
+  notes?: string;
+  durationMs?: number;
+  errorMessage?: string;
+  success?: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+/**
+ * Request payload for saving search history
+ */
+export interface SaveSearchHistoryRequest {
+  externalId?: string;
+  searchType: SearchHistoryType;
+  query: string;
+  timeWindow?: string;
+  userId?: string;
+  sessionId?: string;
+  parentSearchId?: number;
+  depthLevel?: number;
+  resultCount?: number;
+  results?: Array<Record<string, unknown>>;
+  aiSummary?: Record<string, unknown>;
+  discoveredUrls?: string[];
+  factCheckResults?: Array<Record<string, unknown>>;
+  credibilityScore?: number;
+  stanceDistribution?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  durationMs?: number;
+  errorMessage?: string;
+  success?: boolean;
+}
+
+/**
+ * Save search history asynchronously (via Kafka)
+ */
+export const saveSearchHistory = async (request: SaveSearchHistoryRequest): Promise<{
+  message: string;
+  externalId: string;
+  searchType: string;
+  query: string;
+}> => {
+  const client = await getApiClient();
+  const response = await client.post('/api/v1/search-history', request);
+  return response.data;
+};
+
+/**
+ * Save search history synchronously
+ */
+export const saveSearchHistorySync = async (request: SaveSearchHistoryRequest): Promise<SearchHistoryRecord> => {
+  const client = await getApiClient();
+  const response = await client.post<SearchHistoryRecord>('/api/v1/search-history/sync', request);
+  return response.data;
+};
+
+/**
+ * Get search history by ID
+ */
+export const getSearchHistoryById = async (id: number): Promise<SearchHistoryRecord> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchHistoryRecord>(`/api/v1/search-history/${id}`);
+  return response.data;
+};
+
+/**
+ * Get search history by external ID (e.g., jobId)
+ */
+export const getSearchHistoryByExternalId = async (externalId: string): Promise<SearchHistoryRecord> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchHistoryRecord>(`/api/v1/search-history/external/${externalId}`);
+  return response.data;
+};
+
+/**
+ * List search history with pagination and filtering
+ */
+export const listSearchHistory = async (
+  page: number = 0,
+  size: number = 20,
+  sortBy: string = 'createdAt',
+  sortDirection: 'ASC' | 'DESC' = 'DESC',
+  type?: SearchHistoryType,
+  userId?: string,
+): Promise<PageResponse<SearchHistoryRecord>> => {
+  const client = await getApiClient();
+  const params: Record<string, string | number> = { page, size, sortBy, sortDirection };
+  if (type) params.type = type;
+  if (userId) params.userId = userId;
+  
+  const response = await client.get<PageResponse<SearchHistoryRecord>>('/api/v1/search-history', { params });
+  return response.data;
+};
+
+/**
+ * Search history by query text
+ */
+export const searchHistoryByQuery = async (
+  query: string,
+  page: number = 0,
+  size: number = 20,
+): Promise<PageResponse<SearchHistoryRecord>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<SearchHistoryRecord>>('/api/v1/search-history/search', {
+    params: { q: query, page, size },
+  });
+  return response.data;
+};
+
+/**
+ * Get bookmarked searches
+ */
+export const getBookmarkedSearches = async (
+  page: number = 0,
+  size: number = 20,
+): Promise<PageResponse<SearchHistoryRecord>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<SearchHistoryRecord>>('/api/v1/search-history/bookmarked', {
+    params: { page, size },
+  });
+  return response.data;
+};
+
+/**
+ * Get derived (drill-down) searches from a parent
+ */
+export const getDerivedSearches = async (parentId: number): Promise<SearchHistoryRecord[]> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchHistoryRecord[]>(`/api/v1/search-history/${parentId}/derived`);
+  return response.data;
+};
+
+/**
+ * Get searches by session
+ */
+export const getSearchesBySession = async (sessionId: string): Promise<SearchHistoryRecord[]> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchHistoryRecord[]>(`/api/v1/search-history/session/${sessionId}`);
+  return response.data;
+};
+
+/**
+ * Toggle bookmark status
+ */
+export const toggleSearchBookmark = async (id: number): Promise<SearchHistoryRecord> => {
+  const client = await getApiClient();
+  const response = await client.post<SearchHistoryRecord>(`/api/v1/search-history/${id}/bookmark`);
+  return response.data;
+};
+
+/**
+ * Update tags for a search
+ */
+export const updateSearchTags = async (id: number, tags: string[]): Promise<SearchHistoryRecord> => {
+  const client = await getApiClient();
+  const response = await client.put<SearchHistoryRecord>(`/api/v1/search-history/${id}/tags`, tags);
+  return response.data;
+};
+
+/**
+ * Update notes for a search
+ */
+export const updateSearchNotes = async (id: number, notes: string): Promise<SearchHistoryRecord> => {
+  const client = await getApiClient();
+  const response = await client.put<SearchHistoryRecord>(`/api/v1/search-history/${id}/notes`, { notes });
+  return response.data;
+};
+
+/**
+ * Delete search history
+ */
+export const deleteSearchHistory = async (id: number): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete(`/api/v1/search-history/${id}`);
+};
+
+/**
+ * Create a derived (drill-down) search
+ */
+export const createDerivedSearch = async (
+  parentId: number,
+  request: SaveSearchHistoryRequest,
+): Promise<{
+  id: number;
+  parentSearchId: number;
+  depthLevel: number;
+  query: string;
+  message: string;
+}> => {
+  const client = await getApiClient();
+  const response = await client.post(`/api/v1/search-history/${parentId}/derive`, request);
+  return response.data;
+};
+
+/**
+ * Get search statistics
+ */
+export const getSearchStatistics = async (days: number = 30): Promise<{
+  totalSearches: number;
+  byType: Array<{ searchType: string; count: number; avgResults: number }>;
+  period: { days: number; since: string };
+}> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/search-history/stats', { params: { days } });
+  return response.data;
+};
+
+/**
+ * Get recently discovered URLs from searches
+ */
+export const getDiscoveredUrls = async (days: number = 7, limit: number = 100): Promise<string[]> => {
+  const client = await getApiClient();
+  const response = await client.get<string[]>('/api/v1/search-history/discovered-urls', {
+    params: { days, limit },
+  });
+  return response.data;
+};
+
+/**
+ * Check search history service health
+ */
+export const checkSearchHistoryHealth = async (): Promise<{
+  status: string;
+  features: Record<string, boolean>;
+  kafkaTopic: string;
+}> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/search-history/health');
+  return response.data;
+};
+
 
