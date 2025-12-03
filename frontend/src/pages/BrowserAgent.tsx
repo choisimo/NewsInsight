@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
@@ -25,6 +25,22 @@ import {
   MonitorPlay,
   Wifi,
   WifiOff,
+  FolderPlus,
+  BookmarkPlus,
+  History,
+  Save,
+  Download,
+  FileJson,
+  FileText,
+  Search,
+  Shield,
+  Microscope,
+  MoreVertical,
+  ChevronDown,
+  ChevronUp,
+  X,
+  Copy,
+  BarChart3,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,7 +52,31 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
+import { useUrlCollection } from "@/hooks/useUrlCollection";
+import { useAgentResultsStorage, SavedAgentResult } from "@/hooks/useAgentResultsStorage";
+import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
 import {
   checkBrowserUseHealth,
   startBrowserTask,
@@ -331,7 +371,25 @@ const InterventionPanel = ({ job, onSubmit, isSubmitting }: InterventionPanelPro
 const BrowserAgent = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const wsRef = useRef<WebSocket | null>(null);
+  const jobStartTimeRef = useRef<string | null>(null);
+  const { addUrl, addFolder, collection, urlExists } = useUrlCollection();
+  const { saveBrowserAgent, saveFailedSearch } = useAutoSaveSearch();
+  
+  // Agent results storage
+  const {
+    savedResults,
+    isLoaded: storageLoaded,
+    saveResult,
+    deleteResult,
+    updateResult,
+    exportToJson,
+    exportToMarkdown,
+    exportToCsv,
+    getStats,
+    clearAllResults,
+  } = useAgentResultsStorage();
 
   // Form state
   const [task, setTask] = useState("");
@@ -339,12 +397,74 @@ const BrowserAgent = () => {
   const [maxSteps, setMaxSteps] = useState(25);
   const [enableIntervention, setEnableIntervention] = useState(true);
   const [autoIntervention, setAutoIntervention] = useState(true);
+  const [autoSaveUrls, setAutoSaveUrls] = useState(true);
 
   // Job state
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [liveScreenshot, setLiveScreenshot] = useState<string | null>(null);
   const [liveUrl, setLiveUrl] = useState<string | null>(null);
+  
+  // Track saved URLs in this session
+  const savedUrlsRef = useRef<Set<string>>(new Set());
+  const [savedUrlCount, setSavedUrlCount] = useState(0);
+  
+  // History panel state
+  const [showHistory, setShowHistory] = useState(false);
+  const [selectedHistoryItem, setSelectedHistoryItem] = useState<SavedAgentResult | null>(null);
+  const [historyDetailOpen, setHistoryDetailOpen] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<"all" | "completed" | "failed">("all");
+  
+  // Auto-save URL to collection
+  const autoSaveVisitedUrl = useCallback((visitedUrl: string) => {
+    if (!autoSaveUrls || !visitedUrl) return;
+    
+    // Skip if already saved in this session or in collection
+    if (savedUrlsRef.current.has(visitedUrl) || urlExists(visitedUrl)) {
+      return;
+    }
+    
+    // Skip common non-content URLs
+    const skipPatterns = [
+      /^about:/,
+      /^chrome:/,
+      /^data:/,
+      /^javascript:/,
+      /google\.com\/search/,
+      /bing\.com\/search/,
+      /duckduckgo\.com\/\?q/,
+    ];
+    
+    if (skipPatterns.some(pattern => pattern.test(visitedUrl))) {
+      return;
+    }
+    
+    // Find or create "Browser Agent" folder
+    let agentFolderId = 'root';
+    const agentFolder = collection.root.children.find(
+      (item) => item.type === 'folder' && item.name === '브라우저 에이전트'
+    );
+    
+    if (!agentFolder) {
+      agentFolderId = addFolder('root', '브라우저 에이전트', 'AI 브라우저 에이전트가 방문한 URL 자동 저장');
+    } else {
+      agentFolderId = agentFolder.id;
+    }
+    
+    // Extract title from URL if possible
+    let title: string | undefined;
+    try {
+      const urlObj = new URL(visitedUrl);
+      title = urlObj.hostname + urlObj.pathname.slice(0, 50);
+    } catch {
+      // Ignore URL parse errors
+    }
+    
+    // Add URL to collection
+    addUrl(agentFolderId, visitedUrl, title);
+    savedUrlsRef.current.add(visitedUrl);
+    setSavedUrlCount(prev => prev + 1);
+  }, [autoSaveUrls, urlExists, collection.root.children, addFolder, addUrl]);
 
   // Health check
   const { data: health } = useQuery({
@@ -396,7 +516,11 @@ const BrowserAgent = () => {
         switch (message.type) {
           case "step_update":
             if (message.screenshot) setLiveScreenshot(message.screenshot);
-            if (message.current_url) setLiveUrl(message.current_url);
+            if (message.current_url) {
+              setLiveUrl(message.current_url);
+              // Auto-save visited URL
+              autoSaveVisitedUrl(message.current_url);
+            }
             queryClient.invalidateQueries({ queryKey: ["browserUse", "job", currentJobId] });
             break;
 
@@ -437,7 +561,11 @@ const BrowserAgent = () => {
 
           case "screenshot":
             if (message.data) setLiveScreenshot(message.data);
-            if (message.current_url) setLiveUrl(message.current_url);
+            if (message.current_url) {
+              setLiveUrl(message.current_url);
+              // Auto-save visited URL
+              autoSaveVisitedUrl(message.current_url);
+            }
             break;
         }
       } catch (e) {
@@ -538,6 +666,9 @@ const BrowserAgent = () => {
     e.preventDefault();
     if (!task.trim()) return;
 
+    // 작업 시작 시간 기록
+    jobStartTimeRef.current = new Date().toISOString();
+
     startMutation.mutate({
       task: task.trim(),
       url: url.trim() || undefined,
@@ -554,12 +685,170 @@ const BrowserAgent = () => {
     setUrl("");
     setLiveScreenshot(null);
     setLiveUrl(null);
+    savedUrlsRef.current.clear();
+    setSavedUrlCount(0);
+    jobStartTimeRef.current = null;
     queryClient.removeQueries({ queryKey: ["browserUse", "job"] });
   }, [queryClient]);
+
+  // 결과 저장 핸들러
+  const handleSaveResult = useCallback(() => {
+    if (!currentJob || !currentJobId) {
+      toast({
+        title: "저장할 결과가 없습니다",
+        description: "먼저 작업을 실행해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const completedAt = new Date().toISOString();
+    const startedAt = jobStartTimeRef.current || completedAt;
+    const durationMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+
+    const savedId = saveResult({
+      task: task || currentJob.task || "Unknown task",
+      startUrl: url || undefined,
+      jobId: currentJobId,
+      status: currentJob.status as "completed" | "failed" | "cancelled",
+      result: currentJob.result || undefined,
+      error: currentJob.error || undefined,
+      executionStats: {
+        totalSteps: currentJob.current_step,
+        maxSteps: currentJob.max_steps,
+        durationMs,
+        startedAt,
+        completedAt,
+      },
+      visitedUrls: currentJob.urls_visited || [],
+      lastScreenshot: liveScreenshot || undefined,
+    });
+
+    toast({
+      title: "결과 저장됨",
+      description: `작업 결과가 저장되었습니다. (ID: ${savedId.slice(0, 8)}...)`,
+    });
+  }, [currentJob, currentJobId, task, url, liveScreenshot, saveResult, toast]);
+
+  // Deep Search로 분석 연계
+  const handleDeepSearchAnalysis = useCallback((resultText?: string, taskText?: string) => {
+    const query = resultText || taskText || task;
+    if (!query.trim()) {
+      toast({
+        title: "분석할 내용이 없습니다",
+        description: "작업 결과 또는 주제가 필요합니다.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // 결과 텍스트에서 주요 내용 추출 (너무 길면 자름)
+    const truncatedQuery = query.length > 500 ? query.substring(0, 500) + "..." : query;
+    navigate(`/deep-search?q=${encodeURIComponent(truncatedQuery)}&fromAgent=true`);
+
+    toast({
+      title: "Deep Search로 이동",
+      description: "추출된 내용에 대한 심층 분석을 시작합니다.",
+    });
+  }, [task, navigate, toast]);
+
+  // FactCheck로 분석 연계
+  const handleFactCheckAnalysis = useCallback((resultText?: string, taskText?: string) => {
+    const content = resultText || taskText || task;
+    if (!content.trim()) {
+      toast({
+        title: "분석할 내용이 없습니다",
+        description: "작업 결과 또는 주제가 필요합니다.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // 세션 스토리지에 저장하여 FactCheck 페이지에서 사용
+    sessionStorage.setItem("factCheck_fromAgent", JSON.stringify({
+      topic: taskText || task,
+      content: resultText || "",
+    }));
+
+    navigate("/fact-check");
+
+    toast({
+      title: "FactCheck로 이동",
+      description: "추출된 내용에 대한 팩트체크를 시작합니다.",
+    });
+  }, [task, navigate, toast]);
+
+  // 히스토리 항목에서 작업 복제
+  const handleCopyTask = useCallback((savedTask: string, savedUrl?: string) => {
+    setTask(savedTask);
+    setUrl(savedUrl || "");
+    setShowHistory(false);
+    toast({
+      title: "작업 복사됨",
+      description: "이전 작업이 입력란에 복사되었습니다.",
+    });
+  }, [toast]);
+
+  // 히스토리 내보내기
+  const handleExport = useCallback((id: string, format: "json" | "markdown") => {
+    let filename: string | null = null;
+    if (format === "json") {
+      filename = exportToJson(id);
+    } else {
+      filename = exportToMarkdown(id);
+    }
+    
+    if (filename) {
+      toast({
+        title: "내보내기 완료",
+        description: `${filename} 파일이 다운로드되었습니다.`,
+      });
+    }
+  }, [exportToJson, exportToMarkdown, toast]);
+
+  // 히스토리 삭제
+  const handleDeleteHistoryItem = useCallback((id: string) => {
+    deleteResult(id);
+    toast({
+      title: "삭제됨",
+      description: "저장된 결과가 삭제되었습니다.",
+    });
+  }, [deleteResult, toast]);
+
+  // 필터링된 히스토리
+  const filteredHistory = savedResults.filter((r) => {
+    if (historyFilter === "all") return true;
+    return r.status === historyFilter;
+  });
+
+  // 통계 정보
+  const stats = getStats();
 
   const isProcessing = currentJob && ["pending", "running"].includes(currentJob.status);
   const needsIntervention = currentJob?.status === "waiting_human";
   const isTerminal = currentJob && ["completed", "failed", "cancelled"].includes(currentJob.status);
+
+  // Auto-save to DB when job completes (in addition to local storage)
+  useEffect(() => {
+    if (isTerminal && currentJob && currentJobId && task.trim()) {
+      const completedAt = new Date().toISOString();
+      const startedAt = jobStartTimeRef.current || completedAt;
+      const durationMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+      
+      if (currentJob.status === "completed") {
+        // Save successful browser agent results to DB
+        saveBrowserAgent(
+          task.trim(),
+          currentJob.result ? [{ result: currentJob.result }] : [],
+          currentJob.urls_visited || [],
+          durationMs,
+        );
+      } else if (currentJob.status === "failed") {
+        // Save failed search to DB
+        saveFailedSearch('BROWSER_AGENT', task.trim(), currentJob.error || 'Unknown error', durationMs);
+      }
+    }
+  }, [isTerminal, currentJob, currentJobId, task, saveBrowserAgent, saveFailedSearch]);
 
   return (
     <div className="min-h-screen py-8">
@@ -583,6 +872,21 @@ const BrowserAgent = () => {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {/* History Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowHistory(!showHistory)}
+                className="gap-1"
+              >
+                <History className="h-4 w-4" />
+                기록
+                {savedResults.length > 0 && (
+                  <Badge variant="secondary" className="ml-1 h-5 min-w-5 px-1">
+                    {savedResults.length}
+                  </Badge>
+                )}
+              </Button>
               {wsConnected ? (
                 <Badge variant="secondary" className="flex items-center gap-1">
                   <Wifi className="h-3 w-3 text-green-500" />
@@ -608,6 +912,363 @@ const BrowserAgent = () => {
             </div>
           )}
         </header>
+
+        {/* History Panel */}
+        {showHistory && storageLoaded && (
+          <Card className="mb-6">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <History className="h-5 w-5" />
+                    작업 기록
+                  </CardTitle>
+                  {/* Stats */}
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3 text-green-500" />
+                      {stats.completed}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <XCircle className="h-3 w-3 text-red-500" />
+                      {stats.failed}
+                    </span>
+                    <span>성공률 {stats.successRate.toFixed(0)}%</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* Filter */}
+                  <Select value={historyFilter} onValueChange={(v) => setHistoryFilter(v as typeof historyFilter)}>
+                    <SelectTrigger className="w-[100px] h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">전체</SelectItem>
+                      <SelectItem value="completed">성공</SelectItem>
+                      <SelectItem value="failed">실패</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {/* Export All */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className="h-8">
+                        <Download className="h-3 w-3 mr-1" />
+                        내보내기
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => {
+                        const filename = exportToJson();
+                        if (filename) toast({ title: "내보내기 완료", description: `${filename}` });
+                      }}>
+                        <FileJson className="h-4 w-4 mr-2" />
+                        전체 JSON
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => {
+                        const filename = exportToCsv();
+                        if (filename) toast({ title: "내보내기 완료", description: `${filename}` });
+                      }}>
+                        <BarChart3 className="h-4 w-4 mr-2" />
+                        전체 CSV
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => {
+                          if (confirm("모든 기록을 삭제하시겠습니까?")) {
+                            clearAllResults();
+                            toast({ title: "삭제됨", description: "모든 기록이 삭제되었습니다." });
+                          }
+                        }}
+                        className="text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        전체 삭제
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowHistory(false)}
+                    className="h-8 w-8 p-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {filteredHistory.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  {savedResults.length === 0 
+                    ? "저장된 작업 기록이 없습니다. 작업 완료 후 '결과 저장' 버튼을 클릭하세요."
+                    : "해당 필터에 맞는 기록이 없습니다."}
+                </p>
+              ) : (
+                <ScrollArea className="max-h-[400px]">
+                  <div className="space-y-2">
+                    {filteredHistory.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-start justify-between p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="flex-1 min-w-0 mr-4">
+                          <div className="flex items-center gap-2 mb-1">
+                            {item.status === "completed" ? (
+                              <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                            ) : item.status === "failed" ? (
+                              <XCircle className="h-4 w-4 text-red-500 shrink-0" />
+                            ) : (
+                              <XCircle className="h-4 w-4 text-gray-400 shrink-0" />
+                            )}
+                            <h4 className="font-medium text-sm truncate">{item.task}</h4>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(item.savedAt).toLocaleString("ko-KR")} · 
+                            {item.executionStats.totalSteps}/{item.executionStats.maxSteps} 단계 · 
+                            {item.visitedUrls.length}개 URL 방문
+                          </p>
+                          {item.result && (
+                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                              결과: {item.result.substring(0, 100)}...
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {/* Copy Task */}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleCopyTask(item.task, item.startUrl)}
+                            title="작업 복사"
+                            className="h-8 w-8 p-0"
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                          {/* Deep Search */}
+                          {item.result && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeepSearchAnalysis(item.result, item.task)}
+                              title="Deep Search 분석"
+                              className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700"
+                            >
+                              <Microscope className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {/* FactCheck */}
+                          {item.result && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleFactCheckAnalysis(item.result, item.task)}
+                              title="팩트체크"
+                              className="h-8 w-8 p-0 text-green-600 hover:text-green-700"
+                            >
+                              <Shield className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {/* More Actions */}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => {
+                                setSelectedHistoryItem(item);
+                                setHistoryDetailOpen(true);
+                              }}>
+                                <Eye className="h-4 w-4 mr-2" />
+                                상세 보기
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => handleExport(item.id, "json")}>
+                                <FileJson className="h-4 w-4 mr-2" />
+                                JSON 내보내기
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleExport(item.id, "markdown")}>
+                                <FileText className="h-4 w-4 mr-2" />
+                                Markdown 내보내기
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => handleDeleteHistoryItem(item.id)}
+                                className="text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                삭제
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* History Detail Dialog */}
+        <Dialog open={historyDetailOpen} onOpenChange={setHistoryDetailOpen}>
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+            {selectedHistoryItem && (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    {selectedHistoryItem.status === "completed" ? (
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    ) : (
+                      <XCircle className="h-5 w-5 text-red-500" />
+                    )}
+                    작업 상세
+                  </DialogTitle>
+                  <DialogDescription>
+                    {new Date(selectedHistoryItem.savedAt).toLocaleString("ko-KR")}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  {/* Task */}
+                  <div>
+                    <Label className="text-sm font-medium">작업 설명</Label>
+                    <p className="mt-1 text-sm bg-muted p-2 rounded">{selectedHistoryItem.task}</p>
+                  </div>
+                  
+                  {/* Start URL */}
+                  {selectedHistoryItem.startUrl && (
+                    <div>
+                      <Label className="text-sm font-medium">시작 URL</Label>
+                      <p className="mt-1 text-sm">
+                        <a 
+                          href={selectedHistoryItem.startUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline flex items-center gap-1"
+                        >
+                          {selectedHistoryItem.startUrl}
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </p>
+                    </div>
+                  )}
+                  
+                  {/* Stats */}
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="text-center p-2 bg-muted rounded">
+                      <p className="text-2xl font-bold">{selectedHistoryItem.executionStats.totalSteps}</p>
+                      <p className="text-xs text-muted-foreground">실행 단계</p>
+                    </div>
+                    <div className="text-center p-2 bg-muted rounded">
+                      <p className="text-2xl font-bold">{selectedHistoryItem.visitedUrls.length}</p>
+                      <p className="text-xs text-muted-foreground">방문 URL</p>
+                    </div>
+                    <div className="text-center p-2 bg-muted rounded">
+                      <p className="text-2xl font-bold">
+                        {selectedHistoryItem.executionStats.durationMs 
+                          ? `${Math.round(selectedHistoryItem.executionStats.durationMs / 1000)}s`
+                          : "-"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">소요 시간</p>
+                    </div>
+                  </div>
+                  
+                  {/* Result */}
+                  {selectedHistoryItem.result && (
+                    <div>
+                      <Label className="text-sm font-medium">추출 결과</Label>
+                      <ScrollArea className="mt-1 h-[200px] bg-muted p-2 rounded">
+                        <pre className="text-xs whitespace-pre-wrap">{selectedHistoryItem.result}</pre>
+                      </ScrollArea>
+                    </div>
+                  )}
+                  
+                  {/* Error */}
+                  {selectedHistoryItem.error && (
+                    <div>
+                      <Label className="text-sm font-medium text-destructive">오류</Label>
+                      <p className="mt-1 text-sm text-destructive bg-destructive/10 p-2 rounded">
+                        {selectedHistoryItem.error}
+                      </p>
+                    </div>
+                  )}
+                  
+                  {/* Visited URLs */}
+                  {selectedHistoryItem.visitedUrls.length > 0 && (
+                    <Collapsible>
+                      <CollapsibleTrigger asChild>
+                        <Button variant="ghost" size="sm" className="w-full justify-between">
+                          방문한 URL ({selectedHistoryItem.visitedUrls.length}개)
+                          <ChevronDown className="h-4 w-4" />
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <ScrollArea className="h-[150px] mt-2">
+                          <ul className="text-xs space-y-1">
+                            {selectedHistoryItem.visitedUrls.map((visitedUrl, i) => (
+                              <li key={i} className="flex items-center gap-1">
+                                <Globe className="h-3 w-3 text-muted-foreground shrink-0" />
+                                <a 
+                                  href={visitedUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 hover:underline truncate"
+                                >
+                                  {visitedUrl}
+                                </a>
+                              </li>
+                            ))}
+                          </ul>
+                        </ScrollArea>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
+                </div>
+                <DialogFooter className="mt-4">
+                  <div className="flex gap-2 w-full">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleCopyTask(selectedHistoryItem.task, selectedHistoryItem.startUrl)}
+                      className="flex-1"
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      작업 복사
+                    </Button>
+                    {selectedHistoryItem.result && (
+                      <>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            handleDeepSearchAnalysis(selectedHistoryItem.result, selectedHistoryItem.task);
+                            setHistoryDetailOpen(false);
+                          }}
+                          className="flex-1 text-purple-600 hover:text-purple-700"
+                        >
+                          <Microscope className="h-4 w-4 mr-2" />
+                          Deep Search
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            handleFactCheckAnalysis(selectedHistoryItem.result, selectedHistoryItem.task);
+                            setHistoryDetailOpen(false);
+                          }}
+                          className="flex-1 text-green-600 hover:text-green-700"
+                        >
+                          <Shield className="h-4 w-4 mr-2" />
+                          팩트체크
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </DialogFooter>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column: Task Form & Status */}
@@ -683,6 +1344,22 @@ const BrowserAgent = () => {
                     </div>
                   )}
 
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="autoSaveUrls">Auto-save URLs</Label>
+                      <Badge variant="outline" className="text-xs">
+                        <BookmarkPlus className="h-3 w-3 mr-1" />
+                        컬렉션에 저장
+                      </Badge>
+                    </div>
+                    <Switch
+                      id="autoSaveUrls"
+                      checked={autoSaveUrls}
+                      onCheckedChange={setAutoSaveUrls}
+                      disabled={isProcessing || needsIntervention}
+                    />
+                  </div>
+
                   <div className="flex gap-2">
                     <Button
                       type="submit"
@@ -736,7 +1413,15 @@ const BrowserAgent = () => {
 
                   {currentJob.urls_visited.length > 0 && (
                     <div>
-                      <Label className="text-sm">Visited URLs</Label>
+                      <div className="flex items-center justify-between mb-1">
+                        <Label className="text-sm">Visited URLs</Label>
+                        {autoSaveUrls && savedUrlCount > 0 && (
+                          <Badge variant="secondary" className="text-xs">
+                            <FolderPlus className="h-3 w-3 mr-1" />
+                            {savedUrlCount}개 저장됨
+                          </Badge>
+                        )}
+                      </div>
                       <div className="mt-1 max-h-32 overflow-y-auto space-y-1">
                         {currentJob.urls_visited.map((visitedUrl, i) => (
                           <div key={i} className="text-xs text-muted-foreground flex items-center gap-1">
@@ -749,6 +1434,9 @@ const BrowserAgent = () => {
                             >
                               {visitedUrl}
                             </a>
+                            {savedUrlsRef.current.has(visitedUrl) && (
+                              <CheckCircle2 className="h-3 w-3 shrink-0 text-green-500" />
+                            )}
                           </div>
                         ))}
                       </div>
@@ -905,10 +1593,72 @@ const BrowserAgent = () => {
                         <h2 className="text-xl font-semibold mb-2">Task Cancelled</h2>
                       </>
                     )}
-                    <Button onClick={handleReset} className="mt-4">
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Start New Task
-                    </Button>
+                    
+                    {/* Action Buttons */}
+                    <div className="flex flex-wrap justify-center gap-2 mt-6">
+                      {/* Save Result */}
+                      <Button 
+                        onClick={handleSaveResult}
+                        variant="default"
+                      >
+                        <Save className="h-4 w-4 mr-2" />
+                        결과 저장
+                      </Button>
+                      
+                      {/* Deep Search (only if has result) */}
+                      {currentJob.result && (
+                        <Button
+                          variant="outline"
+                          onClick={() => handleDeepSearchAnalysis(currentJob.result, task)}
+                          className="text-purple-600 hover:text-purple-700 border-purple-300"
+                        >
+                          <Microscope className="h-4 w-4 mr-2" />
+                          Deep Search 분석
+                        </Button>
+                      )}
+                      
+                      {/* FactCheck (only if has result) */}
+                      {currentJob.result && (
+                        <Button
+                          variant="outline"
+                          onClick={() => handleFactCheckAnalysis(currentJob.result, task)}
+                          className="text-green-600 hover:text-green-700 border-green-300"
+                        >
+                          <Shield className="h-4 w-4 mr-2" />
+                          팩트체크
+                        </Button>
+                      )}
+                      
+                      {/* New Task */}
+                      <Button onClick={handleReset} variant="outline">
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        새 작업 시작
+                      </Button>
+                    </div>
+                    
+                    {/* Result Preview (if exists) */}
+                    {currentJob.result && (
+                      <div className="mt-6 text-left">
+                        <Collapsible>
+                          <CollapsibleTrigger asChild>
+                            <Button variant="ghost" size="sm" className="w-full justify-between mb-2">
+                              <span className="flex items-center gap-2">
+                                <FileText className="h-4 w-4" />
+                                추출된 결과 미리보기
+                              </span>
+                              <ChevronDown className="h-4 w-4" />
+                            </Button>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent>
+                            <ScrollArea className="h-[200px] bg-muted p-3 rounded-lg">
+                              <pre className="text-xs whitespace-pre-wrap text-left">
+                                {currentJob.result}
+                              </pre>
+                            </ScrollArea>
+                          </CollapsibleContent>
+                        </Collapsible>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>

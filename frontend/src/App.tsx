@@ -12,6 +12,7 @@ import BrowserAgent from "./pages/BrowserAgent";
 import ParallelSearch from "./pages/ParallelSearch";
 import FactCheck from "./pages/FactCheck";
 import UrlCollections from "./pages/UrlCollections";
+import SearchHistory from "./pages/SearchHistory";
 
 const queryClient = new QueryClient();
 
@@ -32,6 +33,7 @@ const App = () => (
               <Route path="/deep-search" element={<DeepSearch />} />
               <Route path="/ai-agent" element={<BrowserAgent />} />
               <Route path="/url-collections" element={<UrlCollections />} />
+              <Route path="/history" element={<SearchHistory />} />
               <Route path="/admin/sources" element={<AdminSources />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />

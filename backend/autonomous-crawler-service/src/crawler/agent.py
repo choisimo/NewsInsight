@@ -1,11 +1,11 @@
-"""Autonomous crawler agent using browser-use."""
+"""Autonomous crawler agent using browser-use with CAPTCHA bypass."""
 
 import asyncio
 import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import httpx
 import structlog
@@ -43,7 +43,186 @@ from src.search.brave import BraveSearchProvider
 from src.search.tavily import TavilySearchProvider
 from src.search.perplexity import PerplexitySearchProvider
 
+if TYPE_CHECKING:
+    from browser_use.agent.service import Agent as BrowserUseAgent
+
 logger = structlog.get_logger(__name__)
+
+
+# =============================================================================
+# CAPTCHA Detection Hook for browser-use Agent
+# =============================================================================
+
+async def create_captcha_detection_hook(
+    crawler_agent: "AutonomousCrawlerAgent",
+    on_captcha_detected: callable = None,
+) -> callable:
+    """
+    Create a hook function for browser-use Agent that detects CAPTCHAs.
+    
+    This hook is called at the start of each step to check for CAPTCHAs
+    and attempt to solve them before the agent takes action.
+    
+    Args:
+        crawler_agent: The AutonomousCrawlerAgent instance
+        on_captcha_detected: Optional callback when CAPTCHA is detected
+        
+    Returns:
+        Async hook function compatible with browser-use Agent
+    """
+    async def on_step_start_hook(agent: "BrowserUseAgent") -> None:
+        """Hook called at the start of each browser-use step."""
+        try:
+            # Get the current page from browser session
+            browser_session = agent.browser_session
+            if not browser_session:
+                return
+            
+            # Access the current page
+            page = None
+            try:
+                # browser-use stores pages internally
+                if hasattr(browser_session, '_context') and browser_session._context:
+                    pages = browser_session._context.pages
+                    if pages:
+                        page = pages[-1]  # Get the most recent page
+            except Exception:
+                pass
+            
+            if not page:
+                return
+            
+            # Check for CAPTCHA indicators
+            captcha_detected = await _quick_captcha_check(page)
+            
+            if captcha_detected:
+                logger.info("CAPTCHA detected in browser-use step, attempting to solve...")
+                
+                if on_captcha_detected:
+                    await on_captcha_detected(captcha_detected)
+                
+                # Try to solve the CAPTCHA
+                solved = await crawler_agent._detect_and_handle_captcha(page)
+                
+                if solved:
+                    logger.info("CAPTCHA solved successfully, continuing agent step")
+                else:
+                    logger.warning("CAPTCHA could not be solved, agent may fail on this step")
+                    
+                    # Simulate human behavior to appear more legitimate
+                    if crawler_agent._stealth_config.enable_human_simulation:
+                        await crawler_agent._simulate_human_behavior(page)
+                        
+        except Exception as e:
+            logger.debug("Error in CAPTCHA detection hook", error=str(e))
+    
+    return on_step_start_hook
+
+
+async def create_stealth_hook(crawler_agent: "AutonomousCrawlerAgent") -> callable:
+    """
+    Create a hook function that applies stealth patches after navigation.
+    
+    This hook is called at the end of each step to re-apply stealth patches
+    if the page has navigated to a new URL.
+    """
+    _last_url = {"value": None}
+    
+    async def on_step_end_hook(agent: "BrowserUseAgent") -> None:
+        """Hook called at the end of each browser-use step."""
+        try:
+            browser_session = agent.browser_session
+            if not browser_session:
+                return
+            
+            page = None
+            try:
+                if hasattr(browser_session, '_context') and browser_session._context:
+                    pages = browser_session._context.pages
+                    if pages:
+                        page = pages[-1]
+            except Exception:
+                pass
+            
+            if not page:
+                return
+            
+            current_url = page.url
+            
+            # Only apply patches if we navigated to a new URL
+            if current_url != _last_url["value"]:
+                _last_url["value"] = current_url
+                
+                # Re-apply stealth patches to the new page
+                await AdvancedStealthPatcher.apply_to_page(page)
+                
+                # Brief human-like delay after navigation
+                if crawler_agent._stealth_config.enable_human_simulation:
+                    await asyncio.sleep(0.5)
+                    
+        except Exception as e:
+            logger.debug("Error in stealth hook", error=str(e))
+    
+    return on_step_end_hook
+
+
+async def _quick_captcha_check(page) -> str | None:
+    """
+    Quick check for common CAPTCHA indicators on a page.
+    
+    Returns the CAPTCHA type if detected, None otherwise.
+    """
+    captcha_indicators = [
+        # Cloudflare
+        ("cloudflare", [
+            "#challenge-running",
+            ".cf-browser-verification", 
+            "iframe[src*='turnstile']",
+            "#cf-turnstile",
+            "div[class*='challenge']",
+        ]),
+        # reCAPTCHA
+        ("recaptcha", [
+            "iframe[src*='recaptcha']",
+            ".g-recaptcha",
+            "#recaptcha",
+            "div[class*='recaptcha']",
+        ]),
+        # hCaptcha
+        ("hcaptcha", [
+            "iframe[src*='hcaptcha']",
+            ".h-captcha",
+            "div[class*='hcaptcha']",
+        ]),
+        # Generic bot detection
+        ("bot_detection", [
+            "text=checking your browser",
+            "text=please verify you are human",
+            "text=access denied",
+            "text=blocked",
+        ]),
+    ]
+    
+    for captcha_type, selectors in captcha_indicators:
+        for selector in selectors:
+            try:
+                if selector.startswith("text="):
+                    # Text-based detection
+                    text = selector[5:].lower()
+                    page_text = await page.inner_text("body")
+                    if text in page_text.lower():
+                        return captcha_type
+                else:
+                    # Selector-based detection
+                    element = await page.query_selector(selector)
+                    if element:
+                        is_visible = await element.is_visible()
+                        if is_visible:
+                            return captcha_type
+            except Exception:
+                continue
+    
+    return None
 
 
 class ExtractedArticle(BaseModel):
@@ -479,6 +658,360 @@ class AutonomousCrawlerAgent:
         except Exception as e:
             logger.debug("Human behavior simulation failed", error=str(e))
 
+    async def smart_search(
+        self,
+        query: str,
+        max_results: int = 20,
+        use_browser_fallback: bool = True,
+    ) -> list[dict[str, Any]]:
+        """
+        Smart search with API-first strategy and browser fallback.
+        
+        Tries API-based search first to avoid CAPTCHA, then falls back
+        to browser-based search with Camoufox if APIs fail.
+        
+        Args:
+            query: Search query
+            max_results: Maximum number of results
+            use_browser_fallback: Whether to try browser search if API fails
+            
+        Returns:
+            List of search results with url, title, snippet
+        """
+        results = []
+        
+        # Step 1: Try API-based search (no CAPTCHA)
+        logger.info("Attempting API-based search", query=query)
+        api_urls = await self.search_before_crawl(query, max_results)
+        
+        if api_urls:
+            logger.info("API search successful", 
+                       query=query, 
+                       results_count=len(api_urls))
+            results = [{"url": url, "source": "api"} for url in api_urls]
+            return results
+        
+        if not use_browser_fallback:
+            logger.warning("API search failed and browser fallback disabled")
+            return results
+        
+        # Step 2: Try browser search with Camoufox (best anti-detection)
+        if is_camoufox_available():
+            logger.info("Trying Camoufox browser search", query=query)
+            camoufox_results = await self._browser_search_with_camoufox(query, max_results)
+            if camoufox_results:
+                return camoufox_results
+        
+        # Step 3: Try browser search with enhanced Playwright stealth
+        logger.info("Trying Playwright stealth browser search", query=query)
+        playwright_results = await self._browser_search_with_stealth(query, max_results)
+        
+        return playwright_results
+
+    async def _browser_search_with_camoufox(
+        self,
+        query: str,
+        max_results: int = 20,
+    ) -> list[dict[str, Any]]:
+        """
+        Perform browser search using Camoufox anti-detect browser.
+        
+        Uses DuckDuckGo HTML version which is less likely to show CAPTCHA.
+        """
+        results = []
+        
+        try:
+            page = await self._get_camoufox_page()
+            if not page:
+                return results
+            
+            # Use DuckDuckGo HTML version (lighter, less detection)
+            search_url = f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}"
+            
+            await page.goto(search_url, wait_until="domcontentloaded")
+            
+            # Wait for Cloudflare if present
+            await CamoufoxHelper.wait_for_cloudflare(page, timeout=15)
+            
+            # Simulate human behavior
+            await asyncio.sleep(1)
+            
+            # Extract search results
+            result_elements = await page.query_selector_all(".result")
+            
+            for element in result_elements[:max_results]:
+                try:
+                    link = await element.query_selector(".result__a")
+                    snippet_el = await element.query_selector(".result__snippet")
+                    
+                    if link:
+                        url = await link.get_attribute("href")
+                        title = await link.inner_text()
+                        snippet = ""
+                        if snippet_el:
+                            snippet = await snippet_el.inner_text()
+                        
+                        if url and title:
+                            results.append({
+                                "url": url,
+                                "title": title.strip(),
+                                "snippet": snippet.strip(),
+                                "source": "camoufox_duckduckgo",
+                            })
+                except Exception:
+                    continue
+            
+            await page.close()
+            
+            if results:
+                logger.info("Camoufox search successful", 
+                           query=query, 
+                           results_count=len(results))
+            
+        except Exception as e:
+            logger.error("Camoufox search failed", query=query, error=str(e))
+        
+        return results
+
+    async def _browser_search_with_stealth(
+        self,
+        query: str,
+        max_results: int = 20,
+    ) -> list[dict[str, Any]]:
+        """
+        Perform browser search using Playwright with stealth patches.
+        
+        Tries multiple search engines with different strategies.
+        Prioritizes engines that are less likely to show CAPTCHAs.
+        """
+        results = []
+        
+        # Search engines to try (in order of CAPTCHA likelihood - least likely first)
+        search_engines = [
+            {
+                "name": "duckduckgo_html",
+                "url": f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}",
+                "result_selector": ".result",
+                "link_selector": ".result__a",
+                "snippet_selector": ".result__snippet",
+                "wait_selector": ".result",
+            },
+            {
+                "name": "startpage",
+                "url": f"https://www.startpage.com/do/search?q={query.replace(' ', '+')}",
+                "result_selector": ".w-gl__result",
+                "link_selector": "a.w-gl__result-title",
+                "snippet_selector": ".w-gl__description",
+                "wait_selector": ".w-gl__result",
+            },
+            {
+                "name": "ecosia",
+                "url": f"https://www.ecosia.org/search?q={query.replace(' ', '+')}",
+                "result_selector": "[data-test-id='mainline-result-web']",
+                "link_selector": "a[data-test-id='result-link']",
+                "snippet_selector": "[data-test-id='result-snippet']",
+                "wait_selector": "[data-test-id='mainline-result-web']",
+            },
+            {
+                "name": "mojeek",  # Privacy-focused, rarely uses CAPTCHA
+                "url": f"https://www.mojeek.com/search?q={query.replace(' ', '+')}",
+                "result_selector": ".results-standard li",
+                "link_selector": "a.title",
+                "snippet_selector": ".s",
+                "wait_selector": ".results-standard",
+            },
+        ]
+        
+        browser_session = None
+        context = None
+        page = None
+        
+        try:
+            browser_session = await self._get_browser_session()
+            
+            # Get the underlying playwright browser to create isolated context
+            if hasattr(browser_session, '_browser') and browser_session._browser:
+                browser = browser_session._browser
+                
+                # Create isolated context with stealth args
+                context = await browser.new_context(
+                    user_agent=self._stealth_config.get_random_user_agent() if hasattr(self._stealth_config, 'get_random_user_agent') else None,
+                    locale="en-US",
+                    timezone_id="America/New_York",
+                )
+                page = await context.new_page()
+                
+                # Apply stealth patches
+                await self._apply_page_stealth(page)
+            else:
+                logger.warning("Could not access underlying browser for stealth search")
+                return results
+            
+            for engine in search_engines:
+                try:
+                    logger.info("Trying search engine", engine=engine["name"], query=query)
+                    
+                    # Navigate to search engine
+                    await page.goto(engine["url"], wait_until="domcontentloaded", timeout=15000)
+                    
+                    # Wait for results to load
+                    try:
+                        await page.wait_for_selector(
+                            engine["wait_selector"], 
+                            timeout=10000,
+                            state="visible"
+                        )
+                    except Exception:
+                        # Check if we hit a CAPTCHA
+                        captcha_type = await _quick_captcha_check(page)
+                        if captcha_type:
+                            logger.warning(
+                                "CAPTCHA detected on search engine",
+                                engine=engine["name"],
+                                captcha_type=captcha_type,
+                            )
+                            # Try to solve it
+                            solved = await self._detect_and_handle_captcha(page)
+                            if not solved:
+                                continue  # Try next engine
+                            # Wait again for results after solving
+                            try:
+                                await page.wait_for_selector(engine["wait_selector"], timeout=5000)
+                            except Exception:
+                                continue
+                        else:
+                            logger.debug("Results not found, trying next engine", engine=engine["name"])
+                            continue
+                    
+                    # Simulate human behavior
+                    if self._stealth_config.enable_human_simulation:
+                        await HumanBehaviorSimulator.random_mouse_movements(page, count=1)
+                        await asyncio.sleep(0.3)
+                    
+                    # Extract search results
+                    result_elements = await page.query_selector_all(engine["result_selector"])
+                    
+                    for element in result_elements[:max_results]:
+                        try:
+                            link = await element.query_selector(engine["link_selector"])
+                            snippet_el = await element.query_selector(engine["snippet_selector"])
+                            
+                            if link:
+                                url = await link.get_attribute("href")
+                                title = await link.inner_text()
+                                snippet = ""
+                                if snippet_el:
+                                    snippet = await snippet_el.inner_text()
+                                
+                                # Clean up URL (some engines use redirect URLs)
+                                if url and title:
+                                    # Skip ad/sponsored results
+                                    if "ad" in url.lower() or "sponsor" in title.lower():
+                                        continue
+                                    
+                                    results.append({
+                                        "url": url,
+                                        "title": title.strip(),
+                                        "snippet": snippet.strip() if snippet else "",
+                                        "source": f"stealth_{engine['name']}",
+                                    })
+                        except Exception as e:
+                            logger.debug("Failed to extract result", error=str(e))
+                            continue
+                    
+                    if results:
+                        logger.info(
+                            "Stealth search successful",
+                            engine=engine["name"],
+                            query=query,
+                            results_count=len(results),
+                        )
+                        break  # Got results, stop trying other engines
+                        
+                except Exception as e:
+                    logger.debug("Search engine failed", engine=engine["name"], error=str(e))
+                    continue
+                    
+        except Exception as e:
+            logger.error("Stealth browser search failed", query=query, error=str(e))
+        finally:
+            # Clean up
+            if page:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+            if context:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+        
+        return results
+
+    async def handle_captcha_and_retry(
+        self,
+        page,
+        action_func,
+        max_retries: int = 3,
+        switch_backend_on_failure: bool = True,
+    ) -> Any:
+        """
+        Execute an action with CAPTCHA detection and retry logic.
+        
+        If CAPTCHA is detected and cannot be solved, optionally switches
+        to a different browser backend and retries.
+        
+        Args:
+            page: Current page object
+            action_func: Async function to execute
+            max_retries: Maximum retry attempts
+            switch_backend_on_failure: Try different browser if CAPTCHA persists
+            
+        Returns:
+            Result of action_func or None if all retries fail
+        """
+        for attempt in range(max_retries):
+            try:
+                # Check for CAPTCHA before action
+                captcha_handled = await self._detect_and_handle_captcha(page)
+                
+                if not captcha_handled:
+                    logger.warning("CAPTCHA detected but not solved",
+                                  attempt=attempt + 1,
+                                  max_retries=max_retries)
+                    
+                    # If Camoufox available and we're not already using it, switch
+                    if switch_backend_on_failure and not self._use_camoufox and is_camoufox_available():
+                        logger.info("Switching to Camoufox browser for better CAPTCHA bypass")
+                        self._use_camoufox = True
+                        
+                        # Get new page from Camoufox
+                        new_page = await self._get_camoufox_page()
+                        if new_page:
+                            page = new_page
+                            continue
+                    
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+                
+                # Execute the action
+                result = await action_func(page)
+                
+                # Check for CAPTCHA after action (might have triggered one)
+                await self._detect_and_handle_captcha(page)
+                
+                return result
+                
+            except Exception as e:
+                logger.error("Action failed", 
+                            attempt=attempt + 1,
+                            error=str(e))
+                await asyncio.sleep(2 ** attempt)
+        
+        logger.error("All retry attempts failed")
+        return None
+
     async def execute_task(self, task: BrowserTaskMessage) -> list[CrawlResultMessage]:
         """
         Execute a browser crawling task.
@@ -537,18 +1070,34 @@ class AutonomousCrawlerAgent:
 
             # Get browser session and create agent
             browser_session = await self._get_browser_session()
+            
+            # Create CAPTCHA detection and stealth hooks for the agent
+            captcha_hook = await create_captcha_detection_hook(
+                crawler_agent=self,
+                on_captcha_detected=lambda ct: logger.info(
+                    "CAPTCHA detected during crawl",
+                    captcha_type=ct,
+                    job_id=session.job_id,
+                ),
+            )
+            stealth_hook = await create_stealth_hook(self)
 
             agent = Agent(
                 task=task_prompt,
                 llm=self._llm,
                 browser_session=browser_session,
                 max_actions_per_step=5,
+                extend_system_message=system_prompt,  # Add crawl policy to system prompt
             )
 
-            # Run the agent with timeout
+            # Run the agent with timeout and CAPTCHA/stealth hooks
             try:
                 result = await asyncio.wait_for(
-                    agent.run(max_steps=session.max_pages * 3),  # Allow multiple steps per page
+                    agent.run(
+                        max_steps=session.max_pages * 3,  # Allow multiple steps per page
+                        on_step_start=captcha_hook,       # CAPTCHA detection before each step
+                        on_step_end=stealth_hook,         # Re-apply stealth after navigation
+                    ),
                     timeout=session.budget_seconds,
                 )
 

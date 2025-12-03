@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -29,6 +29,7 @@ import {
   FileText,
   History,
   Trash2,
+  Microscope,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { useFactCheckStorage, SavedFactCheckResult } from "@/hooks/useFactCheckStorage";
+import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
 import {
   openDeepAnalysisStream,
   checkUnifiedSearchHealth,
@@ -185,9 +187,10 @@ const EvidenceCard = ({ evidence, stance }: EvidenceCardProps) => {
 
 interface ClaimVerificationCardProps {
   result: VerificationResult;
+  onDeepSearch?: (claim: string) => void;
 }
 
-const ClaimVerificationCard = ({ result }: ClaimVerificationCardProps) => {
+const ClaimVerificationCard = ({ result, onDeepSearch }: ClaimVerificationCardProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const config = STATUS_CONFIG[result.status];
   const StatusIcon = config.icon;
@@ -212,13 +215,26 @@ const ClaimVerificationCard = ({ result }: ClaimVerificationCardProps) => {
               <p className="font-medium text-sm">{result.originalClaim}</p>
               <p className="text-sm text-muted-foreground mt-1">{result.verificationSummary}</p>
             </div>
-            {hasEvidence && (
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            <div className="flex items-center gap-1">
+              {onDeepSearch && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onDeepSearch(result.originalClaim)}
+                  title="Deep Search로 심층 분석"
+                  className="text-purple-600 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/30"
+                >
+                  <Microscope className="h-4 w-4" />
                 </Button>
-              </CollapsibleTrigger>
-            )}
+              )}
+              {hasEvidence && (
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm">
+                    {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </Button>
+                </CollapsibleTrigger>
+              )}
+            </div>
           </div>
         </CardHeader>
 
@@ -354,12 +370,17 @@ interface PriorityUrl {
 const FactCheck = () => {
   const { toast } = useToast();
   const location = useLocation();
+  const navigate = useNavigate();
+  const { saveFactCheck, saveFailedSearch } = useAutoSaveSearch();
 
   const [topic, setTopic] = useState("");
   const [claims, setClaims] = useState<string[]>([""]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentPhase, setCurrentPhase] = useState("");
   const [phaseMessage, setPhaseMessage] = useState("");
+  
+  // Track search start time for duration calculation
+  const [searchStartTime, setSearchStartTime] = useState<number | null>(null);
   
   // Priority URLs from URL Collections page
   const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
@@ -567,6 +588,70 @@ const FactCheck = () => {
     });
   }, [deleteResult, toast]);
 
+  // Navigate to Deep Search with topic and claims
+  const handleDeepSearchAnalysis = useCallback((searchTopic?: string, searchClaims?: string[]) => {
+    const topicToUse = searchTopic || topic;
+    const claimsToUse = searchClaims || claims.filter((c) => c.trim());
+    
+    if (!topicToUse.trim()) {
+      toast({
+        title: "주제가 필요합니다",
+        description: "Deep Search로 분석하려면 주제를 입력해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Build the query for Deep Search
+    // Combine topic and claims for comprehensive analysis
+    let query = topicToUse.trim();
+    if (claimsToUse.length > 0) {
+      query += `: ${claimsToUse.join("; ")}`;
+    }
+    
+    // Navigate to Deep Search with the query
+    navigate(`/deep-search?q=${encodeURIComponent(query)}&fromFactCheck=true`);
+    
+    toast({
+      title: "Deep Search로 이동",
+      description: "해당 주제에 대한 심층 분석을 시작합니다.",
+    });
+  }, [topic, claims, navigate, toast]);
+
+  // Navigate to Deep Search with a specific claim
+  const handleDeepSearchForClaim = useCallback((claim: string) => {
+    if (!claim.trim()) return;
+    
+    // Navigate to Deep Search with the specific claim
+    navigate(`/deep-search?q=${encodeURIComponent(claim.trim())}&fromFactCheck=true`);
+    
+    toast({
+      title: "Deep Search로 이동",
+      description: "해당 주장에 대한 심층 분석을 시작합니다.",
+    });
+  }, [navigate, toast]);
+
+  // Auto-save fact check results when analysis completes
+  useEffect(() => {
+    if (aiComplete && verificationResults.length > 0 && topic.trim()) {
+      const durationMs = searchStartTime ? Date.now() - searchStartTime : undefined;
+      saveFactCheck(
+        topic.trim(),
+        verificationResults.map((v) => ({
+          claimId: v.claimId,
+          originalClaim: v.originalClaim,
+          status: v.status,
+          confidenceScore: v.confidenceScore,
+          verificationSummary: v.verificationSummary,
+          supportingCount: v.supportingEvidence.length,
+          contradictingCount: v.contradictingEvidence.length,
+        })),
+        credibility?.overallScore,
+        durationMs,
+      );
+    }
+  }, [aiComplete, verificationResults, topic, credibility, searchStartTime, saveFactCheck]);
+
   // Cleanup
   useEffect(() => {
     return () => {
@@ -614,6 +699,7 @@ const FactCheck = () => {
 
     resetResults();
     setIsAnalyzing(true);
+    setSearchStartTime(Date.now()); // Track start time for duration
 
     try {
       abortControllerRef.current = new AbortController();
@@ -665,13 +751,18 @@ const FactCheck = () => {
     } catch (error) {
       console.error("Analysis failed:", error);
       setIsAnalyzing(false);
+      
+      // Auto-save failed search
+      const durationMs = searchStartTime ? Date.now() - searchStartTime : undefined;
+      saveFailedSearch('FACT_CHECK', topic, error instanceof Error ? error.message : 'Unknown error', durationMs);
+      
       toast({
         title: "분석 오류",
         description: "분석 중 오류가 발생했습니다. 다시 시도해주세요.",
         variant: "destructive",
       });
     }
-  }, [topic, claims, priorityUrls, isAnalyzing, resetResults, toast]);
+  }, [topic, claims, priorityUrls, isAnalyzing, resetResults, toast, searchStartTime, saveFailedSearch]);
 
   const handleEvent = useCallback((event: DeepAnalysisEvent) => {
     setCurrentPhase(event.phase);
@@ -1134,18 +1225,37 @@ const FactCheck = () => {
             {verificationResults.length > 0 && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Shield className="h-5 w-5" />
-                    주장별 검증 결과
-                  </CardTitle>
-                  <CardDescription>
-                    각 주장에 대한 팩트체크 결과입니다.
-                  </CardDescription>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Shield className="h-5 w-5" />
+                        주장별 검증 결과
+                      </CardTitle>
+                      <CardDescription>
+                        각 주장에 대한 팩트체크 결과입니다. 개별 주장을 Deep Search로 심층 분석할 수 있습니다.
+                      </CardDescription>
+                    </div>
+                    {aiComplete && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleDeepSearchAnalysis()}
+                        className="gap-1 text-purple-600 hover:text-purple-700 border-purple-300 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20"
+                      >
+                        <Microscope className="h-4 w-4" />
+                        전체 Deep Search 분석
+                      </Button>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
                     {verificationResults.map((result) => (
-                      <ClaimVerificationCard key={result.claimId} result={result} />
+                      <ClaimVerificationCard 
+                        key={result.claimId} 
+                        result={result} 
+                        onDeepSearch={handleDeepSearchForClaim}
+                      />
                     ))}
                   </div>
                 </CardContent>
@@ -1156,11 +1266,13 @@ const FactCheck = () => {
             {aiConclusion && (
               <Card>
                 <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <Brain className="h-5 w-5 text-purple-600" />
-                    <CardTitle>AI 종합 분석</CardTitle>
-                    {!aiComplete && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {aiComplete && <CheckCircle2 className="h-4 w-4 text-green-600" />}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Brain className="h-5 w-5 text-purple-600" />
+                      <CardTitle>AI 종합 분석</CardTitle>
+                      {!aiComplete && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {aiComplete && <CheckCircle2 className="h-4 w-4 text-green-600" />}
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -1169,6 +1281,29 @@ const FactCheck = () => {
                     isStreaming={!aiComplete}
                     className="bg-muted/30 p-4 rounded-lg"
                   />
+                  
+                  {/* Deep Search CTA */}
+                  {aiComplete && (
+                    <div className="mt-4 p-4 rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-900/10">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                            더 깊은 분석이 필요하신가요?
+                          </h4>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Deep Search를 통해 다양한 관점의 증거를 수집하고 더 심층적인 분석을 받아보세요.
+                          </p>
+                        </div>
+                        <Button
+                          onClick={() => handleDeepSearchAnalysis()}
+                          className="gap-2 bg-purple-600 hover:bg-purple-700"
+                        >
+                          <Microscope className="h-4 w-4" />
+                          Deep Search 분석
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
