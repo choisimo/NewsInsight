@@ -336,3 +336,13 @@ class EnhancedStealthConfig(StealthConfig):
             extension_paths=self.extension_paths if self.extension_paths else None,
             include_docker_args=include_docker,
         )
+    
+    def get_random_user_agent(self) -> str:
+        """Get a random user agent from the configured list."""
+        import random
+        return random.choice(self.user_agents)
+    
+    def get_random_viewport(self) -> dict[str, int]:
+        """Get a random viewport size from the configured list."""
+        import random
+        return random.choice(self.viewports)
