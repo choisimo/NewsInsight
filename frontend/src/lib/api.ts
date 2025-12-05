@@ -367,27 +367,11 @@ export const openDeepSearchStream = async (jobId: string): Promise<EventSource> 
 // ============================================
 
 /**
- * 개발 환경에서는 Vite proxy를 통해 상대 경로 사용
- * 프로덕션에서는 환경변수 사용
+ * Browser-Use는 항상 API Gateway를 통해 상대 경로로 호출한다.
+ * 외부 경로: /api/browser-use/**
  */
 const getBrowserUseBaseUrl = (): string => {
-  // 개발 환경: Vite proxy 사용 (상대 경로)
-  if (import.meta.env.DEV) {
-    return '';
-  }
-
-  if (import.meta.env.VITE_BROWSER_USE_URL) {
-    return import.meta.env.VITE_BROWSER_USE_URL as string;
-  }
-  
-  // 프로덕션: 현재 호스트에서 8500 포트 사용
-  if (typeof window !== 'undefined') {
-    const url = new URL(window.location.href);
-    url.port = '8500';
-    return url.origin;
-  }
-  
-  return 'http://localhost:8500';
+  return '/api/browser-use';
 };
 
 const BROWSER_USE_BASE_URL = getBrowserUseBaseUrl();
@@ -600,17 +584,10 @@ export const listBrowserJobs = async (
 
 /**
  * Get WebSocket URL for browser job
+ * 항상 API Gateway의 /api/browser-use/ws 경로를 사용한다.
  */
 export const getBrowserWSUrl = (jobId: string): string => {
-  // 개발 환경: Vite proxy 사용
-  if (import.meta.env.DEV) {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/ws/${jobId}`;
-  }
-  
-  // 프로덕션: Browser-Use URL 사용
-  const wsBase = BROWSER_USE_BASE_URL.replace(/^http/, 'ws');
-  return `${wsBase}/ws/${jobId}`;
+  return `/api/browser-use/ws/${jobId}`;
 };
 
 
@@ -1123,10 +1100,37 @@ export const checkSearchHistoryHealth = async (): Promise<{
   status: string;
   features: Record<string, boolean>;
   kafkaTopic: string;
+  sseSubscribers?: number;
 }> => {
   const client = await getApiClient();
   const response = await client.get('/api/v1/search-history/health');
   return response.data;
+};
+
+/**
+ * SSE event types for search history stream
+ */
+export interface SearchHistorySSEEvent {
+  eventType: 'new_search' | 'updated_search' | 'deleted_search' | 'heartbeat';
+  data: SearchHistoryRecord | { id: number } | { tick: number; subscribers: number };
+  timestamp: number;
+}
+
+/**
+ * Open SSE stream for real-time search history updates.
+ * 
+ * Event types:
+ * - new_search: A new search was saved
+ * - updated_search: An existing search was updated
+ * - deleted_search: A search was deleted (data contains { id: number })
+ * - heartbeat: Keep-alive signal (every 30 seconds)
+ */
+export const openSearchHistoryStream = async (): Promise<EventSource> => {
+  const initialBase = resolveInitialBaseUrl();
+  const baseURL = await fetchConfiguredBaseUrl(initialBase);
+  const effectiveBaseURL = baseURL || (typeof globalThis.window !== 'undefined' ? globalThis.window.location.origin : '');
+  const url = `${effectiveBaseURL}/api/v1/search-history/stream`;
+  return new EventSource(url);
 };
 
 

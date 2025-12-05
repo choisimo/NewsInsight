@@ -43,9 +43,10 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         "/api/v1/collections",
         "/api/v1/data",
         "/api/v1/search",
-        "/browse",
-        "/jobs",
-        "/ws"
+        "/api/browser-use",  // Browser-Use API (gateway path)
+        "/browse",           // Browser-Use API (direct path - legacy)
+        "/jobs",             // Browser-Use Jobs (direct path - legacy)
+        "/ws"                // WebSocket (direct path - legacy)
     );
     
     @Value("${JWT_SECRET_KEY:default-secret-key-please-change-in-consul}")

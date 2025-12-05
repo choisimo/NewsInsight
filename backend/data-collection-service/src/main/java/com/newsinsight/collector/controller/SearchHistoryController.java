@@ -5,13 +5,17 @@ import com.newsinsight.collector.dto.SearchHistoryDto;
 import com.newsinsight.collector.dto.SearchHistoryMessage;
 import com.newsinsight.collector.entity.search.SearchHistory;
 import com.newsinsight.collector.entity.search.SearchType;
+import com.newsinsight.collector.service.SearchHistoryEventService;
 import com.newsinsight.collector.service.SearchHistoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Map;
@@ -27,6 +31,7 @@ import java.util.Map;
 public class SearchHistoryController {
 
     private final SearchHistoryService searchHistoryService;
+    private final SearchHistoryEventService searchHistoryEventService;
 
     // ============================================
     // Create / Save
@@ -368,9 +373,35 @@ public class SearchHistoryController {
                         "derivedSearch", true,
                         "bookmarks", true,
                         "tags", true,
-                        "statistics", true
+                        "statistics", true,
+                        "sse", true
                 ),
-                "kafkaTopic", SearchHistoryService.SEARCH_HISTORY_TOPIC
+                "kafkaTopic", SearchHistoryService.SEARCH_HISTORY_TOPIC,
+                "sseSubscribers", searchHistoryEventService.getSubscriberCount()
         ));
+    }
+
+    // ============================================
+    // SSE Real-time Stream
+    // ============================================
+
+    /**
+     * SSE endpoint for real-time search history updates.
+     * Clients can subscribe to receive notifications when:
+     * - new_search: A new search was saved
+     * - updated_search: An existing search was updated
+     * - deleted_search: A search was deleted
+     * - heartbeat: Keep-alive signal (every 30 seconds)
+     */
+    @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<SearchHistoryEventService.SearchHistoryEventDto>> streamSearchHistory() {
+        log.info("New SSE client connected to search history stream");
+        
+        return searchHistoryEventService.getEventStream()
+                .map(event -> ServerSentEvent.<SearchHistoryEventService.SearchHistoryEventDto>builder()
+                        .id(String.valueOf(event.timestamp()))
+                        .event(event.eventType())
+                        .data(event)
+                        .build());
     }
 }

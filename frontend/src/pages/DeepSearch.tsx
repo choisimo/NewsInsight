@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -24,6 +24,7 @@ import {
   History,
   ChevronRight,
 } from "lucide-react";
+import { ExportButton } from "@/components/ExportButton";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +52,7 @@ import { InsightFlow } from "@/components/insight";
 import { useDeepSearchSSE } from "@/hooks/useDeepSearchSSE";
 import { useBackgroundTasks } from "@/contexts/BackgroundTaskContext";
 import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
+import { AnalysisProgressTimeline, type AnalysisStep } from "@/components/AnalysisProgressTimeline";
 import {
   startDeepSearch,
   startDrilldownSearch,
@@ -256,6 +258,40 @@ const DeepSearch = () => {
       setCurrentJobId(jobIdFromUrl);
     }
   }, [searchParams, currentJobId]);
+
+  // Load query from location state (e.g., from Search History page)
+  useEffect(() => {
+    const locationState = location.state as { 
+      query?: string; 
+      fromHistory?: boolean; 
+      historyId?: number;
+      parentSearchId?: number;
+      deriveFrom?: number;
+    } | null;
+    
+    if (locationState?.query && !currentJobId) {
+      setTopic(locationState.query);
+      
+      if (locationState.fromHistory) {
+        toast({
+          title: "검색 기록에서 연결됨",
+          description: `"${locationState.query}" 주제로 Deep Search를 시작할 수 있습니다.`,
+        });
+        // Clear the location state to prevent showing toast again
+        window.history.replaceState({}, document.title);
+      }
+      
+      if (locationState.deriveFrom) {
+        setCurrentDepth(1);
+        toast({
+          title: "파생 검색",
+          description: "이전 검색에서 파생된 심층 검색을 시작합니다.",
+        });
+        // Clear the location state
+        window.history.replaceState({}, document.title);
+      }
+    }
+  }, [location.state, currentJobId, toast]);
 
   // Load query from URL params (e.g., from FactCheck page)
   useEffect(() => {
@@ -757,26 +793,23 @@ const DeepSearch = () => {
         {/* Processing Status */}
         {isProcessing && (
           <Card className="mb-8">
-            <CardContent className="py-8">
-              <div className="text-center space-y-4">
-                <Loader2 className="h-12 w-12 mx-auto animate-spin text-primary" />
-                <div>
-                  <h3 className="font-semibold text-lg">
-                    {jobStatus === "PENDING" ? "대기 중..." : "분석 중..."}
-                  </h3>
-                  <p className="text-sm text-muted-foreground">
-                    {progressMessage || `'${topic}'에 대해 다양한 출처를 분석하고 있습니다.`}
-                  </p>
-                  {evidenceCount > 0 && (
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {evidenceCount}개 증거 수집됨
-                    </p>
-                  )}
-                </div>
-                <Progress value={progress || (jobStatus === "PENDING" ? 10 : 50)} className="max-w-md mx-auto" />
-                <p className="text-xs text-muted-foreground">
-                  다른 페이지로 이동해도 백그라운드에서 계속 실행됩니다.
-                </p>
+            <CardContent className="py-6">
+              <AnalysisProgressTimeline
+                currentStep={
+                  jobStatus === "PENDING" ? "queued" :
+                  progress < 20 ? "initializing" :
+                  progress < 40 ? "searching" :
+                  progress < 60 ? "collecting" :
+                  progress < 80 ? "analyzing" :
+                  progress < 95 ? "classifying" :
+                  "summarizing"
+                }
+                overallProgress={progress || (jobStatus === "PENDING" ? 5 : 25)}
+                message={progressMessage}
+                collectedCount={evidenceCount}
+                topic={topic}
+              />
+              <div className="flex justify-center mt-6">
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -824,27 +857,52 @@ const DeepSearch = () => {
         {result && (
           <div className="space-y-6">
             {/* View Mode Toggle */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="text-xl font-semibold">분석 결과</h2>
-              <div className="flex items-center gap-2 p-1 rounded-lg bg-muted">
-                <Button
-                  variant={viewMode === "insight" ? "default" : "ghost"}
+              <div className="flex items-center gap-2">
+                <ExportButton
+                  data={result.evidence.map(e => ({
+                    id: e.id,
+                    title: e.title,
+                    snippet: e.snippet,
+                    url: e.url,
+                    source: e.source,
+                    stance: e.stance,
+                  }))}
+                  options={{
+                    filename: `newsinsight-deepsearch-${result.topic.replace(/\s+/g, '-')}`,
+                    title: `"${result.topic}" Deep Search 결과`,
+                    metadata: {
+                      주제: result.topic,
+                      총증거: result.evidence.length,
+                      찬성: result.stanceDistribution.pro,
+                      반대: result.stanceDistribution.con,
+                      중립: result.stanceDistribution.neutral,
+                    },
+                  }}
                   size="sm"
-                  onClick={() => setViewMode("insight")}
-                  className="gap-2"
-                >
-                  <LayoutGrid className="h-4 w-4" />
-                  <span className="hidden sm:inline">인사이트 뷰</span>
-                </Button>
-                <Button
-                  variant={viewMode === "list" ? "default" : "ghost"}
-                  size="sm"
-                  onClick={() => setViewMode("list")}
-                  className="gap-2"
-                >
-                  <List className="h-4 w-4" />
-                  <span className="hidden sm:inline">상세 목록</span>
-                </Button>
+                  disabled={result.evidence.length === 0}
+                />
+                <div className="flex items-center gap-2 p-1 rounded-lg bg-muted">
+                  <Button
+                    variant={viewMode === "insight" ? "default" : "ghost"}
+                    size="sm"
+                    onClick={() => setViewMode("insight")}
+                    className="gap-2"
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                    <span className="hidden sm:inline">인사이트 뷰</span>
+                  </Button>
+                  <Button
+                    variant={viewMode === "list" ? "default" : "ghost"}
+                    size="sm"
+                    onClick={() => setViewMode("list")}
+                    className="gap-2"
+                  >
+                    <List className="h-4 w-4" />
+                    <span className="hidden sm:inline">상세 목록</span>
+                  </Button>
+                </div>
               </div>
             </div>
 

@@ -59,3 +59,14 @@ Thumbs.db
 # JVM crash logs
 hs_err_pid*
 replay_pid*
+
+# mcp config
+.opencode
+.opencode.json
+opencode.json
+opencode
+
+
+!.env.example
+**.env
+**.env.*

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchHistory, type UseSearchHistoryReturn } from '@/hooks/useSearchHistory';
+import { useSearchHistory, useSearchHistorySSE } from '@/hooks/useSearchHistory';
 import type { SearchHistoryRecord, SearchHistoryType } from '@/lib/api';
 import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
@@ -8,6 +8,7 @@ interface SearchHistoryPanelProps {
   onSelectSearch?: (search: SearchHistoryRecord) => void;
   onDeriveSearch?: (search: SearchHistoryRecord) => void;
   className?: string;
+  enableRealtime?: boolean;
 }
 
 const searchTypeLabels: Record<SearchHistoryType, string> = {
@@ -28,6 +29,7 @@ export function SearchHistoryPanel({
   onSelectSearch,
   onDeriveSearch,
   className = '',
+  enableRealtime = true,
 }: SearchHistoryPanelProps) {
   const {
     history,
@@ -48,6 +50,56 @@ export function SearchHistoryPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [derivedSearches, setDerivedSearches] = useState<Record<number, SearchHistoryRecord[]>>({});
+  const [localHistory, setLocalHistory] = useState<SearchHistoryRecord[]>([]);
+  const [newItemIds, setNewItemIds] = useState<Set<number>>(new Set());
+
+  // Sync local history with server history
+  useEffect(() => {
+    setLocalHistory(history);
+  }, [history]);
+
+  // SSE real-time updates
+  const { connected: sseConnected } = useSearchHistorySSE({
+    enabled: enableRealtime,
+    onNewSearch: useCallback((newSearch: SearchHistoryRecord) => {
+      // Only add if we're on page 0 and filter matches
+      if (currentPage === 0) {
+        const matchesFilter = 
+          filter === 'all' || 
+          (filter === 'bookmarked' && newSearch.bookmarked) ||
+          filter === newSearch.searchType;
+        
+        if (matchesFilter && !newSearch.parentSearchId) {
+          setLocalHistory(prev => {
+            // Prevent duplicates
+            if (prev.some(item => item.id === newSearch.id)) {
+              return prev;
+            }
+            // Add to the beginning
+            return [newSearch, ...prev];
+          });
+          // Mark as new for highlight animation
+          setNewItemIds(prev => new Set([...prev, newSearch.id]));
+          // Remove highlight after animation
+          setTimeout(() => {
+            setNewItemIds(prev => {
+              const next = new Set(prev);
+              next.delete(newSearch.id);
+              return next;
+            });
+          }, 3000);
+        }
+      }
+    }, [currentPage, filter]),
+    onUpdatedSearch: useCallback((updatedSearch: SearchHistoryRecord) => {
+      setLocalHistory(prev => prev.map(item => 
+        item.id === updatedSearch.id ? updatedSearch : item
+      ));
+    }, []),
+    onDeletedSearch: useCallback((id: number) => {
+      setLocalHistory(prev => prev.filter(item => item.id !== id));
+    }, []),
+  });
 
   // Load initial data
   useEffect(() => {
@@ -118,17 +170,21 @@ export function SearchHistoryPanel({
   }, [deleteSearch]);
 
   // Render a single history item
-  const renderHistoryItem = (item: SearchHistoryRecord, isChild = false) => (
-    <div
-      key={item.id}
-      className={`
-        border rounded-lg p-3 cursor-pointer transition-all
-        hover:border-blue-300 hover:shadow-sm
-        ${isChild ? 'ml-6 border-l-4 border-l-purple-400' : ''}
-        ${expandedId === item.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-950' : 'border-gray-200 dark:border-gray-700'}
-      `}
-      onClick={() => onSelectSearch?.(item)}
-    >
+  const renderHistoryItem = (item: SearchHistoryRecord, isChild = false) => {
+    const isNew = newItemIds.has(item.id);
+    
+    return (
+      <div
+        key={item.id}
+        className={`
+          border rounded-lg p-3 cursor-pointer transition-all
+          hover:border-blue-300 hover:shadow-sm
+          ${isChild ? 'ml-6 border-l-4 border-l-purple-400' : ''}
+          ${expandedId === item.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-950' : 'border-gray-200 dark:border-gray-700'}
+          ${isNew ? 'animate-pulse border-green-400 bg-green-50 dark:bg-green-950' : ''}
+        `}
+        onClick={() => onSelectSearch?.(item)}
+      >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           {/* Type badge and query */}
@@ -227,15 +283,29 @@ export function SearchHistoryPanel({
         </div>
       )}
     </div>
-  );
+  )};
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
       {/* Header */}
       <div className="border-b border-gray-200 dark:border-gray-700 pb-3 mb-3">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">
-          검색 기록
-        </h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            검색 기록
+          </h3>
+          {/* SSE connection status */}
+          {enableRealtime && (
+            <div className="flex items-center gap-1.5">
+              <span 
+                className={`w-2 h-2 rounded-full ${sseConnected ? 'bg-green-500' : 'bg-red-500'}`}
+                title={sseConnected ? '실시간 연결됨' : '연결 끊김'}
+              />
+              <span className="text-xs text-gray-400">
+                {sseConnected ? '실시간' : '오프라인'}
+              </span>
+            </div>
+          )}
+        </div>
         
         {/* Search input */}
         <form onSubmit={handleSearch} className="mb-3">
@@ -278,7 +348,7 @@ export function SearchHistoryPanel({
       
       {/* Stats */}
       <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-        총 {totalElements}건
+        총 {totalElements}건 {localHistory.length > history.length && `(+${localHistory.length - history.length} 새 항목)`}
       </div>
       
       {/* History list */}
@@ -297,12 +367,12 @@ export function SearchHistoryPanel({
               다시 시도
             </button>
           </div>
-        ) : history.length === 0 ? (
+        ) : localHistory.length === 0 ? (
           <div className="text-center py-8 text-gray-500 dark:text-gray-400">
             <p>검색 기록이 없습니다</p>
           </div>
         ) : (
-          history.filter(item => !item.parentSearchId).map(item => renderHistoryItem(item))
+          localHistory.filter(item => !item.parentSearchId).map(item => renderHistoryItem(item))
         )}
       </div>
       

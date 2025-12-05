@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
@@ -77,6 +77,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useUrlCollection } from "@/hooks/useUrlCollection";
 import { useAgentResultsStorage, SavedAgentResult } from "@/hooks/useAgentResultsStorage";
 import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
+import { TaskTemplates, TaskTemplate } from "@/components/TaskTemplates";
 import {
   checkBrowserUseHealth,
   startBrowserTask,
@@ -372,6 +373,7 @@ const BrowserAgent = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
   const wsRef = useRef<WebSocket | null>(null);
   const jobStartTimeRef = useRef<string | null>(null);
   const { addUrl, addFolder, collection, urlExists } = useUrlCollection();
@@ -489,6 +491,41 @@ const BrowserAgent = () => {
     },
     staleTime: 1000,
   });
+
+  // Load task from location state (e.g., from Search History page)
+  useEffect(() => {
+    const locationState = location.state as { 
+      query?: string; 
+      fromHistory?: boolean; 
+      historyId?: number;
+      parentSearchId?: number;
+      deriveFrom?: number;
+      depthLevel?: number;
+    } | null;
+    
+    if (locationState?.query && !currentJobId) {
+      // Set the query as task
+      setTask(locationState.query);
+      
+      if (locationState.fromHistory) {
+        toast({
+          title: "검색 기록에서 연결됨",
+          description: `"${locationState.query}" 작업으로 AI 에이전트를 시작할 수 있습니다.`,
+        });
+        // Clear the location state to prevent showing toast again
+        window.history.replaceState({}, document.title);
+      }
+      
+      if (locationState.deriveFrom) {
+        toast({
+          title: "파생 검색",
+          description: "이전 검색에서 파생된 AI 에이전트 작업을 시작합니다.",
+        });
+        // Clear the location state
+        window.history.replaceState({}, document.title);
+      }
+    }
+  }, [location.state, currentJobId, toast]);
 
   // WebSocket connection
   useEffect(() => {
@@ -786,6 +823,21 @@ const BrowserAgent = () => {
     toast({
       title: "작업 복사됨",
       description: "이전 작업이 입력란에 복사되었습니다.",
+    });
+  }, [toast]);
+
+  // 템플릿 선택 핸들러
+  const handleSelectTemplate = useCallback((template: TaskTemplate) => {
+    setTask(template.task);
+    if (template.url) {
+      setUrl(template.url);
+    }
+    if (template.maxSteps) {
+      setMaxSteps(template.maxSteps);
+    }
+    toast({
+      title: "템플릿 적용됨",
+      description: `"${template.name}" 템플릿이 적용되었습니다.`,
     });
   }, [toast]);
 
@@ -1285,6 +1337,13 @@ const BrowserAgent = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                {/* Task Templates */}
+                <TaskTemplates
+                  onSelectTemplate={handleSelectTemplate}
+                  disabled={isProcessing || needsIntervention}
+                  className="mb-4"
+                />
+
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="task">Task Description *</Label>

@@ -8,10 +8,12 @@ import {
   deleteSearchHistory,
   getBookmarkedSearches,
   searchHistoryByQuery,
+  openSearchHistoryStream,
   type SearchHistoryRecord,
   type SaveSearchHistoryRequest,
   type SearchHistoryType,
   type PageResponse,
+  type SearchHistorySSEEvent,
 } from '@/lib/api';
 
 // Generate session ID for grouping searches
@@ -376,6 +378,153 @@ export function useAutoSaveSearch() {
     saveBrowserAgent,
     saveFailedSearch,
     sessionId,
+  };
+}
+
+/**
+ * Hook for real-time search history updates via SSE.
+ * Use this in components that need to display live updates.
+ */
+export function useSearchHistorySSE(options: {
+  enabled?: boolean;
+  onNewSearch?: (search: SearchHistoryRecord) => void;
+  onUpdatedSearch?: (search: SearchHistoryRecord) => void;
+  onDeletedSearch?: (id: number) => void;
+} = {}) {
+  const { enabled = true, onNewSearch, onUpdatedSearch, onDeletedSearch } = options;
+  
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastEvent, setLastEvent] = useState<SearchHistorySSEEvent | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttempts = useRef(0);
+  const maxReconnectAttempts = 5;
+
+  const connect = useCallback(async () => {
+    if (!enabled) return;
+    
+    try {
+      // Close existing connection
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+      
+      const eventSource = await openSearchHistoryStream();
+      eventSourceRef.current = eventSource;
+      
+      eventSource.onopen = () => {
+        console.log('[SearchHistory SSE] Connected');
+        setConnected(true);
+        setError(null);
+        reconnectAttempts.current = 0;
+      };
+      
+      // Listen for specific event types
+      eventSource.addEventListener('new_search', (event) => {
+        try {
+          const data = JSON.parse(event.data) as SearchHistorySSEEvent;
+          console.log('[SearchHistory SSE] New search:', data);
+          setLastEvent(data);
+          if (onNewSearch && data.data && 'id' in data.data && 'searchType' in data.data) {
+            onNewSearch(data.data as SearchHistoryRecord);
+          }
+        } catch (err) {
+          console.error('[SearchHistory SSE] Failed to parse new_search event:', err);
+        }
+      });
+      
+      eventSource.addEventListener('updated_search', (event) => {
+        try {
+          const data = JSON.parse(event.data) as SearchHistorySSEEvent;
+          console.log('[SearchHistory SSE] Updated search:', data);
+          setLastEvent(data);
+          if (onUpdatedSearch && data.data && 'id' in data.data && 'searchType' in data.data) {
+            onUpdatedSearch(data.data as SearchHistoryRecord);
+          }
+        } catch (err) {
+          console.error('[SearchHistory SSE] Failed to parse updated_search event:', err);
+        }
+      });
+      
+      eventSource.addEventListener('deleted_search', (event) => {
+        try {
+          const data = JSON.parse(event.data) as SearchHistorySSEEvent;
+          console.log('[SearchHistory SSE] Deleted search:', data);
+          setLastEvent(data);
+          if (onDeletedSearch && data.data && 'id' in data.data) {
+            onDeletedSearch((data.data as { id: number }).id);
+          }
+        } catch (err) {
+          console.error('[SearchHistory SSE] Failed to parse deleted_search event:', err);
+        }
+      });
+      
+      eventSource.addEventListener('heartbeat', (event) => {
+        try {
+          const data = JSON.parse(event.data) as SearchHistorySSEEvent;
+          console.debug('[SearchHistory SSE] Heartbeat:', data);
+        } catch {
+          // Heartbeat parsing errors are not critical
+        }
+      });
+      
+      eventSource.onerror = (err) => {
+        console.error('[SearchHistory SSE] Error:', err);
+        setConnected(false);
+        
+        // Attempt reconnection with exponential backoff
+        if (reconnectAttempts.current < maxReconnectAttempts) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
+          console.log(`[SearchHistory SSE] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current + 1})`);
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectAttempts.current++;
+            connect();
+          }, delay);
+        } else {
+          setError('Failed to connect to search history stream after multiple attempts');
+        }
+      };
+      
+    } catch (err) {
+      console.error('[SearchHistory SSE] Failed to connect:', err);
+      setError(err instanceof Error ? err.message : 'Failed to connect');
+      setConnected(false);
+    }
+  }, [enabled, onNewSearch, onUpdatedSearch, onDeletedSearch]);
+
+  const disconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    
+    setConnected(false);
+  }, []);
+
+  // Connect on mount, disconnect on unmount
+  useEffect(() => {
+    if (enabled) {
+      connect();
+    }
+    
+    return () => {
+      disconnect();
+    };
+  }, [enabled, connect, disconnect]);
+
+  return {
+    connected,
+    error,
+    lastEvent,
+    reconnect: connect,
+    disconnect,
   };
 }
 
