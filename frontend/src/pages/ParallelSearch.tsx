@@ -1,8 +1,7 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Search,
   Loader2,
   AlertCircle,
   Database,
@@ -21,25 +20,34 @@ import {
   X,
   Bot,
   Sparkles,
-  TrendingUp,
-  FileText,
-  BarChart3,
   Save,
   BookmarkPlus,
+  Maximize2,
+  FileText,
 } from "lucide-react";
+import { ExportButton } from "@/components/ExportButton";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { AnalysisBadges, type AnalysisData } from "@/components/AnalysisBadges";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { useUrlCollection } from "@/hooks/useUrlCollection";
 import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
+import { SearchInputWithSuggestions } from "@/components/SearchInputWithSuggestions";
+import { AdvancedFilters, defaultFilters, type SearchFilters } from "@/components/AdvancedFilters";
 import {
   openUnifiedSearchStream,
   checkUnifiedSearchHealth,
@@ -204,12 +212,17 @@ interface AIStreamCardProps {
   isComplete: boolean;
   onSave?: () => void;
   isSaved?: boolean;
+  evidence?: UnifiedSearchResult[];
 }
 
-const AIStreamCard = ({ content, isComplete, onSave, isSaved = false }: AIStreamCardProps) => {
+const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence = [] }: AIStreamCardProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [isFullViewOpen, setIsFullViewOpen] = useState(false);
 
   if (!content) return null;
+
+  // Filter evidence to only include non-AI results with URLs
+  const validEvidence = evidence.filter(r => r.source !== 'ai' && r.url);
 
   return (
     <Card className="bg-purple-100 dark:bg-purple-900/30 border-l-4 border-l-purple-500">
@@ -227,6 +240,104 @@ const AIStreamCard = ({ content, isComplete, onSave, isSaved = false }: AIStream
               )}
             </div>
             <div className="flex items-center gap-2">
+              {/* Full View Button */}
+              {isComplete && (
+                <Dialog open={isFullViewOpen} onOpenChange={setIsFullViewOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1">
+                      <Maximize2 className="h-4 w-4" />
+                      전체보기
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+                    <DialogHeader>
+                      <DialogTitle className="flex items-center gap-2">
+                        <Brain className="h-5 w-5 text-purple-600" />
+                        AI 분석 전체보기
+                      </DialogTitle>
+                      <DialogDescription>
+                        AI 분석 결과와 참조된 모든 소스를 확인할 수 있습니다.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="flex-1 overflow-y-auto space-y-6 pr-2">
+                      {/* AI Analysis Content */}
+                      <div>
+                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-purple-700 dark:text-purple-300">
+                          <FileText className="h-4 w-4" />
+                          분석 내용
+                        </h3>
+                        <div className="bg-white/70 dark:bg-black/30 p-4 rounded-lg border">
+                          <MarkdownRenderer content={content} isStreaming={false} />
+                        </div>
+                      </div>
+                      
+                      {/* Evidence / Source URLs */}
+                      {validEvidence.length > 0 && (
+                        <div>
+                          <h3 className="font-semibold mb-3 flex items-center gap-2 text-blue-700 dark:text-blue-300">
+                            <Globe className="h-4 w-4" />
+                            참조 소스 ({validEvidence.length}개)
+                          </h3>
+                          <ScrollArea className="h-[300px]">
+                            <div className="space-y-3 pr-4">
+                              {validEvidence.map((item, index) => {
+                                const sourceConfig = SOURCE_CONFIG[item.source];
+                                const SourceIcon = sourceConfig?.icon || Globe;
+                                return (
+                                  <div
+                                    key={item.id || index}
+                                    className={`p-3 rounded-lg border-l-4 ${sourceConfig?.borderColor || 'border-l-gray-400'} ${sourceConfig?.bgColor || 'bg-gray-100 dark:bg-gray-800'}`}
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <Badge variant="outline" className={`${sourceConfig?.color || 'text-gray-600'} text-xs`}>
+                                            <SourceIcon className="h-3 w-3 mr-1" />
+                                            {item.sourceLabel || sourceConfig?.label || item.source}
+                                          </Badge>
+                                          {item.publishedAt && (
+                                            <span className="text-xs text-muted-foreground">
+                                              {new Date(item.publishedAt).toLocaleDateString('ko-KR')}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {item.title && (
+                                          <h4 className="font-medium text-sm line-clamp-2 mb-1">{item.title}</h4>
+                                        )}
+                                        {item.snippet && (
+                                          <p className="text-xs text-muted-foreground line-clamp-2">{item.snippet}</p>
+                                        )}
+                                      </div>
+                                      {item.url && (
+                                        <a
+                                          href={item.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="shrink-0 p-2 rounded-md hover:bg-muted transition-colors"
+                                          title="원문 보기"
+                                        >
+                                          <ExternalLink className="h-4 w-4" />
+                                        </a>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </ScrollArea>
+                        </div>
+                      )}
+                      
+                      {validEvidence.length === 0 && (
+                        <div className="text-center py-6 text-muted-foreground">
+                          <Globe className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                          <p>참조된 소스가 없습니다.</p>
+                        </div>
+                      )}
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              )}
               {isComplete && onSave && (
                 <Button
                   variant="outline"
@@ -377,7 +488,7 @@ const ParallelSearch = () => {
   const { saveUnifiedSearch, saveFailedSearch } = useAutoSaveSearch();
   
   const [query, setQuery] = useState("");
-  const [timeWindow, setTimeWindow] = useState("7d");
+  const [filters, setFilters] = useState<SearchFilters>(defaultFilters);
   const [isSearching, setIsSearching] = useState(false);
   const [activeTab, setActiveTab] = useState<"all" | SourceType>("all");
   
@@ -436,6 +547,41 @@ const ParallelSearch = () => {
       }
     }
   }, [location.state]);
+
+  // Load query from location state (e.g., from Search History page)
+  useEffect(() => {
+    const locationState = location.state as { 
+      query?: string; 
+      fromHistory?: boolean; 
+      historyId?: number;
+      parentSearchId?: number;
+      deriveFrom?: number;
+      depthLevel?: number;
+    } | null;
+    
+    if (locationState?.query && !isSearching && !currentJobId) {
+      // Set the query
+      setQuery(locationState.query);
+      
+      if (locationState.fromHistory) {
+        toast({
+          title: "검색 기록에서 연결됨",
+          description: `"${locationState.query}" 검색어로 통합 검색을 시작할 수 있습니다.`,
+        });
+        // Clear the location state to prevent showing toast again
+        window.history.replaceState({}, document.title);
+      }
+      
+      if (locationState.deriveFrom) {
+        toast({
+          title: "파생 검색",
+          description: "이전 검색에서 파생된 통합 검색을 시작합니다.",
+        });
+        // Clear the location state
+        window.history.replaceState({}, document.title);
+      }
+    }
+  }, [location.state, isSearching, currentJobId, toast]);
   
   // Restore jobId from URL query params or sessionStorage on mount
   useEffect(() => {
@@ -457,7 +603,7 @@ const ParallelSearch = () => {
       getUnifiedSearchJobStatus(jobIdToRestore)
         .then((job) => {
           setQuery(job.query);
-          setTimeWindow(job.window);
+          setFilters(prev => ({ ...prev, timeWindow: job.window || prev.timeWindow }));
           setJobStatus(job.status);
           
           if (job.status === "PENDING" || job.status === "IN_PROGRESS") {
@@ -575,10 +721,10 @@ const ParallelSearch = () => {
         })),
         aiSummary,
         durationMs,
-        timeWindow,
+        filters.timeWindow,
       );
     }
-  }, [jobStatus, results, query, aiContent, aiComplete, timeWindow, searchStartTime, saveUnifiedSearch]);
+  }, [jobStatus, results, query, aiContent, aiComplete, filters.timeWindow, searchStartTime, saveUnifiedSearch]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -753,7 +899,7 @@ const ParallelSearch = () => {
         setConnectionStatus("connected");
         setJobStatus(data.status);
         if (data.query) setQuery(data.query);
-        if (data.window) setTimeWindow(data.window);
+        if (data.window) setFilters(prev => ({ ...prev, timeWindow: data.window }));
         
         // Set all sources to "searching" state if job is active
         if (data.status === "PENDING" || data.status === "IN_PROGRESS") {
@@ -802,10 +948,10 @@ const ParallelSearch = () => {
             },
           }));
           
-          // Auto-save new URLs from web source
-          if (source === 'web' && newResult.url) {
-            autoSaveUrl(newResult);
-          }
+          // Auto-save new URLs from web and database sources
+                          if (source !== 'ai' && newResult.url) {
+                            autoSaveUrl(newResult);
+                          }
         }
       } catch (e) {
         console.error("Failed to parse result event:", e);
@@ -953,7 +1099,7 @@ const ParallelSearch = () => {
 
     try {
       // Step 1: Create a new search job
-      const job = await startUnifiedSearchJob(query.trim(), timeWindow);
+      const job = await startUnifiedSearchJob(query.trim(), filters.timeWindow);
       
       setCurrentJobId(job.jobId);
       setJobStatus(job.status);
@@ -1002,7 +1148,7 @@ const ParallelSearch = () => {
         variant: "destructive",
       });
     }
-  }, [query, timeWindow, isSearching, resetState, toast, setupEventHandlers, searchStartTime, saveFailedSearch]);
+  }, [query, filters.timeWindow, isSearching, resetState, toast, setupEventHandlers, searchStartTime, saveFailedSearch]);
 
   const handleCancel = useCallback(() => {
     if (eventSourceRef.current) {
@@ -1135,42 +1281,39 @@ const ParallelSearch = () => {
         <Card className="mb-8">
           <CardContent className="pt-6">
             <form onSubmit={handleSearch} className="space-y-4">
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  <Input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="뉴스 키워드를 입력하세요... (예: AI 기술, 경제 전망, 정치 이슈)"
-                    disabled={isSearching}
-                    className="text-lg h-12"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <select
-                    value={timeWindow}
-                    onChange={(e) => setTimeWindow(e.target.value)}
-                    disabled={isSearching}
-                    className="px-3 py-2 rounded-md border bg-background"
-                  >
-                    <option value="1d">최근 24시간</option>
-                    <option value="7d">최근 7일</option>
-                    <option value="30d">최근 30일</option>
-                  </select>
-                  {isSearching ? (
-                    <Button type="button" variant="outline" onClick={handleCancel}>
-                      취소
-                    </Button>
-                  ) : (
-                    <Button
-                      type="submit"
-                      disabled={!query.trim() || isHealthy === false}
+              <div className="flex flex-col gap-4">
+                {/* 검색 입력 with 제안/자동완성 */}
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="flex-1">
+                    <SearchInputWithSuggestions
+                      value={query}
+                      onChange={setQuery}
+                      onSearch={(q) => {
+                        setQuery(q);
+                        const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+                        handleSearch(fakeEvent);
+                      }}
+                      placeholder="뉴스 키워드를 입력하세요... (예: AI 기술, 경제 전망, 정치 이슈)"
+                      isLoading={isSearching}
+                      disabled={isHealthy === false}
                       size="lg"
-                    >
-                      <Search className="h-4 w-4 mr-2" />
-                      검색
+                      trendingKeywords={["AI", "반도체", "기후변화", "경제", "선거"]}
+                    />
+                  </div>
+                  {isSearching && (
+                    <Button type="button" variant="outline" onClick={handleCancel} className="h-12">
+                      취소
                     </Button>
                   )}
                 </div>
+                
+                {/* 고급 필터 - 컴팩트 모드 */}
+                <AdvancedFilters
+                  filters={filters}
+                  onFiltersChange={setFilters}
+                  disabled={isSearching}
+                  compact
+                />
               </div>
             </form>
           </CardContent>
@@ -1256,16 +1399,44 @@ const ParallelSearch = () => {
                 isComplete={aiComplete}
                 onSave={handleSaveAnalysis}
                 isSaved={isAnalysisSaved}
+                evidence={results}
               />
             )}
 
             {/* Results List */}
             <Card>
               <CardHeader>
-                <CardTitle>검색 결과</CardTitle>
-                <CardDescription>
-                  '{query}'에 대한 검색 결과입니다.
-                </CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>검색 결과</CardTitle>
+                    <CardDescription>
+                      '{query}'에 대한 검색 결과입니다.
+                    </CardDescription>
+                  </div>
+                  <ExportButton
+                    data={results.map(r => ({
+                      id: r.id,
+                      title: r.title,
+                      snippet: r.snippet,
+                      url: r.url,
+                      source: r.source,
+                      publishedAt: r.publishedAt,
+                      reliabilityScore: r.reliabilityScore,
+                      sentimentLabel: r.sentimentLabel,
+                    }))}
+                    options={{
+                      filename: `newsinsight-search-${query.replace(/\s+/g, '-')}`,
+                      title: `"${query}" 검색 결과`,
+                      metadata: {
+                        검색어: query,
+                        총결과: results.length,
+                        DB결과: sourceStatus.database.count,
+                        웹결과: sourceStatus.web.count,
+                      },
+                    }}
+                    disabled={results.length === 0}
+                  />
+                </div>
               </CardHeader>
               <CardContent>
                 <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>

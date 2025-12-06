@@ -30,6 +30,7 @@ public class SearchHistoryService {
 
     private final SearchHistoryRepository searchHistoryRepository;
     private final KafkaTemplate<String, SearchHistoryMessage> searchHistoryKafkaTemplate;
+    private final SearchHistoryEventService searchHistoryEventService;
 
     // Kafka topic for search history
     public static final String SEARCH_HISTORY_TOPIC = "newsinsight.search.history";
@@ -106,6 +107,10 @@ public class SearchHistoryService {
         SearchHistory saved = searchHistoryRepository.save(history);
         log.info("Saved search history: id={}, type={}, query='{}'", 
                 saved.getId(), saved.getSearchType(), saved.getQuery());
+        
+        // Notify SSE subscribers
+        searchHistoryEventService.notifyNewSearch(saved);
+        
         return saved;
     }
 
@@ -144,7 +149,12 @@ public class SearchHistoryService {
             existing.setSuccess(message.getSuccess());
         }
         
-        return searchHistoryRepository.save(existing);
+        SearchHistory updated = searchHistoryRepository.save(existing);
+        
+        // Notify SSE subscribers of update
+        searchHistoryEventService.notifyUpdatedSearch(updated);
+        
+        return updated;
     }
 
     /**
@@ -266,6 +276,9 @@ public class SearchHistoryService {
     public void delete(Long id) {
         searchHistoryRepository.deleteById(id);
         log.info("Deleted search history: id={}", id);
+        
+        // Notify SSE subscribers
+        searchHistoryEventService.notifyDeletedSearch(id);
     }
 
     /**

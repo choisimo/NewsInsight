@@ -99,23 +99,35 @@ spring:
         - id: browser-use-browse
           uri: ${BROWSER_USE_URL:http://localhost:8500}
           predicates:
-            - Path=/browse/**
+            - Path=/api/browser-use/browse/**
+          filters:
+            # /api/browser-use/browse/** -> /browse/** 로 전달
+            - StripPrefix=2
 
         - id: browser-use-jobs
           uri: ${BROWSER_USE_URL:http://localhost:8500}
           predicates:
-            - Path=/jobs/**
+            - Path=/api/browser-use/jobs/**
+          filters:
+            # /api/browser-use/jobs/** -> /jobs/** 로 전달
+            - StripPrefix=2
 
         - id: browser-use-health
           uri: ${BROWSER_USE_URL:http://localhost:8500}
           predicates:
-            - Path=/health
+            - Path=/api/browser-use/health
+          filters:
+            # /api/browser-use/health -> /health 로 전달
+            - StripPrefix=2
 
         # Browser-Use WebSocket
         - id: browser-use-websocket
           uri: ${BROWSER_USE_WS_URL:ws://localhost:8500}
           predicates:
-            - Path=/ws/**
+            - Path=/api/browser-use/ws/**
+          filters:
+            # /api/browser-use/ws/** -> /ws/** 로 전달
+            - StripPrefix=2
 
       # 전역 CORS 설정
       globalcors:
@@ -133,13 +145,12 @@ spring:
             allowCredentials: true
             maxAge: 3600
   
-  # Redis 설정 (Rate Limiting용) - 선택적 의존성
-  # NOTE: Redis 없이도 동작하도록 설정. Redis 도입 시 활성화
-  # data:
-  #   redis:
-  #     host: ${REDIS_HOST:localhost}
-  #     port: ${REDIS_PORT:6379}
-  #     password: ${REDIS_PASSWORD:}
+  # Redis 설정 (Rate Limiting 및 세션 관리용)
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
 
 server:
   port: ${PORT:8000}

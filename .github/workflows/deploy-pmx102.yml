@@ -1,0 +1,411 @@
+# ============================================================================
+# NewsInsight - Deploy to pmx-102-2 Production Server
+# Domain: newsinsight.nodove.com
+# ============================================================================
+
+name: Deploy to Production (pmx-102-2)
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.github/workflows/publish-mkdocs-wiki.yml'
+      - '.github/workflows/deploy-gcp.yml'
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Services to deploy (comma-separated or "all")'
+        required: false
+        default: 'all'
+        type: string
+      force_rebuild:
+        description: 'Force rebuild all images (no cache)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/newsinsight
+
+# Prevent concurrent deployments
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================================
+  # Detect Changed Services
+  # ============================================================================
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.changes.outputs.frontend }}
+      api-gateway: ${{ steps.changes.outputs.api-gateway }}
+      collector-service: ${{ steps.changes.outputs.collector-service }}
+      browser-use-api: ${{ steps.changes.outputs.browser-use-api }}
+      autonomous-crawler: ${{ steps.changes.outputs.autonomous-crawler }}
+      ml-addons: ${{ steps.changes.outputs.ml-addons }}
+      any_changed: ${{ steps.changes.outputs.any_changed }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            api-gateway:
+              - 'backend/api-gateway-service/**'
+              - 'backend/shared-libs/**'
+            collector-service:
+              - 'backend/data-collection-service/**'
+              - 'backend/shared-libs/**'
+            browser-use-api:
+              - 'backend/browser-use/**'
+            autonomous-crawler:
+              - 'backend/autonomous-crawler-service/**'
+            ml-addons:
+              - 'backend/ml-addons/**'
+
+      - name: Check if any service changed
+        id: any_check
+        run: |
+          if [ "${{ steps.changes.outputs.frontend }}" == "true" ] || \
+             [ "${{ steps.changes.outputs.api-gateway }}" == "true" ] || \
+             [ "${{ steps.changes.outputs.collector-service }}" == "true" ] || \
+             [ "${{ steps.changes.outputs.browser-use-api }}" == "true" ] || \
+             [ "${{ steps.changes.outputs.autonomous-crawler }}" == "true" ] || \
+             [ "${{ steps.changes.outputs.ml-addons }}" == "true" ] || \
+             [ "${{ github.event.inputs.services }}" != "" ]; then
+            echo "any_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "any_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ============================================================================
+  # Build and Push Docker Images to GHCR
+  # ============================================================================
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.any_changed == 'true' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: frontend
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
+            condition: frontend
+          - name: api-gateway
+            context: .
+            dockerfile: ./backend/api-gateway-service/Dockerfile
+            condition: api-gateway
+          - name: collector-service
+            context: .
+            dockerfile: ./backend/data-collection-service/Dockerfile
+            condition: collector-service
+          - name: browser-use-api
+            context: ./backend/browser-use
+            dockerfile: ./backend/browser-use/Dockerfile.api
+            condition: browser-use-api
+          - name: autonomous-crawler
+            context: .
+            dockerfile: ./backend/autonomous-crawler-service/Dockerfile
+            condition: autonomous-crawler
+    steps:
+      - name: Check if should build
+        id: should_build
+        run: |
+          SHOULD_BUILD=false
+          if [ "${{ github.event.inputs.services }}" == "all" ]; then
+            SHOULD_BUILD=true
+          elif [ "${{ github.event.inputs.services }}" != "" ] && echo "${{ github.event.inputs.services }}" | grep -q "${{ matrix.name }}"; then
+            SHOULD_BUILD=true
+          elif [ "${{ needs.detect-changes.outputs[matrix.condition] }}" == "true" ]; then
+            SHOULD_BUILD=true
+          fi
+          echo "build=$SHOULD_BUILD" >> $GITHUB_OUTPUT
+
+      - uses: actions/checkout@v4
+        if: steps.should_build.outputs.build == 'true'
+
+      - name: Set up Docker Buildx
+        if: steps.should_build.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: steps.should_build.outputs.build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        if: steps.should_build.outputs.build == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.name }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ github.run_number }}
+
+      - name: Build and push
+        if: steps.should_build.outputs.build == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          no-cache: ${{ github.event.inputs.force_rebuild == 'true' }}
+
+  # ============================================================================
+  # Build ML Addons (separate job due to matrix strategy)
+  # ============================================================================
+  build-ml-addons:
+    name: Build ML Addons
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.ml-addons == 'true' ||
+      github.event.inputs.services == 'all' ||
+      contains(github.event.inputs.services, 'ml-addons')
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        addon: [sentiment, factcheck, bias]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.addon }}-addon
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/ml-addons/${{ matrix.addon }}-addon
+          file: ./backend/ml-addons/${{ matrix.addon }}-addon/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================================================
+  # Deploy to pmx-102-2 Server
+  # ============================================================================
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-images]
+    if: always() && !contains(needs.*.result, 'failure')
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PMX102_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p ${{ secrets.PMX102_PORT }} ${{ secrets.PMX102_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Create deployment directory on server
+        run: |
+          ssh -p ${{ secrets.PMX102_PORT }} -o StrictHostKeyChecking=no ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }} << 'ENDSSH'
+            mkdir -p ~/newsinsight/etc/docker
+            mkdir -p ~/newsinsight/etc/docker/db-init
+          ENDSSH
+
+      - name: Copy deployment files to server
+        run: |
+          # Copy docker-compose file
+          scp -P ${{ secrets.PMX102_PORT }} -o StrictHostKeyChecking=no \
+            etc/docker/docker-compose.production.yml \
+            ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }}:~/newsinsight/etc/docker/
+          
+          # Copy db-init scripts if they exist
+          if [ -d "etc/docker/db-init" ]; then
+            scp -P ${{ secrets.PMX102_PORT }} -r -o StrictHostKeyChecking=no \
+              etc/docker/db-init/* \
+              ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }}:~/newsinsight/etc/docker/db-init/ 2>/dev/null || true
+          fi
+
+      - name: Create .env file on server
+        run: |
+          ssh -p ${{ secrets.PMX102_PORT }} -o StrictHostKeyChecking=no ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }} << ENDSSH
+            cat > ~/newsinsight/etc/docker/.env << 'EOF'
+          # ============================================================================
+          # NewsInsight Production Environment Variables
+          # Generated by GitHub Actions: ${{ github.run_id }}
+          # ============================================================================
+          
+          # Docker Registry
+          REGISTRY=${{ env.REGISTRY }}/${{ github.repository_owner }}
+          TAG=${{ github.sha }}
+          
+          # Cloudflare Tunnel
+          CLOUDFLARE_TUNNEL_TOKEN_PROD=${{ secrets.CLOUDFLARE_TUNNEL_TOKEN_PROD }}
+          
+          # Database Credentials
+          POSTGRES_DB=newsinsight
+          POSTGRES_USER=newsinsight
+          POSTGRES_PASSWORD=${{ secrets.PROD_POSTGRES_PASSWORD }}
+          
+          MONGO_USER=newsinsight
+          MONGO_PASSWORD=${{ secrets.PROD_MONGO_PASSWORD }}
+          
+          REDIS_PASSWORD=${{ secrets.PROD_REDIS_PASSWORD }}
+          
+          # API Keys
+          AIDOVE_WEBHOOK_URL=${{ secrets.AIDOVE_WEBHOOK_URL }}
+          CRAWL4AI_API_TOKEN=${{ secrets.CRAWL4AI_API_TOKEN }}
+          EOF
+          ENDSSH
+
+      - name: Login to GHCR on server
+        run: |
+          ssh -p ${{ secrets.PMX102_PORT }} -o StrictHostKeyChecking=no ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }} << ENDSSH
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          ENDSSH
+
+      - name: Pull latest images
+        run: |
+          ssh -p ${{ secrets.PMX102_PORT }} -o StrictHostKeyChecking=no ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }} << 'ENDSSH'
+            cd ~/newsinsight/etc/docker
+            
+            # Pull all images
+            docker compose -f docker-compose.production.yml pull --ignore-pull-failures
+          ENDSSH
+
+      - name: Deploy services
+        run: |
+          ssh -p ${{ secrets.PMX102_PORT }} -o StrictHostKeyChecking=no ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }} << 'ENDSSH'
+            cd ~/newsinsight/etc/docker
+            
+            # Stop existing services gracefully
+            docker compose -f docker-compose.production.yml down --remove-orphans || true
+            
+            # Start services
+            docker compose -f docker-compose.production.yml up -d
+            
+            # Wait for services to be healthy
+            echo "Waiting for services to start..."
+            sleep 30
+            
+            # Show status
+            docker compose -f docker-compose.production.yml ps
+          ENDSSH
+
+      - name: Health Check
+        run: |
+          echo "Waiting for services to be fully ready..."
+          sleep 60
+          
+          ssh -p ${{ secrets.PMX102_PORT }} -o StrictHostKeyChecking=no ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }} << 'ENDSSH'
+            cd ~/newsinsight/etc/docker
+            
+            echo "=== Service Status ==="
+            docker compose -f docker-compose.production.yml ps
+            
+            echo ""
+            echo "=== Health Checks ==="
+            
+            # Check API Gateway
+            if docker exec newsinsight-prod-api-gateway curl -sf http://localhost:8000/actuator/health > /dev/null 2>&1; then
+              echo "✅ API Gateway: Healthy"
+            else
+              echo "⚠️ API Gateway: Starting or Unhealthy"
+            fi
+            
+            # Check Frontend
+            if docker exec newsinsight-prod-frontend curl -sf http://localhost:80 > /dev/null 2>&1; then
+              echo "✅ Frontend: Healthy"
+            else
+              echo "⚠️ Frontend: Starting or Unhealthy"
+            fi
+            
+            # Check Browser-Use API
+            if docker exec newsinsight-prod-browser-use curl -sf http://localhost:8500/health > /dev/null 2>&1; then
+              echo "✅ Browser-Use API: Healthy"
+            else
+              echo "⚠️ Browser-Use API: Starting or Unhealthy"
+            fi
+          ENDSSH
+
+      - name: Cleanup old images
+        run: |
+          ssh -p ${{ secrets.PMX102_PORT }} -o StrictHostKeyChecking=no ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }} << 'ENDSSH'
+            # Remove unused images
+            docker image prune -f
+            
+            # Keep only last 3 versions of each image
+            for img in api-gateway collector-service browser-use-api autonomous-crawler frontend; do
+              docker images "ghcr.io/*/*/${img}" --format "{{.ID}} {{.CreatedAt}}" | \
+                sort -k2 -r | tail -n +4 | awk '{print $1}' | xargs -r docker rmi 2>/dev/null || true
+            done
+          ENDSSH
+
+  # ============================================================================
+  # Notify Deployment Status
+  # ============================================================================
+  notify:
+    name: Notify Status
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: always()
+    steps:
+      - name: Deployment Success
+        if: needs.deploy.result == 'success'
+        run: |
+          echo "✅ Deployment to pmx-102-2 successful!"
+          echo ""
+          echo "🌐 URL: https://newsinsight.nodove.com"
+          echo "📦 Commit: ${{ github.sha }}"
+          echo "🔢 Run: #${{ github.run_number }}"
+          echo ""
+          echo "Services deployed to production environment."
+
+      - name: Deployment Failed
+        if: needs.deploy.result == 'failure'
+        run: |
+          echo "❌ Deployment to pmx-102-2 failed!"
+          echo ""
+          echo "Please check the logs for details."
+          echo "📦 Commit: ${{ github.sha }}"
+          exit 1

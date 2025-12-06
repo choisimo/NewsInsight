@@ -50,6 +50,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useFactCheckStorage, SavedFactCheckResult } from "@/hooks/useFactCheckStorage";
 import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
+import { UrlClaimExtractor } from "@/components/UrlClaimExtractor";
 import {
   openDeepAnalysisStream,
   checkUnifiedSearchHealth,
@@ -439,6 +440,41 @@ const FactCheck = () => {
       }
     }
   }, [location.state]);
+
+  // Load query from location state (e.g., from Search History page)
+  useEffect(() => {
+    const locationState = location.state as { 
+      query?: string; 
+      fromHistory?: boolean; 
+      historyId?: number;
+      parentSearchId?: number;
+      deriveFrom?: number;
+      depthLevel?: number;
+    } | null;
+    
+    if (locationState?.query && !isAnalyzing) {
+      // Set the query as topic
+      setTopic(locationState.query);
+      
+      if (locationState.fromHistory) {
+        toast({
+          title: "검색 기록에서 연결됨",
+          description: `"${locationState.query}" 주제로 팩트체크를 시작할 수 있습니다.`,
+        });
+        // Clear the location state to prevent showing toast again
+        window.history.replaceState({}, document.title);
+      }
+      
+      if (locationState.deriveFrom) {
+        toast({
+          title: "파생 검색",
+          description: "이전 검색에서 파생된 팩트체크를 시작합니다.",
+        });
+        // Clear the location state
+        window.history.replaceState({}, document.title);
+      }
+    }
+  }, [location.state, isAnalyzing, toast]);
   
   // Remove a priority URL
   const removePriorityUrl = useCallback((id: string) => {
@@ -682,6 +718,20 @@ const FactCheck = () => {
   const updateClaim = useCallback((index: number, value: string) => {
     setClaims((prev) => prev.map((c, i) => (i === index ? value : c)));
   }, []);
+
+  // URL에서 추출된 주장들 적용
+  const handleClaimsFromUrl = useCallback((extractedClaims: string[]) => {
+    // 기존 빈 주장 제거하고 추출된 주장 추가
+    setClaims((prev) => {
+      const nonEmpty = prev.filter((c) => c.trim());
+      return [...nonEmpty, ...extractedClaims];
+    });
+    
+    toast({
+      title: "주장 추출 완료",
+      description: `${extractedClaims.length}개의 주장이 추가되었습니다.`,
+    });
+  }, [toast]);
 
   const handleAnalyze = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1103,6 +1153,12 @@ const FactCheck = () => {
                   검증하고자 하는 전체 주제를 입력하세요.
                 </p>
               </div>
+
+              {/* URL Claim Extractor */}
+              <UrlClaimExtractor
+                onClaimsExtracted={handleClaimsFromUrl}
+                disabled={isAnalyzing}
+              />
 
               {/* Claims */}
               <div>
