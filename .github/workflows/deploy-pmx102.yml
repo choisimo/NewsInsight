@@ -318,14 +318,33 @@ jobs:
 
       - name: Deploy services
         run: |
-          ssh -p ${{ secrets.PMX102_PORT }} -o StrictHostKeyChecking=no ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }} << 'ENDSSH'
+          ssh -p ${{ secrets.PMX102_PORT }} -o ConnectTimeout=30 -o ServerAliveInterval=60 -o StrictHostKeyChecking=no ${{ secrets.PMX102_USER }}@${{ secrets.PMX102_HOST }} << 'ENDSSH'
             cd ~/newsinsight/etc/docker
             
             # Stop existing services gracefully
             docker compose -f docker-compose.production.yml down --remove-orphans || true
             
-            # Start services
-            docker compose -f docker-compose.production.yml up -d
+            # Start services with retry logic
+            MAX_RETRIES=3
+            RETRY_COUNT=0
+            
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              echo "Attempting deployment (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
+              
+              if docker compose -f docker-compose.production.yml up -d; then
+                echo "Services started successfully"
+                break
+              else
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                  echo "Deployment failed, retrying in 10 seconds..."
+                  sleep 10
+                else
+                  echo "Deployment failed after $MAX_RETRIES attempts"
+                  exit 1
+                fi
+              fi
+            done
             
             # Wait for services to be healthy
             echo "Waiting for services to start..."
