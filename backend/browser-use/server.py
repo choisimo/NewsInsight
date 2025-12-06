@@ -258,6 +258,102 @@ async def get_current_url(browser_session: Optional[BrowserSession]) -> Optional
     return None
 
 
+async def _detect_captcha_on_page(browser_session: Optional[BrowserSession]) -> Optional[str]:
+    """
+    Detect CAPTCHA on the current page by checking for common CAPTCHA indicators.
+    
+    Returns the type of CAPTCHA detected, or None if no CAPTCHA found.
+    """
+    if not browser_session:
+        return None
+    
+    try:
+        context = getattr(browser_session, '_context', None)
+        if not context:
+            return None
+        
+        pages = context.pages
+        if not pages:
+            return None
+        
+        page = pages[0]
+        
+        # JavaScript to detect various CAPTCHA types
+        detection_script = """
+        () => {
+            const indicators = [];
+            
+            // Check for reCAPTCHA
+            if (document.querySelector('.g-recaptcha') || 
+                document.querySelector('[data-sitekey]') ||
+                document.querySelector('iframe[src*="recaptcha"]') ||
+                document.querySelector('#recaptcha') ||
+                document.querySelector('.recaptcha-checkbox')) {
+                indicators.push('reCAPTCHA');
+            }
+            
+            // Check for hCaptcha
+            if (document.querySelector('.h-captcha') ||
+                document.querySelector('[data-hcaptcha-widget-id]') ||
+                document.querySelector('iframe[src*="hcaptcha"]')) {
+                indicators.push('hCaptcha');
+            }
+            
+            // Check for Cloudflare Turnstile
+            if (document.querySelector('.cf-turnstile') ||
+                document.querySelector('[data-turnstile-widget-id]') ||
+                document.querySelector('iframe[src*="turnstile"]') ||
+                document.querySelector('iframe[src*="challenges.cloudflare"]')) {
+                indicators.push('Cloudflare Turnstile');
+            }
+            
+            // Check for Cloudflare challenge page
+            if (document.querySelector('#challenge-running') ||
+                document.querySelector('#challenge-form') ||
+                document.querySelector('.cf-browser-verification') ||
+                document.title.includes('Just a moment') ||
+                document.body.textContent.includes('Checking your browser') ||
+                document.body.textContent.includes('Please wait while we verify')) {
+                indicators.push('Cloudflare Challenge');
+            }
+            
+            // Check for generic CAPTCHA indicators
+            const bodyText = document.body.textContent.toLowerCase();
+            if (bodyText.includes('verify you are human') ||
+                bodyText.includes('prove you are human') ||
+                bodyText.includes('robot verification') ||
+                bodyText.includes('are you a robot') ||
+                bodyText.includes('security check')) {
+                indicators.push('Generic CAPTCHA');
+            }
+            
+            // Check for FunCaptcha / Arkose Labs
+            if (document.querySelector('#fc-iframe-wrap') ||
+                document.querySelector('[data-fc-payload]') ||
+                document.querySelector('iframe[src*="funcaptcha"]') ||
+                document.querySelector('iframe[src*="arkoselabs"]')) {
+                indicators.push('FunCaptcha');
+            }
+            
+            // Check for access denied / blocked pages
+            if (document.body.textContent.includes('Access Denied') ||
+                document.body.textContent.includes('403 Forbidden') ||
+                document.body.textContent.includes('Your access to this site has been limited')) {
+                indicators.push('Access Blocked');
+            }
+            
+            return indicators.length > 0 ? indicators.join(', ') : null;
+        }
+        """
+        
+        result = await page.evaluate(detection_script)
+        return result
+        
+    except Exception as e:
+        logger.warning(f"CAPTCHA detection failed: {e}")
+        return None
+
+
 async def request_human_intervention(
     job: Job,
     intervention_type: InterventionType,
@@ -417,7 +513,7 @@ async def run_browser_task(job: Job):
             full_task += """
 
 IMPORTANT: If you encounter any of these situations, clearly state the issue:
-- CAPTCHA or verification challenges
+- CAPTCHA or verification challenges (reCAPTCHA, hCaptcha, Cloudflare Turnstile)
 - Login required
 - Page not loading correctly  
 - Cannot find expected content
@@ -425,6 +521,13 @@ IMPORTANT: If you encounter any of these situations, clearly state the issue:
 - Any blocking issue
 
 State the problem clearly so a human operator can assist."""
+
+        # CAPTCHA detection patterns for automatic intervention
+        captcha_patterns = [
+            "recaptcha", "hcaptcha", "captcha", "turnstile",
+            "challenge", "verification", "verify you are human",
+            "cloudflare", "checking your browser", "access denied"
+        ]
 
         # Create agent
         agent = Agent(
@@ -441,6 +544,7 @@ State the problem clearly so a human operator can assist."""
         async def screenshot_broadcaster():
             """Periodically capture and broadcast screenshots while job is running."""
             step_count = 0
+            captcha_check_count = 0
             while screenshot_task_running and job.status == JobStatus.RUNNING:
                 try:
                     # Capture current state
@@ -463,6 +567,25 @@ State the problem clearly so a human operator can assist."""
                             "screenshot": screenshot,
                         })
                         logger.info(f"Job {job.id}: Broadcast screenshot (step {step_count})")
+                    
+                    # Auto-detect CAPTCHA and request human intervention
+                    if job.enable_human_intervention and job.auto_request_intervention:
+                        captcha_detected = await _detect_captcha_on_page(job.browser_session)
+                        if captcha_detected:
+                            captcha_check_count += 1
+                            # Only request intervention if CAPTCHA persists (avoid false positives)
+                            if captcha_check_count >= 2:
+                                logger.info(f"Job {job.id}: CAPTCHA detected, requesting human intervention")
+                                await request_human_intervention(
+                                    job,
+                                    InterventionType.CAPTCHA,
+                                    f"CAPTCHA detected: {captcha_detected}. Please solve the verification challenge.",
+                                    ["Click on CAPTCHA", "Solve verification", "Skip if possible"]
+                                )
+                                captcha_check_count = 0  # Reset after requesting
+                        else:
+                            captcha_check_count = 0  # Reset if no CAPTCHA
+                            
                 except Exception as e:
                     logger.warning(f"Screenshot broadcast error: {e}")
                 

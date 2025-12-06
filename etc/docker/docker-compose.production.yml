@@ -192,6 +192,8 @@ services:
       SPRING_CLOUD_CONSUL_PORT: 8500
       SPRING_KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
       BROWSER_USE_API_URL: http://browser-use-api:8500
+      BROWSER_USE_URL: http://browser-use-api:8500
+      BROWSER_USE_WS_URL: ws://browser-use-api:8500
       WEB_CRAWLER_URL: http://web-crawler:11235
       AUTONOMOUS_CRAWLER_URL: http://autonomous-crawler:9090
       FRONTEND_API_BASE_URL: https://newsinsight.nodove.com
