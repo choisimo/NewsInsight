@@ -417,8 +417,8 @@ const BrowserAgent = () => {
   const [historyDetailOpen, setHistoryDetailOpen] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<"all" | "completed" | "failed">("all");
   
-  // Auto-save URL to collection
-  const autoSaveVisitedUrl = useCallback((visitedUrl: string) => {
+  // Auto-save URL to collection with citation metadata
+  const autoSaveVisitedUrl = useCallback((visitedUrl: string, pageTitle?: string) => {
     if (!autoSaveUrls || !visitedUrl) return;
     
     // Skip if already saved in this session or in collection
@@ -453,20 +453,26 @@ const BrowserAgent = () => {
       agentFolderId = agentFolder.id;
     }
     
-    // Extract title from URL if possible
-    let title: string | undefined;
+    // Extract title from URL if not provided
+    let title: string | undefined = pageTitle;
     try {
-      const urlObj = new URL(visitedUrl);
-      title = urlObj.hostname + urlObj.pathname.slice(0, 50);
+      if (!title) {
+        const urlObj = new URL(visitedUrl);
+        title = urlObj.hostname + urlObj.pathname.slice(0, 50);
+      }
     } catch {
       // Ignore URL parse errors
     }
     
-    // Add URL to collection
-    addUrl(agentFolderId, visitedUrl, title);
+    // Add URL with citation metadata
+    addUrl(agentFolderId, visitedUrl, title, undefined, undefined, {
+      sourceType: 'browser_agent',
+      sourceQuery: task,
+      citationIndex: savedUrlsRef.current.size + 1,
+    });
     savedUrlsRef.current.add(visitedUrl);
     setSavedUrlCount(prev => prev + 1);
-  }, [autoSaveUrls, urlExists, collection.root.children, addFolder, addUrl]);
+  }, [autoSaveUrls, urlExists, collection.root.children, addFolder, addUrl, task]);
 
   // Health check
   const { data: health } = useQuery({

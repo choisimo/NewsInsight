@@ -13,7 +13,27 @@ export interface UrlItem {
   tags?: string[];
   createdAt: string;
   lastAnalyzedAt?: string;
+  // Citation metadata
+  citationIndex?: number;       // [1], [2], etc. for reference
+  sourceType?: 'browser_agent' | 'deep_search' | 'unified_search' | 'fact_check' | 'manual';
+  sourceQuery?: string;         // Original search query that found this URL
+  snippet?: string;             // Text snippet from the page
+  accessedAt?: string;          // When the URL was accessed
+  category?: UrlCategory;       // Auto-classified category
+  reliability?: 'high' | 'medium' | 'low' | 'unknown';
 }
+
+export type UrlCategory = 
+  | 'news'           // News articles
+  | 'academic'       // Academic papers, research
+  | 'government'     // Government sites
+  | 'social'         // Social media
+  | 'blog'           // Blogs, personal sites
+  | 'corporate'      // Corporate/business sites
+  | 'wiki'           // Wikipedia and wikis
+  | 'forum'          // Forums, discussion boards
+  | 'ecommerce'      // Shopping sites
+  | 'other';         // Uncategorized
 
 export interface FolderItem {
   id: string;
@@ -69,6 +89,111 @@ const STORAGE_KEY = 'newsinsight-url-collection';
 
 // Deep clone utility
 const deepClone = <T>(obj: T): T => JSON.parse(JSON.stringify(obj));
+
+// URL category classification patterns
+const CATEGORY_PATTERNS: Array<{ pattern: RegExp; category: UrlCategory }> = [
+  // News sites
+  { pattern: /\b(news|times|post|journal|herald|gazette|tribune|reporter|press|daily|bbc|cnn|reuters|ap|nytimes|washingtonpost|guardian)\b/i, category: 'news' },
+  { pattern: /\.(news|media)$/i, category: 'news' },
+  // Academic
+  { pattern: /\b(arxiv|scholar|pubmed|ncbi|doi|jstor|researchgate|academia|edu|science|nature|ieee|acm)\b/i, category: 'academic' },
+  { pattern: /\.edu$/i, category: 'academic' },
+  // Government
+  { pattern: /\b(gov|government|congress|senate|whitehouse|state\.gov|justice|fda|cdc|nih)\b/i, category: 'government' },
+  { pattern: /\.gov$/i, category: 'government' },
+  // Social media
+  { pattern: /\b(twitter|x\.com|facebook|instagram|tiktok|linkedin|reddit|threads|mastodon|bluesky)\b/i, category: 'social' },
+  // Wikipedia/Wiki
+  { pattern: /\b(wikipedia|wiki|wikimedia|wiktionary)\b/i, category: 'wiki' },
+  // Forums
+  { pattern: /\b(forum|community|discuss|stackexchange|stackoverflow|quora|answers)\b/i, category: 'forum' },
+  // Blogs
+  { pattern: /\b(blog|medium|substack|wordpress|blogger|tumblr|ghost)\b/i, category: 'blog' },
+  // Corporate
+  { pattern: /\b(about|company|corporate|enterprise|business|inc|corp|ltd)\b/i, category: 'corporate' },
+  // E-commerce
+  { pattern: /\b(amazon|ebay|shop|store|buy|cart|checkout|alibaba|etsy)\b/i, category: 'ecommerce' },
+];
+
+// Reliability patterns
+const HIGH_RELIABILITY_PATTERNS = [
+  /\.gov$/i,
+  /\.edu$/i,
+  /\b(reuters|ap|bbc|npr|pbs)\b/i,
+  /\b(nature|science|pubmed|arxiv)\b/i,
+];
+
+const LOW_RELIABILITY_PATTERNS = [
+  /\b(blog|tumblr|wordpress\.com|medium\.com)\b/i,
+  /\b(reddit|twitter|facebook|tiktok)\b/i,
+  /\b(forum|community)\b/i,
+];
+
+/**
+ * Auto-classify URL category based on domain and path
+ */
+const classifyUrl = (url: string): { category: UrlCategory; reliability: 'high' | 'medium' | 'low' | 'unknown' } => {
+  try {
+    const urlObj = new URL(url);
+    const fullUrl = urlObj.hostname + urlObj.pathname;
+    
+    // Determine category
+    let category: UrlCategory = 'other';
+    for (const { pattern, category: cat } of CATEGORY_PATTERNS) {
+      if (pattern.test(fullUrl)) {
+        category = cat;
+        break;
+      }
+    }
+    
+    // Determine reliability
+    let reliability: 'high' | 'medium' | 'low' | 'unknown' = 'unknown';
+    if (HIGH_RELIABILITY_PATTERNS.some(p => p.test(fullUrl))) {
+      reliability = 'high';
+    } else if (LOW_RELIABILITY_PATTERNS.some(p => p.test(fullUrl))) {
+      reliability = 'low';
+    } else if (category === 'news' || category === 'academic' || category === 'government') {
+      reliability = 'medium';
+    }
+    
+    return { category, reliability };
+  } catch {
+    return { category: 'other', reliability: 'unknown' };
+  }
+};
+
+/**
+ * Generate auto-tags based on URL
+ */
+const generateAutoTags = (url: string, category: UrlCategory): string[] => {
+  const tags: string[] = [];
+  
+  // Add category tag
+  tags.push(category);
+  
+  try {
+    const urlObj = new URL(url);
+    
+    // Add domain as tag
+    const domain = urlObj.hostname.replace('www.', '').split('.')[0];
+    if (domain.length > 2) {
+      tags.push(domain);
+    }
+    
+    // Extract keywords from path
+    const pathParts = urlObj.pathname.split('/').filter(p => p.length > 3);
+    for (const part of pathParts.slice(0, 2)) {
+      // Skip common path segments
+      if (!['article', 'post', 'page', 'index', 'category'].includes(part.toLowerCase())) {
+        tags.push(part.toLowerCase().replace(/[^a-z0-9]/g, '-'));
+      }
+    }
+  } catch {
+    // Ignore URL parse errors
+  }
+  
+  return [...new Set(tags)].slice(0, 5); // Dedupe and limit to 5 tags
+};
 
 // Find item in tree
 const findItemInTree = (
@@ -218,16 +343,30 @@ export function useUrlCollection() {
     url: string,
     name?: string,
     description?: string,
-    tags?: string[]
+    tags?: string[],
+    sourceMetadata?: {
+      sourceType?: UrlItem['sourceType'];
+      sourceQuery?: string;
+      snippet?: string;
+      citationIndex?: number;
+    }
   ) => {
+    // Auto-classify URL
+    const { category, reliability } = classifyUrl(url);
+    const autoTags = generateAutoTags(url, category);
+    
     const newUrl: UrlItem = {
       id: generateId(),
       type: 'url',
       name: name || new URL(url).hostname,
       url,
       description,
-      tags,
+      tags: tags ? [...new Set([...tags, ...autoTags])] : autoTags,
       createdAt: new Date().toISOString(),
+      accessedAt: new Date().toISOString(),
+      category,
+      reliability,
+      ...sourceMetadata,
     };
 
     updateCollection(col => {
@@ -248,7 +387,15 @@ export function useUrlCollection() {
   // Add multiple URLs at once
   const addUrls = useCallback((
     parentId: string,
-    urls: Array<{ url: string; name?: string; description?: string; tags?: string[] }>
+    urls: Array<{ 
+      url: string; 
+      name?: string; 
+      description?: string; 
+      tags?: string[];
+      sourceType?: UrlItem['sourceType'];
+      sourceQuery?: string;
+      snippet?: string;
+    }>
   ) => {
     updateCollection(col => {
       const parent = parentId === 'root' 
@@ -256,15 +403,29 @@ export function useUrlCollection() {
         : findFolderById([col.root], parentId);
       
       if (parent) {
+        // Get current citation index for this session
+        let citationIndex = parent.children.filter(c => c.type === 'url').length + 1;
+        
         for (const urlData of urls) {
+          // Auto-classify
+          const { category, reliability } = classifyUrl(urlData.url);
+          const autoTags = generateAutoTags(urlData.url, category);
+          
           const newUrl: UrlItem = {
             id: generateId(),
             type: 'url',
             name: urlData.name || new URL(urlData.url).hostname,
             url: urlData.url,
             description: urlData.description,
-            tags: urlData.tags,
+            tags: urlData.tags ? [...new Set([...urlData.tags, ...autoTags])] : autoTags,
             createdAt: new Date().toISOString(),
+            accessedAt: new Date().toISOString(),
+            category,
+            reliability,
+            sourceType: urlData.sourceType,
+            sourceQuery: urlData.sourceQuery,
+            snippet: urlData.snippet,
+            citationIndex: citationIndex++,
           };
           parent.children.push(newUrl);
         }
@@ -272,6 +433,107 @@ export function useUrlCollection() {
       return col;
     });
   }, [updateCollection]);
+
+  // Add URL with full citation metadata (for search results)
+  const addCitation = useCallback((
+    parentId: string,
+    citation: {
+      url: string;
+      title?: string;
+      snippet?: string;
+      sourceType: UrlItem['sourceType'];
+      sourceQuery: string;
+      reliability?: 'high' | 'medium' | 'low';
+    }
+  ) => {
+    const { category, reliability: autoReliability } = classifyUrl(citation.url);
+    const autoTags = generateAutoTags(citation.url, category);
+    
+    // Get next citation index
+    const parent = parentId === 'root' 
+      ? collection.root 
+      : findFolderById([collection.root], parentId);
+    const citationIndex = parent 
+      ? parent.children.filter(c => c.type === 'url').length + 1 
+      : 1;
+    
+    const newUrl: UrlItem = {
+      id: generateId(),
+      type: 'url',
+      name: citation.title || new URL(citation.url).hostname,
+      url: citation.url,
+      description: citation.snippet,
+      snippet: citation.snippet,
+      tags: autoTags,
+      createdAt: new Date().toISOString(),
+      accessedAt: new Date().toISOString(),
+      category,
+      reliability: citation.reliability || autoReliability,
+      sourceType: citation.sourceType,
+      sourceQuery: citation.sourceQuery,
+      citationIndex,
+    };
+
+    updateCollection(col => {
+      const targetParent = parentId === 'root' 
+        ? col.root 
+        : findFolderById([col.root], parentId);
+      if (targetParent) {
+        targetParent.children.push(newUrl);
+      }
+      return col;
+    });
+
+    return { id: newUrl.id, citationIndex };
+  }, [collection.root, updateCollection]);
+
+  // Get citations for a specific search query
+  const getCitationsForQuery = useCallback((sourceQuery: string): UrlItem[] => {
+    const citations: UrlItem[] = [];
+    const findCitations = (items: TreeItem[]) => {
+      for (const item of items) {
+        if (item.type === 'url' && item.sourceQuery === sourceQuery) {
+          citations.push(item);
+        } else if (item.type === 'folder') {
+          findCitations(item.children);
+        }
+      }
+    };
+    findCitations([collection.root]);
+    return citations.sort((a, b) => (a.citationIndex || 0) - (b.citationIndex || 0));
+  }, [collection.root]);
+
+  // Get URLs by category
+  const getUrlsByCategory = useCallback((category: UrlCategory): UrlItem[] => {
+    const urls: UrlItem[] = [];
+    const findUrls = (items: TreeItem[]) => {
+      for (const item of items) {
+        if (item.type === 'url' && item.category === category) {
+          urls.push(item);
+        } else if (item.type === 'folder') {
+          findUrls(item.children);
+        }
+      }
+    };
+    findUrls([collection.root]);
+    return urls;
+  }, [collection.root]);
+
+  // Get URLs by reliability
+  const getUrlsByReliability = useCallback((reliability: 'high' | 'medium' | 'low'): UrlItem[] => {
+    const urls: UrlItem[] = [];
+    const findUrls = (items: TreeItem[]) => {
+      for (const item of items) {
+        if (item.type === 'url' && item.reliability === reliability) {
+          urls.push(item);
+        } else if (item.type === 'folder') {
+          findUrls(item.children);
+        }
+      }
+    };
+    findUrls([collection.root]);
+    return urls;
+  }, [collection.root]);
 
   // Update item
   const updateItem = useCallback((id: string, updates: Partial<UrlItem | FolderItem>) => {
@@ -532,6 +794,7 @@ export function useUrlCollection() {
     addFolder,
     addUrl,
     addUrls,
+    addCitation,
     updateItem,
     deleteItem,
     moveItem,
@@ -546,6 +809,9 @@ export function useUrlCollection() {
     getSelectedUrls,
     urlExists,
     getAllUrls,
+    getCitationsForQuery,
+    getUrlsByCategory,
+    getUrlsByReliability,
     
     // Import/Export
     exportToJson,
@@ -555,6 +821,10 @@ export function useUrlCollection() {
     // Misc
     resetCollection,
     markAsAnalyzed,
+    
+    // Utilities (expose for external use)
+    classifyUrl: (url: string) => classifyUrl(url),
+    generateAutoTags: (url: string, category: UrlCategory) => generateAutoTags(url, category),
   };
 }
 
