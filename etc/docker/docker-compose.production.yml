@@ -1,0 +1,431 @@
+# ============================================================================
+# NewsInsight Production Docker Compose
+# Target: pmx-102-2 remote server
+# Domain: newsinsight.nodove.com
+# ============================================================================
+
+networks:
+  newsinsight-prod:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_prod_data:
+  mongo_prod_data:
+  redis_prod_data:
+  consul_prod_data:
+
+services:
+  # ============================================================================
+  # Cloudflare Tunnel - newsinsight.nodove.com
+  # 단일 엔드포인트 (Frontend)로 모든 트래픽 전달
+  # Frontend nginx가 /api/* → api-gateway로 내부 라우팅
+  # ============================================================================
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: newsinsight-prod-cloudflared
+    restart: unless-stopped
+    command: tunnel --protocol http2 run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN_PROD}
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.2
+    depends_on:
+      frontend:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # Infrastructure Services
+  # ============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: newsinsight-prod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-newsinsight}
+      POSTGRES_USER: ${POSTGRES_USER:-newsinsight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-newsinsight}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mongo:
+    image: mongo:7
+    container_name: newsinsight-prod-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-newsinsight}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: newsinsight
+    volumes:
+      - mongo_prod_data:/data/db
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.11
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: newsinsight-prod-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_prod_data:/data
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.12
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  consul:
+    image: hashicorp/consul:1.18
+    container_name: newsinsight-prod-consul
+    restart: unless-stopped
+    command: agent -server -ui -node=server-1 -bootstrap-expect=1 -client=0.0.0.0 -bind=0.0.0.0
+    volumes:
+      - consul_prod_data:/consul/data
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.13
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    container_name: newsinsight-prod-redpanda
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode dev-container
+      - --smp 1
+      - --memory 512M
+      - --default-log-level=warn
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.14
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # Application Services
+  # ============================================================================
+  api-gateway:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/api-gateway:${TAG:-latest}
+    container_name: newsinsight-prod-api-gateway
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-newsinsight}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-newsinsight}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      SPRING_DATA_MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SPRING_CLOUD_CONSUL_HOST: consul
+      SPRING_CLOUD_CONSUL_PORT: 8500
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      BROWSER_USE_API_URL: http://browser-use-api:8500
+      WEB_CRAWLER_URL: http://web-crawler:11235
+      AUTONOMOUS_CRAWLER_URL: http://autonomous-crawler:9090
+      FRONTEND_API_BASE_URL: https://newsinsight.nodove.com
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.20
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  collector-service:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/collector-service:${TAG:-latest}
+    container_name: newsinsight-prod-collector
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-newsinsight}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-newsinsight}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      SPRING_DATA_MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      SPRING_CLOUD_CONSUL_HOST: consul
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.21
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  browser-use-api:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/browser-use-api:${TAG:-latest}
+    container_name: newsinsight-prod-browser-use
+    restart: unless-stopped
+    environment:
+      AIDOVE_WEBHOOK_URL: ${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
+      PYTHONUNBUFFERED: "1"
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.22
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web-crawler:
+    image: unclecode/crawl4ai:latest
+    container_name: newsinsight-prod-web-crawler
+    restart: unless-stopped
+    environment:
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_API_TOKEN:-newsinsight-crawler}
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.23
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  autonomous-crawler:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/autonomous-crawler:${TAG:-latest}
+    container_name: newsinsight-prod-autonomous-crawler
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsinsight}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-newsinsight}
+      MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      BROWSER_USE_API_URL: http://browser-use-api:8500
+      WEB_CRAWLER_URL: http://web-crawler:11235
+      AIDOVE_API_KEY: ${AIDOVE_API_KEY}
+      AIDOVE_API_BASE_URL: ${AIDOVE_API_BASE_URL:-https://ai.nodove.com}
+      LOG_LEVEL: INFO
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.24
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      browser-use-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # Frontend - 단일 진입점, nginx가 내부 라우팅 담당
+  # ============================================================================
+  frontend:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/frontend:${TAG:-latest}
+    container_name: newsinsight-prod-frontend
+    restart: unless-stopped
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.30
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # ML Addons (Optional - can be enabled when needed)
+  # ============================================================================
+  sentiment-addon:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/sentiment-addon:${TAG:-latest}
+    container_name: newsinsight-prod-sentiment
+    restart: unless-stopped
+    profiles: ["ml-addons"]
+    environment:
+      MODEL_NAME: ${SENTIMENT_MODEL:-cardiffnlp/twitter-roberta-base-sentiment-latest}
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.40
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  factcheck-addon:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/factcheck-addon:${TAG:-latest}
+    container_name: newsinsight-prod-factcheck
+    restart: unless-stopped
+    profiles: ["ml-addons"]
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.41
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bias-addon:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/bias-addon:${TAG:-latest}
+    container_name: newsinsight-prod-bias
+    restart: unless-stopped
+    profiles: ["ml-addons"]
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.42
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8102/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
