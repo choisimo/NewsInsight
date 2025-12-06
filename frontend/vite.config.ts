@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host: "::",
       port: 8080,
-      allowedHosts: ["news.nodove.com", "localhost", "127.0.0.1"],
+      allowedHosts: ["news.nodove.com", "localhost", "127.0.0.1", "frontend"],
       // Cloudflare Tunnel 환경에서 CORS 허용
       cors: true,
       // HMR 설정 - Cloudflare Tunnel을 통한 WebSocket 연결
