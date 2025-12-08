@@ -48,6 +48,10 @@ public class CrawlJob {
     @Column(name = "error_message", length = 1024)
     private String errorMessage;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "failure_reason", length = 64)
+    private CrawlFailureReason failureReason;
+
     @Column(name = "callback_received")
     @Builder.Default
     private Boolean callbackReceived = false;
@@ -77,8 +81,36 @@ public class CrawlJob {
      * Mark the job as failed
      */
     public void markFailed(String errorMessage) {
+        markFailed(errorMessage, CrawlFailureReason.fromErrorMessage(errorMessage));
+    }
+
+    /**
+     * Mark the job as failed with a specific failure reason
+     */
+    public void markFailed(String errorMessage, CrawlFailureReason failureReason) {
         this.status = CrawlJobStatus.FAILED;
         this.errorMessage = errorMessage;
+        this.failureReason = failureReason;
+        this.completedAt = LocalDateTime.now();
+        this.callbackReceived = true;
+    }
+
+    /**
+     * Mark the job as failed from an exception
+     */
+    public void markFailedFromException(Throwable e) {
+        CrawlFailureReason reason = CrawlFailureReason.fromException(e);
+        String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+        markFailed(message, reason);
+    }
+
+    /**
+     * Mark the job as timed out with a specific reason
+     */
+    public void markTimedOut(CrawlFailureReason timeoutReason) {
+        this.status = CrawlJobStatus.TIMEOUT;
+        this.errorMessage = timeoutReason.getDescription();
+        this.failureReason = timeoutReason;
         this.completedAt = LocalDateTime.now();
         this.callbackReceived = true;
     }

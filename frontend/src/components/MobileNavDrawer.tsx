@@ -14,8 +14,10 @@ import {
   Sun,
   Home,
   Command,
+  Brain,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { useTheme } from "@/contexts/ThemeContext";
 import { cn } from "@/lib/utils";
@@ -25,11 +27,13 @@ interface NavItem {
   label: string;
   icon: typeof Search;
   color?: string;
+  badge?: string;
 }
 
 const navItems: NavItem[] = [
-  { href: "/", label: "홈", icon: Home },
-  { href: "/deep-search", label: "Deep Search", icon: Sparkles, color: "text-purple-600" },
+  { href: "/smart-search", label: "스마트 검색", icon: Sparkles, color: "text-primary", badge: "NEW" },
+  { href: "/", label: "통합 검색", icon: Search },
+  { href: "/deep-search", label: "Deep Search", icon: Brain, color: "text-purple-600" },
   { href: "/fact-check", label: "팩트체크", icon: Shield, color: "text-green-600" },
   { href: "/ai-agent", label: "브라우저 에이전트", icon: Bot, color: "text-blue-600" },
   { href: "/url-collections", label: "URL 컬렉션", icon: FolderOpen, color: "text-orange-600" },
@@ -109,6 +113,11 @@ export function MobileNavDrawer({ className }: MobileNavDrawerProps) {
                     >
                       <Icon className={cn("h-5 w-5", item.color)} />
                       <span>{item.label}</span>
+                      {item.badge && (
+                        <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0">
+                          {item.badge}
+                        </Badge>
+                      )}
                     </Link>
                   </li>
                 );

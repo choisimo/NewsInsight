@@ -3,7 +3,6 @@ import {
   Link as LinkIcon,
   Loader2,
   AlertCircle,
-  CheckCircle2,
   X,
   Sparkles,
   FileText,
@@ -16,8 +15,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { extractClaimsFromUrl } from "@/lib/api";
 
 interface ExtractedClaim {
   id: string;
@@ -64,7 +63,7 @@ export function UrlClaimExtractor({
   const [error, setError] = useState<string | null>(null);
   const [pageTitle, setPageTitle] = useState<string | null>(null);
 
-  // URL에서 주장 추출 (Mock - 실제로는 API 호출)
+  // URL에서 주장 추출 - 실제 백엔드 API 호출
   const extractClaims = useCallback(async () => {
     if (!url.trim() || !isValidUrl(url)) {
       setError("올바른 URL을 입력해주세요.");
@@ -77,91 +76,40 @@ export function UrlClaimExtractor({
     setPageTitle(null);
 
     try {
-      // API 호출 - 실제 구현 시 백엔드 API로 대체
-      const response = await fetch(`/api/v1/analysis/extract-claims`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ url: url.trim() }),
+      // 실제 백엔드 API 호출
+      const response = await extractClaimsFromUrl({ 
+        url: url.trim(),
+        maxClaims: 10,
+        minConfidence: 0.5
       });
-
-      if (!response.ok) {
-        // Mock fallback for development
-        if (response.status === 404) {
-          // Demo mode - generate sample claims
-          await simulateExtraction();
-          return;
-        }
-        throw new Error(`추출 실패: ${response.status}`);
+      
+      if (response.message && response.claims.length === 0) {
+        setError(response.message);
+        return;
       }
 
-      const data = await response.json();
-      
-      if (data.claims && Array.isArray(data.claims)) {
+      if (response.claims && Array.isArray(response.claims)) {
         setExtractedClaims(
-          data.claims.map((claim: { text: string; confidence?: number; context?: string }, i: number) => ({
-            id: `claim-${i}`,
+          response.claims.map((claim) => ({
+            id: claim.id,
             text: claim.text,
             confidence: claim.confidence || 0.7,
             context: claim.context,
             selected: true, // 기본적으로 모두 선택
           }))
         );
-        setPageTitle(data.pageTitle || null);
+        setPageTitle(response.pageTitle || null);
       } else {
-        throw new Error("주장을 추출할 수 없습니다.");
+        setError("주장을 추출할 수 없습니다.");
       }
     } catch (err) {
       console.error("Claim extraction failed:", err);
-      // Fallback to simulation for demo
-      await simulateExtraction();
+      const errorMessage = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
+      setError(`주장 추출 실패: ${errorMessage}`);
     } finally {
       setIsExtracting(false);
     }
   }, [url]);
-
-  // 시뮬레이션 (데모/개발용)
-  const simulateExtraction = async () => {
-    // 실제 URL에서 도메인 추출
-    let domain = "example.com";
-    try {
-      domain = new URL(url).hostname;
-    } catch {
-      // ignore
-    }
-
-    // 시뮬레이션 딜레이
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // URL 기반 샘플 주장 생성
-    const sampleClaims: ExtractedClaim[] = [
-      {
-        id: "claim-1",
-        text: `해당 기사에서 주장하는 핵심 내용이 여기에 표시됩니다.`,
-        confidence: 0.92,
-        context: "기사 본문 첫 번째 단락에서 추출",
-        selected: true,
-      },
-      {
-        id: "claim-2",
-        text: `통계적 수치나 구체적인 데이터를 포함한 주장이 추출됩니다.`,
-        confidence: 0.85,
-        context: "기사 내 데이터 섹션에서 추출",
-        selected: true,
-      },
-      {
-        id: "claim-3",
-        text: `전문가 인용이나 연구 결과에 기반한 주장입니다.`,
-        confidence: 0.78,
-        context: "인용문에서 추출",
-        selected: true,
-      },
-    ];
-
-    setExtractedClaims(sampleClaims);
-    setPageTitle(`${domain}에서 추출된 기사`);
-  };
 
   // 주장 선택 토글
   const toggleClaim = useCallback((id: string) => {

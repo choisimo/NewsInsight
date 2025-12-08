@@ -25,6 +25,8 @@ public interface MlAddonExecutionRepository extends JpaRepository<MlAddonExecuti
 
     List<MlAddonExecution> findByStatus(ExecutionStatus status);
 
+    Page<MlAddonExecution> findByStatus(ExecutionStatus status, Pageable pageable);
+
     Page<MlAddonExecution> findByAddonId(Long addonId, Pageable pageable);
 
     @Query("SELECT e FROM MlAddonExecution e WHERE e.articleId = :articleId AND e.addon.addonKey = :addonKey")

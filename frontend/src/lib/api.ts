@@ -253,11 +253,14 @@ export const cancelDeepSearch = async (jobId: string): Promise<DeepSearchJob> =>
 /**
  * Poll for deep search completion.
  * Returns when the job is completed, failed, or times out.
+ * 
+ * NOTE: Deep search can take several minutes. The default maxWaitMs is 10 minutes.
+ * For real-time updates, consider using SSE via useDeepSearchSSE hook instead.
  */
 export const pollDeepSearchResult = async (
   jobId: string,
   pollIntervalMs: number = 3000,
-  maxWaitMs: number = 120000,
+  maxWaitMs: number = 600000,  // 10 minutes (Deep search can take a long time)
 ): Promise<DeepSearchResult> => {
   const startTime = Date.now();
   
@@ -276,7 +279,7 @@ export const pollDeepSearchResult = async (
     await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
   }
   
-  throw new Error('Deep search polling timed out');
+  throw new Error('Deep search polling timed out. The job may still be running in the background.');
 };
 
 /**
@@ -1109,6 +1112,66 @@ export const checkSearchHistoryHealth = async (): Promise<{
   return response.data;
 };
 
+// ============================================
+// Claim Extraction API (for FactCheck)
+// ============================================
+
+/**
+ * Extracted claim from URL
+ */
+export interface ExtractedClaim {
+  id: string;
+  text: string;
+  confidence: number;
+  context?: string;
+  claimType?: 'statistical' | 'event' | 'quote' | 'general';
+  verifiable?: boolean;
+}
+
+/**
+ * Response from claim extraction API
+ */
+export interface ClaimExtractionResponse {
+  url: string;
+  pageTitle?: string;
+  claims: ExtractedClaim[];
+  processingTimeMs?: number;
+  extractionSource?: string;
+  message?: string;
+}
+
+/**
+ * Request payload for claim extraction
+ */
+export interface ClaimExtractionRequest {
+  url: string;
+  maxClaims?: number;
+  minConfidence?: number;
+}
+
+/**
+ * Extract verifiable claims from a URL.
+ * The backend crawls the URL, analyzes content with AI, and returns structured claims.
+ */
+export const extractClaimsFromUrl = async (request: ClaimExtractionRequest): Promise<ClaimExtractionResponse> => {
+  const client = await getApiClient();
+  const response = await client.post<ClaimExtractionResponse>('/api/v1/analysis/extract-claims', request);
+  return response.data;
+};
+
+/**
+ * Check claim extraction service health
+ */
+export const checkClaimExtractionHealth = async (): Promise<{
+  service: string;
+  status: string;
+}> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/analysis/extract-claims/health');
+  return response.data;
+};
+
+
 /**
  * SSE event types for search history stream
  */
@@ -1117,6 +1180,242 @@ export interface SearchHistorySSEEvent {
   data: SearchHistoryRecord | { id: number } | { tick: number; subscribers: number };
   timestamp: number;
 }
+
+// ============================================
+// Search Template API (SmartSearch Templates)
+// ============================================
+
+/**
+ * Search template record
+ */
+export interface SearchTemplate {
+  id: number;
+  name: string;
+  query: string;
+  mode: 'unified' | 'deep' | 'factcheck';
+  userId?: string;
+  items: Array<{
+    id: string;
+    type: 'unified' | 'evidence' | 'factcheck';
+    title: string;
+    url?: string;
+    snippet?: string;
+    source?: string;
+    stance?: string;
+    verificationStatus?: string;
+    addedAt?: string;
+  }>;
+  description?: string;
+  favorite?: boolean;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  sourceSearchId?: number;
+  useCount?: number;
+  lastUsedAt?: string;
+  createdAt: string;
+  updatedAt?: string;
+  itemCount?: number;
+}
+
+/**
+ * Request payload for creating/updating a search template
+ */
+export interface SearchTemplateRequest {
+  name: string;
+  query: string;
+  mode: 'unified' | 'deep' | 'factcheck';
+  userId?: string;
+  items: Array<{
+    id: string;
+    type: 'unified' | 'evidence' | 'factcheck';
+    title: string;
+    url?: string;
+    snippet?: string;
+    source?: string;
+    stance?: string;
+    verificationStatus?: string;
+    addedAt?: string;
+  }>;
+  description?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  sourceSearchId?: number;
+}
+
+/**
+ * Create a new search template
+ */
+export const createSearchTemplate = async (request: SearchTemplateRequest): Promise<SearchTemplate> => {
+  const client = await getApiClient();
+  const response = await client.post<SearchTemplate>('/api/v1/search-templates', request);
+  return response.data;
+};
+
+/**
+ * Get search template by ID
+ */
+export const getSearchTemplateById = async (id: number): Promise<SearchTemplate> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchTemplate>(`/api/v1/search-templates/${id}`);
+  return response.data;
+};
+
+/**
+ * List search templates with pagination
+ */
+export const listSearchTemplates = async (
+  page: number = 0,
+  size: number = 20,
+  sortBy: string = 'createdAt',
+  sortDirection: 'ASC' | 'DESC' = 'DESC',
+  userId?: string,
+  mode?: string,
+): Promise<PageResponse<SearchTemplate>> => {
+  const client = await getApiClient();
+  const params: Record<string, string | number> = { page, size, sortBy, sortDirection };
+  if (userId) params.userId = userId;
+  if (mode) params.mode = mode;
+  
+  const response = await client.get<PageResponse<SearchTemplate>>('/api/v1/search-templates', { params });
+  return response.data;
+};
+
+/**
+ * Get all templates for a user (no pagination)
+ */
+export const getAllTemplatesByUser = async (userId: string): Promise<SearchTemplate[]> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchTemplate[]>(`/api/v1/search-templates/user/${userId}`);
+  return response.data;
+};
+
+/**
+ * Get favorite templates for a user
+ */
+export const getFavoriteTemplates = async (userId: string): Promise<SearchTemplate[]> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchTemplate[]>(`/api/v1/search-templates/user/${userId}/favorites`);
+  return response.data;
+};
+
+/**
+ * Get most used templates for a user
+ */
+export const getMostUsedTemplates = async (userId: string, limit: number = 10): Promise<SearchTemplate[]> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchTemplate[]>(`/api/v1/search-templates/user/${userId}/most-used`, {
+    params: { limit },
+  });
+  return response.data;
+};
+
+/**
+ * Get recently used templates for a user
+ */
+export const getRecentlyUsedTemplates = async (userId: string, limit: number = 10): Promise<SearchTemplate[]> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchTemplate[]>(`/api/v1/search-templates/user/${userId}/recent`, {
+    params: { limit },
+  });
+  return response.data;
+};
+
+/**
+ * Search templates by name
+ */
+export const searchTemplatesByName = async (
+  query: string,
+  userId?: string,
+  page: number = 0,
+  size: number = 20,
+): Promise<PageResponse<SearchTemplate>> => {
+  const client = await getApiClient();
+  const params: Record<string, string | number> = { q: query, page, size };
+  if (userId) params.userId = userId;
+  
+  const response = await client.get<PageResponse<SearchTemplate>>('/api/v1/search-templates/search', { params });
+  return response.data;
+};
+
+/**
+ * Update a search template
+ */
+export const updateSearchTemplate = async (id: number, request: Partial<SearchTemplateRequest>): Promise<SearchTemplate> => {
+  const client = await getApiClient();
+  const response = await client.put<SearchTemplate>(`/api/v1/search-templates/${id}`, request);
+  return response.data;
+};
+
+/**
+ * Toggle favorite status for a template
+ */
+export const toggleTemplateFavorite = async (id: number): Promise<SearchTemplate> => {
+  const client = await getApiClient();
+  const response = await client.post<SearchTemplate>(`/api/v1/search-templates/${id}/favorite`);
+  return response.data;
+};
+
+/**
+ * Record template usage (when loading a template)
+ */
+export const recordTemplateUsage = async (id: number): Promise<void> => {
+  const client = await getApiClient();
+  await client.post(`/api/v1/search-templates/${id}/use`);
+};
+
+/**
+ * Duplicate a template
+ */
+export const duplicateTemplate = async (
+  id: number,
+  newName?: string,
+  userId?: string,
+): Promise<SearchTemplate> => {
+  const client = await getApiClient();
+  const params: Record<string, string> = {};
+  if (newName) params.newName = newName;
+  if (userId) params.userId = userId;
+  
+  const response = await client.post<SearchTemplate>(`/api/v1/search-templates/${id}/duplicate`, null, { params });
+  return response.data;
+};
+
+/**
+ * Delete a search template
+ */
+export const deleteSearchTemplate = async (id: number): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete(`/api/v1/search-templates/${id}`);
+};
+
+/**
+ * Get template statistics
+ */
+export const getTemplateStatistics = async (userId?: string): Promise<{
+  totalTemplates: number;
+  byMode: { unified: number; deep: number; factcheck: number };
+  userId: string;
+}> => {
+  const client = await getApiClient();
+  const params: Record<string, string> = {};
+  if (userId) params.userId = userId;
+  
+  const response = await client.get('/api/v1/search-templates/stats', { params });
+  return response.data;
+};
+
+/**
+ * Check template service health
+ */
+export const checkTemplateServiceHealth = async (): Promise<{
+  service: string;
+  status: string;
+  features: Record<string, boolean>;
+}> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/search-templates/health');
+  return response.data;
+};
 
 /**
  * Open SSE stream for real-time search history updates.

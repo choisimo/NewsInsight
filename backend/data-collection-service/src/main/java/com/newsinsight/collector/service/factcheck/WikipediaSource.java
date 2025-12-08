@@ -2,6 +2,7 @@ package com.newsinsight.collector.service.factcheck;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.newsinsight.collector.config.TrustScoreConfig;
 import com.newsinsight.collector.service.FactVerificationService.SourceEvidence;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +31,7 @@ public class WikipediaSource implements FactCheckSource {
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
+    private final TrustScoreConfig trustScoreConfig;
 
     @Value("${collector.fact-check.wikipedia.enabled:true}")
     private boolean enabled;
@@ -49,7 +51,7 @@ public class WikipediaSource implements FactCheckSource {
 
     @Override
     public double getTrustScore() {
-        return 0.9;
+        return trustScoreConfig.getFactCheck().getWikipedia();
     }
 
     @Override

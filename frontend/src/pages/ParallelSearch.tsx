@@ -1083,9 +1083,11 @@ const ParallelSearch = () => {
     };
   }, [toast, results.length, autoSaveUrl]);
 
-  const handleSearch = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim() || isSearching) return;
+  // Core search execution logic - can be called directly without event
+  // Accepts optional searchQuery parameter to allow immediate search with new query
+  const executeSearch = useCallback(async (searchQuery?: string) => {
+    const effectiveQuery = searchQuery ?? query;
+    if (!effectiveQuery.trim() || isSearching) return;
 
     // Cleanup previous search
     if (eventSourceRef.current) {
@@ -1099,14 +1101,14 @@ const ParallelSearch = () => {
 
     try {
       // Step 1: Create a new search job
-      const job = await startUnifiedSearchJob(query.trim(), filters.timeWindow);
+      const job = await startUnifiedSearchJob(effectiveQuery.trim(), filters.timeWindow);
       
       setCurrentJobId(job.jobId);
       setJobStatus(job.status);
       
       // Store job info for reconnection after page refresh
       sessionStorage.setItem("parallelSearch_currentJobId", job.jobId);
-      sessionStorage.setItem("parallelSearch_query", query.trim());
+      sessionStorage.setItem("parallelSearch_query", effectiveQuery.trim());
       
       // Update URL with jobId for sharing/bookmarking
       const url = new URL(window.location.href);
@@ -1140,7 +1142,7 @@ const ParallelSearch = () => {
       
       // Auto-save failed search
       const durationMs = searchStartTime ? Date.now() - searchStartTime : undefined;
-      saveFailedSearch('UNIFIED', query, error instanceof Error ? error.message : 'Unknown error', durationMs);
+      saveFailedSearch('UNIFIED', effectiveQuery, error instanceof Error ? error.message : 'Unknown error', durationMs);
       
       toast({
         title: "오류",
@@ -1149,6 +1151,12 @@ const ParallelSearch = () => {
       });
     }
   }, [query, filters.timeWindow, isSearching, resetState, toast, setupEventHandlers, searchStartTime, saveFailedSearch]);
+
+  // Form submit handler - wraps executeSearch with preventDefault
+  const handleSearch = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    executeSearch();
+  }, [executeSearch]);
 
   const handleCancel = useCallback(() => {
     if (eventSourceRef.current) {
@@ -1168,9 +1176,8 @@ const ParallelSearch = () => {
 
   // Retry search on error
   const handleRetry = useCallback(() => {
-    const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
-    handleSearch(fakeEvent);
-  }, [handleSearch]);
+    executeSearch();
+  }, [executeSearch]);
 
   const filteredResults = activeTab === "all"
     ? results
@@ -1290,8 +1297,7 @@ const ParallelSearch = () => {
                       onChange={setQuery}
                       onSearch={(q) => {
                         setQuery(q);
-                        const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
-                        handleSearch(fakeEvent);
+                        executeSearch(q);
                       }}
                       placeholder="뉴스 키워드를 입력하세요... (예: AI 기술, 경제 전망, 정치 이슈)"
                       isLoading={isSearching}

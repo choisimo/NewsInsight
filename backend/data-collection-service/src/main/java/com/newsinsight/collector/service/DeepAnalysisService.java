@@ -5,6 +5,7 @@ import com.newsinsight.collector.dto.DeepSearchResultDto;
 import com.newsinsight.collector.dto.EvidenceDto;
 import com.newsinsight.collector.dto.StanceDistributionDto;
 import com.newsinsight.collector.entity.CrawlEvidence;
+import com.newsinsight.collector.entity.CrawlFailureReason;
 import com.newsinsight.collector.entity.CrawlJob;
 import com.newsinsight.collector.entity.CrawlJobStatus;
 import com.newsinsight.collector.entity.EvidenceStance;
@@ -186,8 +187,10 @@ public class DeepAnalysisService {
             }
         } catch (Exception e) {
             log.error("Integrated crawl failed: jobId={}, error={}", jobId, e.getMessage(), e);
-            updateJobStatus(jobId, CrawlJobStatus.FAILED, "Crawl failed: " + e.getMessage());
-            deepSearchEventService.publishError(jobId, "Crawl failed: " + e.getMessage());
+            CrawlFailureReason failureReason = CrawlFailureReason.fromException(e);
+            String errorMsg = "Crawl failed: " + e.getMessage() + " [" + failureReason.getCode() + "]";
+            updateJobStatusWithReason(jobId, CrawlJobStatus.FAILED, errorMsg, failureReason);
+            deepSearchEventService.publishError(jobId, errorMsg, failureReason);
         }
     }
 
@@ -318,6 +321,8 @@ public class DeepAnalysisService {
                 .createdAt(job.getCreatedAt())
                 .completedAt(job.getCompletedAt())
                 .errorMessage(job.getErrorMessage())
+                .failureReason(job.getFailureReason() != null ? job.getFailureReason().getCode() : null)
+                .failureCategory(categorizeFailureReason(job.getFailureReason()))
                 .build();
     }
 
@@ -349,6 +354,8 @@ public class DeepAnalysisService {
         if (job.getStatus() == CrawlJobStatus.PENDING || job.getStatus() == CrawlJobStatus.IN_PROGRESS) {
             job.setStatus(CrawlJobStatus.CANCELLED);
             job.setCompletedAt(LocalDateTime.now());
+            job.setFailureReason(CrawlFailureReason.JOB_CANCELLED);
+            job.setErrorMessage("Job was cancelled by user");
             crawlJobRepository.save(job);
             log.info("Cancelled job: {}", jobId);
             
@@ -374,14 +381,18 @@ public class DeepAnalysisService {
                 cutoff
         );
         
-        int count = crawlJobRepository.markTimedOutJobs(cutoff);
-        if (count > 0) {
-            log.info("Marked {} jobs as timed out", count);
-            
-            // Publish timeout events for each job
+        if (!jobsToTimeout.isEmpty()) {
+            // Update each job with proper failure reason
             for (CrawlJob job : jobsToTimeout) {
-                deepSearchEventService.publishError(job.getId(), "Job timed out after " + timeoutMinutes + " minutes");
+                job.markTimedOut(CrawlFailureReason.TIMEOUT_JOB_OVERALL);
+                crawlJobRepository.save(job);
+                
+                String errorMsg = "Job timed out after " + timeoutMinutes + " minutes [" + 
+                        CrawlFailureReason.TIMEOUT_JOB_OVERALL.getCode() + "]";
+                deepSearchEventService.publishError(job.getId(), errorMsg, CrawlFailureReason.TIMEOUT_JOB_OVERALL);
             }
+            log.info("Marked {} jobs as timed out with reason: {}", jobsToTimeout.size(), 
+                    CrawlFailureReason.TIMEOUT_JOB_OVERALL.getCode());
         }
     }
 
@@ -425,12 +436,22 @@ public class DeepAnalysisService {
     }
 
     private void updateJobStatus(String jobId, CrawlJobStatus status, String errorMessage) {
+        updateJobStatusWithReason(jobId, status, errorMessage, null);
+    }
+
+    private void updateJobStatusWithReason(String jobId, CrawlJobStatus status, String errorMessage, CrawlFailureReason failureReason) {
         crawlJobRepository.findById(jobId).ifPresent(job -> {
             job.setStatus(status);
             if (errorMessage != null) {
                 job.setErrorMessage(errorMessage);
             }
-            if (status == CrawlJobStatus.FAILED) {
+            if (failureReason != null) {
+                job.setFailureReason(failureReason);
+            } else if (errorMessage != null && status == CrawlJobStatus.FAILED) {
+                // Auto-detect failure reason from error message
+                job.setFailureReason(CrawlFailureReason.fromErrorMessage(errorMessage));
+            }
+            if (status == CrawlJobStatus.FAILED || status == CrawlJobStatus.TIMEOUT) {
                 job.setCompletedAt(LocalDateTime.now());
             }
             crawlJobRepository.save(job);
@@ -468,9 +489,27 @@ public class DeepAnalysisService {
                 .status(job.getStatus().name())
                 .evidenceCount(job.getEvidenceCount())
                 .errorMessage(job.getErrorMessage())
+                .failureReason(job.getFailureReason() != null ? job.getFailureReason().getCode() : null)
+                .failureCategory(categorizeFailureReason(job.getFailureReason()))
                 .createdAt(job.getCreatedAt())
                 .completedAt(job.getCompletedAt())
                 .build();
+    }
+
+    /**
+     * Categorize failure reason into high-level categories for frontend display
+     */
+    private String categorizeFailureReason(CrawlFailureReason reason) {
+        if (reason == null) return null;
+        
+        String code = reason.getCode();
+        if (code.startsWith("timeout")) return "timeout";
+        if (code.contains("connection") || code.contains("dns") || code.contains("network") || code.contains("ssl")) return "network";
+        if (code.contains("service") || code.contains("unavailable") || code.contains("overloaded")) return "service";
+        if (code.contains("content") || code.contains("parse") || code.contains("blocked")) return "content";
+        if (code.contains("ai") || code.contains("evidence") || code.contains("stance")) return "processing";
+        if (code.contains("cancelled") || code.contains("callback") || code.contains("token")) return "job";
+        return "unknown";
     }
 
     private EvidenceDto toEvidenceDto(CrawlEvidence evidence) {

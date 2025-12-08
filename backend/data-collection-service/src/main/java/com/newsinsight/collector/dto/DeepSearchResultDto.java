@@ -26,4 +26,6 @@ public class DeepSearchResultDto {
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
     private String errorMessage;
+    private String failureReason;      // Code like "timeout_job_overall"
+    private String failureCategory;     // High-level category like "timeout", "network", "service"
 }

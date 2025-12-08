@@ -1,5 +1,6 @@
 package com.newsinsight.collector.entity;
 
+import com.newsinsight.collector.dto.EvidenceDto;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -55,16 +56,13 @@ public class CrawlEvidence {
     private LocalDateTime createdAt;
 
     /**
-     * Create evidence from client response
+     * Create evidence from EvidenceDto
      */
-    public static CrawlEvidence fromClientEvidence(
-            String jobId,
-            com.newsinsight.collector.client.DeepAISearchClient.Evidence evidence
-    ) {
+    public static CrawlEvidence fromEvidenceDto(String jobId, EvidenceDto evidence) {
         EvidenceStance stance = EvidenceStance.NEUTRAL;
-        if (evidence.stance() != null) {
+        if (evidence.getStance() != null) {
             try {
-                stance = EvidenceStance.valueOf(evidence.stance().toUpperCase());
+                stance = EvidenceStance.valueOf(evidence.getStance().toUpperCase());
             } catch (IllegalArgumentException ignored) {
                 // Keep default NEUTRAL
             }
@@ -72,11 +70,11 @@ public class CrawlEvidence {
 
         return CrawlEvidence.builder()
                 .jobId(jobId)
-                .url(evidence.url())
-                .title(evidence.title())
+                .url(evidence.getUrl())
+                .title(evidence.getTitle())
                 .stance(stance)
-                .snippet(evidence.snippet())
-                .source(evidence.source())
+                .snippet(evidence.getSnippet())
+                .source(evidence.getSource())
                 .build();
     }
 }

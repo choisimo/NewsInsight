@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS crawl_jobs (
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     evidence_count INTEGER DEFAULT 0,
     error_message VARCHAR(1024),
+    failure_reason VARCHAR(64),
     callback_received BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP,

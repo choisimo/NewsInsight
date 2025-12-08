@@ -21,6 +21,8 @@ public class DeepSearchJobDto {
     private String status;
     private Integer evidenceCount;
     private String errorMessage;
+    private String failureReason;      // Code like "timeout_job_overall"
+    private String failureCategory;     // High-level category like "timeout", "network", "service"
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
 }

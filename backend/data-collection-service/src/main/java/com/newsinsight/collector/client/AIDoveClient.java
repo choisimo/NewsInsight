@@ -37,13 +37,13 @@ public class AIDoveClient {
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
 
-    @Value("${collector.aidove.base-url:${COLLECTOR_AIDOVE_BASE_URL:https://workflow.nodove.com/webhook/aidove}}")
+    @Value("${collector.ai-dove.base-url:${collector.aidove.base-url:${COLLECTOR_AIDOVE_BASE_URL:https://workflow.nodove.com/webhook/aidove}}}")
     private String baseUrl;
 
-    @Value("${collector.aidove.timeout-seconds:120}")
+    @Value("${collector.ai-dove.timeout-seconds:${collector.aidove.timeout-seconds:180}}")
     private int timeoutSeconds;
 
-    @Value("${collector.aidove.enabled:true}")
+    @Value("${collector.ai-dove.enabled:${collector.aidove.enabled:true}}")
     private boolean enabled;
 
     /**

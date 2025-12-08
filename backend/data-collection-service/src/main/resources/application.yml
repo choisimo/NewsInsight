@@ -200,32 +200,21 @@ collector:
     callback-token: ${COLLECTOR_BROWSER_AGENT_CALLBACK_TOKEN:}
 
   # Deep AI Search Configuration
-  # DeepSearch now runs entirely on internal services (IntegratedCrawlerService + AIDove).
-  # The n8n webhook integration is DEPRECATED and disabled by default.
-  # These settings can be managed via Consul KV under config/collector-service/
+  # DeepSearch runs entirely on internal services (IntegratedCrawlerService + AIDove).
+  # Legacy n8n webhook integration has been removed.
   deep-search:
-    # DEPRECATED: n8n webhook is disabled. Set to true only for legacy/fallback mode.
-    enabled: ${COLLECTOR_SERVICE_DEEP_SEARCH_ENABLED:${DEEP_SEARCH_ENABLED:false}}
-    # DEPRECATED: n8n webhook URL (only used if enabled=true)
-    webhook-url: ${COLLECTOR_DEEP_SEARCH_WEBHOOK_URL:${COLLECTOR_SERVICE_DEEP_SEARCH_WEBHOOK_URL:${DEEP_SEARCH_WEBHOOK_URL:}}}
-    # Base URL for internal callbacks (used by integrated crawler)
-    callback-base-url: ${COLLECTOR_CALLBACK_BASE_URL:${COLLECTOR_SERVICE_DEEP_SEARCH_CALLBACK_BASE_URL:${DEEP_SEARCH_CALLBACK_BASE_URL:http://collector-service:8081}}}
+    # Base URL for internal callbacks
+    callback-base-url: ${COLLECTOR_CALLBACK_BASE_URL:${DEEP_SEARCH_CALLBACK_BASE_URL:http://collector-service:8081}}
     # Token for validating internal callbacks
-    callback-token: ${COLLECTOR_SERVICE_DEEP_SEARCH_CALLBACK_TOKEN:${DEEP_SEARCH_CALLBACK_TOKEN:}}
-    # Timeout for requests in seconds
-    timeout-seconds: ${COLLECTOR_SERVICE_DEEP_SEARCH_TIMEOUT_SECONDS:${DEEP_SEARCH_TIMEOUT_SECONDS:120}}
+    callback-token: ${DEEP_SEARCH_CALLBACK_TOKEN:}
     # Minutes before marking a job as timed out
-    timeout-minutes: ${COLLECTOR_SERVICE_DEEP_SEARCH_TIMEOUT_MINUTES:${DEEP_SEARCH_TIMEOUT_MINUTES:30}}
+    timeout-minutes: ${DEEP_SEARCH_TIMEOUT_MINUTES:30}
     # Interval for checking timed out jobs (milliseconds)
-    timeout-check-interval: ${COLLECTOR_SERVICE_DEEP_SEARCH_TIMEOUT_CHECK_INTERVAL:${DEEP_SEARCH_TIMEOUT_CHECK_INTERVAL:300000}}
+    timeout-check-interval: ${DEEP_SEARCH_TIMEOUT_CHECK_INTERVAL:300000}
     # Days to keep completed jobs before cleanup
-    cleanup-days: ${COLLECTOR_SERVICE_DEEP_SEARCH_CLEANUP_DAYS:${DEEP_SEARCH_CLEANUP_DAYS:7}}
+    cleanup-days: ${DEEP_SEARCH_CLEANUP_DAYS:7}
     # Cron expression for cleanup job (3 AM daily)
-    cleanup-cron: ${COLLECTOR_SERVICE_DEEP_SEARCH_CLEANUP_CRON:${DEEP_SEARCH_CLEANUP_CRON:0 0 3 * * ?}}
-    # Use integrated crawler (multi-strategy: Crawl4AI, Browser-Use, Direct HTTP, Search Engines)
-    use-integrated-crawler: ${COLLECTOR_DEEP_SEARCH_USE_INTEGRATED:${DEEP_SEARCH_USE_INTEGRATED:true}}
-    # DEPRECATED: Do not fallback to n8n webhook when integrated crawler fails
-    fallback-to-webhook: ${COLLECTOR_DEEP_SEARCH_FALLBACK_TO_WEBHOOK:${DEEP_SEARCH_FALLBACK_TO_WEBHOOK:false}}
+    cleanup-cron: ${DEEP_SEARCH_CLEANUP_CRON:0 0 3 * * ?}
 
   # Integrated Crawler Configuration (multi-strategy crawling)
   integrated-crawler:
@@ -246,6 +235,8 @@ collector:
   ai-dove:
     enabled: ${COLLECTOR_AI_DOVE_ENABLED:${AI_DOVE_ENABLED:true}}
     base-url: ${COLLECTOR_AI_DOVE_BASE_URL:${AI_DOVE_BASE_URL:https://workflow.nodove.com/webhook/aidove}}
+    # Timeout for AI Dove API calls in seconds (evidence analysis can take time)
+    timeout-seconds: ${COLLECTOR_AI_DOVE_TIMEOUT_SECONDS:${AI_DOVE_TIMEOUT_SECONDS:180}}
 
   # Fact Check Sources Configuration
   fact-check:
@@ -269,3 +260,33 @@ collector:
     google:
       enabled: ${COLLECTOR_GOOGLE_FACTCHECK_ENABLED:false}
       api-key: ${COLLECTOR_GOOGLE_FACTCHECK_API_KEY:}
+
+  # Trust Score Configuration
+  # Externalized trust scores for fact-check sources and data quality assessment.
+  # Hierarchy: Academic (0.95) > Official Stats (0.95) > Encyclopedia (0.90) > Fact Check (0.85)
+  trust-scores:
+    # Fact-check sources (used by FactCheckSource implementations)
+    fact-check:
+      crossref: ${TRUST_SCORE_CROSSREF:0.95}            # Academic papers (highest)
+      openalex: ${TRUST_SCORE_OPENALEX:0.92}            # Academic database
+      wikipedia: ${TRUST_SCORE_WIKIPEDIA:0.90}          # Encyclopedia
+      google-fact-check: ${TRUST_SCORE_GOOGLE_FC:0.85}  # Verified fact-check
+    
+    # Trusted reference sources (used by FactVerificationService)
+    trusted:
+      wikipedia-ko: ${TRUST_SCORE_WIKI_KO:0.90}         # Korean Wikipedia
+      wikipedia-en: ${TRUST_SCORE_WIKI_EN:0.90}         # English Wikipedia
+      britannica: ${TRUST_SCORE_BRITANNICA:0.95}        # Britannica (very high)
+      namu-wiki: ${TRUST_SCORE_NAMU:0.60}               # Namu Wiki (community)
+      kosis: ${TRUST_SCORE_KOSIS:0.95}                  # Korean Statistics (official)
+      google-scholar: ${TRUST_SCORE_SCHOLAR:0.85}       # Academic search
+    
+    # Data quality assessment (used by CollectedDataService)
+    data-quality:
+      base-score: ${TRUST_SCORE_BASE:0.50}              # Unknown sources
+      whitelist-score: ${TRUST_SCORE_WHITELIST:0.90}    # Whitelisted domains
+      http-ok-bonus: ${TRUST_SCORE_HTTP_BONUS:0.10}     # Successful HTTP connection
+    
+    # Custom source scores (add your own)
+    # custom:
+    #   my-trusted-source: 0.88

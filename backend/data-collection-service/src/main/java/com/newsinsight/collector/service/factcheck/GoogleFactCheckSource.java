@@ -2,6 +2,7 @@ package com.newsinsight.collector.service.factcheck;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.newsinsight.collector.config.TrustScoreConfig;
 import com.newsinsight.collector.service.FactVerificationService.SourceEvidence;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +35,7 @@ public class GoogleFactCheckSource implements FactCheckSource {
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
+    private final TrustScoreConfig trustScoreConfig;
 
     @Value("${collector.fact-check.google.api-key:}")
     private String apiKey;
@@ -58,7 +60,7 @@ public class GoogleFactCheckSource implements FactCheckSource {
 
     @Override
     public double getTrustScore() {
-        return 0.85; // 검증된 팩트체커들의 결과
+        return trustScoreConfig.getFactCheck().getGoogleFactCheck();
     }
 
     @Override

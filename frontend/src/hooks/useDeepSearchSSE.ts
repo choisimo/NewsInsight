@@ -207,6 +207,107 @@ export function useDeepSearchSSE(options: UseDeepSearchSSEOptions): UseDeepSearc
     const eventSource = new EventSource(url);
     eventSourceRef.current = eventSource;
 
+    // Helper function to handle SSE event data
+    const handleEventData = (eventType: string, data: Record<string, unknown>) => {
+      if (!mountedRef.current) return;
+      
+      resetHeartbeatTimeout();
+      console.log('[DeepSearchSSE] Event:', eventType, data);
+
+      switch (eventType) {
+        case 'heartbeat':
+          // Just a keep-alive, no action needed
+          break;
+
+        case 'status':
+          if (data.status) {
+            const status = data.status as DeepSearchJob['status'];
+            setCurrentStatus(status);
+            onStatusUpdateRef.current?.(status);
+            
+            // Update background task
+            const taskStatus = status === 'PENDING' ? 'pending' 
+              : status === 'IN_PROGRESS' ? 'running'
+              : status === 'COMPLETED' ? 'completed'
+              : status === 'FAILED' || status === 'TIMEOUT' ? 'failed'
+              : status === 'CANCELLED' ? 'cancelled'
+              : 'pending';
+            
+            updateTask(jobId, { 
+              status: taskStatus,
+              ...(status === 'COMPLETED' && { completedAt: new Date().toISOString() }),
+            });
+          }
+          break;
+
+        case 'progress':
+          if (data.progress !== undefined) {
+            const progressValue = data.progress as number;
+            const progressMsg = data.progressMessage as string | undefined;
+            setProgress(progressValue);
+            setProgressMessage(progressMsg);
+            onProgressRef.current?.(progressValue, progressMsg);
+            
+            updateTask(jobId, { 
+              progress: progressValue, 
+              progressMessage: progressMsg,
+              status: 'running',
+            });
+          }
+          break;
+
+        case 'evidence':
+          if (data.evidence && data.evidenceCount !== undefined) {
+            const evidence = data.evidence as Evidence;
+            const count = data.evidenceCount as number;
+            setEvidenceCount(count);
+            onEvidenceRef.current?.(evidence, count);
+            
+            updateTask(jobId, { evidenceCount: count });
+          }
+          break;
+
+        case 'complete':
+          if (data.result) {
+            const result = data.result as DeepSearchResult;
+            setResult(result);
+            setCurrentStatus('COMPLETED');
+            setProgress(100);
+            onCompleteRef.current?.(result);
+            
+            updateTask(jobId, { 
+              status: 'completed', 
+              progress: 100,
+              result: result,
+              completedAt: new Date().toISOString(),
+              evidenceCount: result.evidence?.length,
+            });
+
+            // Close connection after completion
+            disconnect();
+          }
+          break;
+
+        case 'error':
+          if (data.error) {
+            const errorMsg = data.error as string;
+            setError(errorMsg);
+            setCurrentStatus('FAILED');
+            onErrorRef.current?.(errorMsg);
+            
+            updateTask(jobId, { 
+              status: 'failed', 
+              error: errorMsg,
+              completedAt: new Date().toISOString(),
+            });
+
+            // Close connection after error
+            disconnect();
+          }
+          break;
+      }
+    };
+
     eventSource.onopen = () => {
       if (mountedRef.current) {
         console.log('[DeepSearchSSE] Connected');
@@ -216,6 +317,23 @@ export function useDeepSearchSSE(options: UseDeepSearchSSEOptions): UseDeepSearc
       }
     };
 
+    // Register named event listeners for SSE event types
+    // This handles SSE events where the event type is in the `event:` field
+    const eventTypes = ['heartbeat', 'status', 'progress', 'evidence', 'complete', 'error'];
+    eventTypes.forEach(eventType => {
+      eventSource.addEventListener(eventType, (event: MessageEvent) => {
+        if (!mountedRef.current) return;
+        try {
+          const data = JSON.parse(event.data) as Record<string, unknown>;
+          handleEventData(eventType, data);
+        } catch (e) {
+          console.error('[DeepSearchSSE] Failed to parse event:', e, event.data);
+        }
+      });
+    });
+
+    // Fallback: handle generic message events (for backward compatibility)
+    // This handles cases where eventType is in the data payload
     eventSource.onmessage = (event) => {
       if (!mountedRef.current) return;
       
@@ -223,92 +341,9 @@ export function useDeepSearchSSE(options: UseDeepSearchSSEOptions): UseDeepSearc
 
       try {
         const data = JSON.parse(event.data) as DeepSearchSSEEvent;
-        console.log('[DeepSearchSSE] Event:', data.eventType, data);
-
-        switch (data.eventType) {
-          case 'heartbeat':
-            // Just a keep-alive, no action needed
-            break;
-
-          case 'status':
-            if (data.status) {
-              setCurrentStatus(data.status);
-              onStatusUpdateRef.current?.(data.status);
-              
-              // Update background task
-              const taskStatus = data.status === 'PENDING' ? 'pending' 
-                : data.status === 'IN_PROGRESS' ? 'running'
-                : data.status === 'COMPLETED' ? 'completed'
-                : data.status === 'FAILED' || data.status === 'TIMEOUT' ? 'failed'
-                : data.status === 'CANCELLED' ? 'cancelled'
-                : 'pending';
-              
-              updateTask(jobId, { 
-                status: taskStatus,
-                ...(data.status === 'COMPLETED' && { completedAt: new Date().toISOString() }),
-              });
-            }
-            break;
-
-          case 'progress':
-            if (data.progress !== undefined) {
-              setProgress(data.progress);
-              setProgressMessage(data.progressMessage);
-              onProgressRef.current?.(data.progress, data.progressMessage);
-              
-              updateTask(jobId, { 
-                progress: data.progress, 
-                progressMessage: data.progressMessage,
-                status: 'running',
-              });
-            }
-            break;
-
-          case 'evidence':
-            if (data.evidence && data.evidenceCount !== undefined) {
-              setEvidenceCount(data.evidenceCount);
-              onEvidenceRef.current?.(data.evidence, data.evidenceCount);
-              
-              updateTask(jobId, { evidenceCount: data.evidenceCount });
-            }
-            break;
-
-          case 'complete':
-            if (data.result) {
-              setResult(data.result);
-              setCurrentStatus('COMPLETED');
-              setProgress(100);
-              onCompleteRef.current?.(data.result);
-              
-              updateTask(jobId, { 
-                status: 'completed', 
-                progress: 100,
-                result: data.result,
-                completedAt: new Date().toISOString(),
-                evidenceCount: data.result.evidence?.length,
-              });
-
-              // Close connection after completion
-              disconnect();
-            }
-            break;
-
-          case 'error':
-            if (data.error) {
-              setError(data.error);
-              setCurrentStatus('FAILED');
-              onErrorRef.current?.(data.error);
-              
-              updateTask(jobId, { 
-                status: 'failed', 
-                error: data.error,
-                completedAt: new Date().toISOString(),
-              });
-
-              // Close connection after error
-              disconnect();
-            }
-            break;
+        // Only process if eventType is in data (fallback path)
+        if (data.eventType) {
+          handleEventData(data.eventType, data as unknown as Record<string, unknown>);
         }
       } catch (e) {
         console.error('[DeepSearchSSE] Failed to parse event:', e, event.data);

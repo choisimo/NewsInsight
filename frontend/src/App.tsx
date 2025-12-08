@@ -16,6 +16,7 @@ import ParallelSearch from "./pages/ParallelSearch";
 import FactCheck from "./pages/FactCheck";
 import UrlCollections from "./pages/UrlCollections";
 import SearchHistory from "./pages/SearchHistory";
+import SmartSearch from "./pages/SmartSearch";
 
 const queryClient = new QueryClient();
 
@@ -31,6 +32,8 @@ const App = () => (
             <CommandPalette />
             <AppLayout>
               <Routes>
+                {/* Smart Search - 통합 검색 허브 */}
+                <Route path="/smart-search" element={<SmartSearch />} />
                 {/* Home page is now the unified search */}
                 <Route path="/" element={<ParallelSearch />} />
                 {/* Redirect /search to home for backward compatibility */}

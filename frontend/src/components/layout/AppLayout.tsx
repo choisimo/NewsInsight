@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Search, Shield, Brain, FolderOpen, Bot, History, Command } from 'lucide-react';
+import { Search, Shield, Brain, FolderOpen, Bot, History, Command, Sparkles } from 'lucide-react';
 import { BackgroundTaskIndicator } from '@/components/BackgroundTaskIndicator';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileNavDrawer } from '@/components/MobileNavDrawer';
@@ -11,13 +11,14 @@ interface NavItemProps {
   icon: React.ReactNode;
   label: string;
   isActive: boolean;
+  badge?: string;
 }
 
-const NavItem = ({ to, icon, label, isActive }: NavItemProps) => (
+const NavItem = ({ to, icon, label, isActive, badge }: NavItemProps) => (
   <Link
     to={to}
     className={cn(
-      "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+      "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors relative",
       isActive
         ? "bg-primary text-primary-foreground"
         : "text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -26,6 +27,14 @@ const NavItem = ({ to, icon, label, isActive }: NavItemProps) => (
   >
     {icon}
     <span className="hidden lg:inline">{label}</span>
+    {badge && (
+      <span className={cn(
+        "absolute -top-1 -right-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full",
+        isActive ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground"
+      )}>
+        {badge}
+      </span>
+    )}
   </Link>
 );
 
@@ -38,6 +47,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const pathname = location.pathname;
 
   const navItems = [
+    { to: '/smart-search', icon: <Sparkles className="h-4 w-4" />, label: '스마트 검색', badge: 'NEW' },
     { to: '/', icon: <Search className="h-4 w-4" />, label: '통합 검색' },
     { to: '/deep-search', icon: <Brain className="h-4 w-4" />, label: 'Deep Search' },
     { to: '/fact-check', icon: <Shield className="h-4 w-4" />, label: '팩트체크' },
@@ -81,6 +91,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 to={item.to}
                 icon={item.icon}
                 label={item.label}
+                badge={item.badge}
                 isActive={
                   item.to === '/'
                     ? pathname === '/'

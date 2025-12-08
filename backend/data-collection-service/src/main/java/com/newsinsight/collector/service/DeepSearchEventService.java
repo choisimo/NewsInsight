@@ -2,6 +2,7 @@ package com.newsinsight.collector.service;
 
 import com.newsinsight.collector.dto.DeepSearchJobDto;
 import com.newsinsight.collector.dto.EvidenceDto;
+import com.newsinsight.collector.entity.CrawlFailureReason;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
@@ -53,7 +54,11 @@ public class DeepSearchEventService {
         Flux<ServerSentEvent<Object>> heartbeat = Flux.interval(Duration.ofSeconds(15))
                 .map(tick -> ServerSentEvent.builder()
                         .event("heartbeat")
-                        .data(Map.of("timestamp", System.currentTimeMillis()))
+                        .data(Map.of(
+                                "eventType", "heartbeat",
+                                "jobId", jobId,
+                                "timestamp", System.currentTimeMillis()
+                        ))
                         .build());
 
         // Main event stream from sink
@@ -82,6 +87,7 @@ public class DeepSearchEventService {
         ServerSentEvent<Object> event = ServerSentEvent.builder()
                 .event("status")
                 .data(Map.of(
+                        "eventType", "status",
                         "jobId", jobId,
                         "status", status,
                         "message", message != null ? message : "",
@@ -107,9 +113,10 @@ public class DeepSearchEventService {
         ServerSentEvent<Object> event = ServerSentEvent.builder()
                 .event("progress")
                 .data(Map.of(
+                        "eventType", "progress",
                         "jobId", jobId,
                         "progress", progress,
-                        "currentStep", currentStep,
+                        "progressMessage", currentStep,
                         "timestamp", System.currentTimeMillis()
                 ))
                 .build();
@@ -128,11 +135,16 @@ public class DeepSearchEventService {
         Sinks.Many<ServerSentEvent<Object>> sink = jobSinks.get(jobId);
         if (sink == null) return;
 
+        // Get current evidence count from the sink's context or use a simple counter
+        int evidenceCount = evidence.getId() != null ? evidence.getId().intValue() : 1;
+
         ServerSentEvent<Object> event = ServerSentEvent.builder()
                 .event("evidence")
                 .data(Map.of(
+                        "eventType", "evidence",
                         "jobId", jobId,
                         "evidence", evidence,
+                        "evidenceCount", evidenceCount,
                         "timestamp", System.currentTimeMillis()
                 ))
                 .build();
@@ -154,8 +166,9 @@ public class DeepSearchEventService {
         ServerSentEvent<Object> event = ServerSentEvent.builder()
                 .event("complete")
                 .data(Map.of(
+                        "eventType", "complete",
                         "jobId", jobId,
-                        "job", jobDto,
+                        "result", jobDto,
                         "timestamp", System.currentTimeMillis()
                 ))
                 .build();
@@ -175,24 +188,61 @@ public class DeepSearchEventService {
      * @param errorMessage Error message
      */
     public void publishError(String jobId, String errorMessage) {
+        publishError(jobId, errorMessage, null);
+    }
+
+    /**
+     * Publish an error event with a failure reason.
+     * 
+     * @param jobId The job ID
+     * @param errorMessage Error message
+     * @param failureReason The categorized failure reason for diagnostics
+     */
+    public void publishError(String jobId, String errorMessage, CrawlFailureReason failureReason) {
         Sinks.Many<ServerSentEvent<Object>> sink = jobSinks.get(jobId);
         if (sink == null) return;
 
+        // Build error data map with optional failure reason
+        java.util.Map<String, Object> errorData = new java.util.HashMap<>();
+        errorData.put("eventType", "error");
+        errorData.put("jobId", jobId);
+        errorData.put("error", errorMessage);
+        errorData.put("timestamp", System.currentTimeMillis());
+        
+        if (failureReason != null) {
+            errorData.put("failureReason", failureReason.getCode());
+            errorData.put("failureCategory", categorizeFailureReason(failureReason));
+            errorData.put("failureDescription", failureReason.getDescription());
+        }
+
         ServerSentEvent<Object> event = ServerSentEvent.builder()
                 .event("error")
-                .data(Map.of(
-                        "jobId", jobId,
-                        "error", errorMessage,
-                        "timestamp", System.currentTimeMillis()
-                ))
+                .data(errorData)
                 .build();
 
         sink.tryEmitNext(event);
-        log.info("Published error event for job: {}, error: {}", jobId, errorMessage);
+        log.info("Published error event for job: {}, error: {}, reason: {}", 
+                jobId, errorMessage, failureReason != null ? failureReason.getCode() : "unknown");
 
         // Complete the sink and schedule cleanup
         sink.tryEmitComplete();
         scheduleCleanup(jobId);
+    }
+
+    /**
+     * Categorize failure reason into high-level categories for frontend display
+     */
+    private String categorizeFailureReason(CrawlFailureReason reason) {
+        if (reason == null) return "unknown";
+        
+        String code = reason.getCode();
+        if (code.startsWith("timeout")) return "timeout";
+        if (code.contains("connection") || code.contains("dns") || code.contains("network") || code.contains("ssl")) return "network";
+        if (code.contains("service") || code.contains("unavailable") || code.contains("overloaded")) return "service";
+        if (code.contains("content") || code.contains("parse") || code.contains("blocked")) return "content";
+        if (code.contains("ai") || code.contains("evidence") || code.contains("stance")) return "processing";
+        if (code.contains("cancelled") || code.contains("callback") || code.contains("token")) return "job";
+        return "unknown";
     }
 
     /**

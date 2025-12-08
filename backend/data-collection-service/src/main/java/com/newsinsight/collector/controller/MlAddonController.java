@@ -208,7 +208,7 @@ public class MlAddonController {
     // ========== 실행 이력 ==========
 
     /**
-     * 실행 이력 조회
+     * 실행 이력 조회 (status 필터 지원)
      */
     @GetMapping("/executions")
     public ResponseEntity<Page<MlAddonExecution>> listExecutions(
@@ -219,7 +219,7 @@ public class MlAddonController {
         PageRequest pageRequest = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         Page<MlAddonExecution> executions;
         if (status != null) {
-            executions = executionRepository.findAll(pageRequest); // TODO: Add status filter
+            executions = executionRepository.findByStatus(status, pageRequest);
         } else {
             executions = executionRepository.findAll(pageRequest);
         }

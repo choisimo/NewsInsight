@@ -1,5 +1,6 @@
 package com.newsinsight.collector.service;
 
+import com.newsinsight.collector.config.TrustScoreConfig;
 import com.newsinsight.collector.entity.CollectedData;
 import com.newsinsight.collector.repository.CollectedDataRepository;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ import java.util.Optional;
 public class CollectedDataService {
 
     private final CollectedDataRepository collectedDataRepository;
+    private final TrustScoreConfig trustScoreConfig;
 
     /**
      * 중복 제거를 위한 SHA-256 콘텐츠 해시 계산
@@ -153,11 +155,13 @@ public class CollectedDataService {
 
     /**
      * URL 도메인 기반 신뢰도 점수 계산
+     * Uses externalized trust score configuration.
      */
     public double calculateTrustScore(String url, Boolean httpOk, boolean inWhitelist) {
-        double base = inWhitelist ? 0.9 : 0.5;
+        TrustScoreConfig.DataQuality dq = trustScoreConfig.getDataQuality();
+        double base = inWhitelist ? dq.getWhitelistScore() : dq.getBaseScore();
         if (Boolean.TRUE.equals(httpOk)) {
-            base += 0.1;
+            base += dq.getHttpOkBonus();
         }
         return Math.max(0.0, Math.min(1.0, base));
     }

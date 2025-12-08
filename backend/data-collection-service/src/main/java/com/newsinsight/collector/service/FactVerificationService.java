@@ -3,6 +3,7 @@ package com.newsinsight.collector.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.newsinsight.collector.client.PerplexityClient;
+import com.newsinsight.collector.config.TrustScoreConfig;
 import com.newsinsight.collector.service.factcheck.FactCheckSource;
 import lombok.Builder;
 import lombok.Data;
@@ -40,16 +41,23 @@ public class FactVerificationService {
     private final ObjectMapper objectMapper;
     private final PerplexityClient perplexityClient;
     private final List<FactCheckSource> factCheckSources;
+    private final TrustScoreConfig trustScoreConfig;
+    private final List<TrustedSource> trustedSources;
 
     public FactVerificationService(
             WebClient webClient,
             ObjectMapper objectMapper,
             PerplexityClient perplexityClient,
-            List<FactCheckSource> factCheckSources) {
+            List<FactCheckSource> factCheckSources,
+            TrustScoreConfig trustScoreConfig) {
         this.webClient = webClient;
         this.objectMapper = objectMapper;
         this.perplexityClient = perplexityClient;
         this.factCheckSources = factCheckSources;
+        this.trustScoreConfig = trustScoreConfig;
+        
+        // Initialize trusted sources with externalized scores
+        this.trustedSources = initializeTrustedSources();
         
         log.info("FactVerificationService initialized with {} sources: {}", 
                 factCheckSources.size(),
@@ -58,21 +66,23 @@ public class FactVerificationService {
                         .collect(Collectors.joining(", ")));
     }
 
+    private List<TrustedSource> initializeTrustedSources() {
+        TrustScoreConfig.TrustedSources ts = trustScoreConfig.getTrusted();
+        return List.of(
+                new TrustedSource("wikipedia", "위키백과", "https://ko.wikipedia.org/wiki/", ts.getWikipediaKo()),
+                new TrustedSource("wikipedia_en", "Wikipedia", "https://en.wikipedia.org/wiki/", ts.getWikipediaEn()),
+                new TrustedSource("britannica", "브리태니커", "https://www.britannica.com/search?query=", ts.getBritannica()),
+                new TrustedSource("namu", "나무위키", "https://namu.wiki/w/", ts.getNamuWiki()),
+                new TrustedSource("kosis", "통계청", "https://kosis.kr/search/search.do?query=", ts.getKosis()),
+                new TrustedSource("scholar", "학술 자료", "https://scholar.google.com/scholar?q=", ts.getGoogleScholar())
+        );
+    }
+
     @Value("${collector.crawler.base-url:http://web-crawler:11235}")
     private String crawlerBaseUrl;
 
     @Value("${collector.fact-check.timeout-seconds:30}")
     private int timeoutSeconds;
-
-    // 신뢰할 수 있는 출처 목록
-    private static final List<TrustedSource> TRUSTED_SOURCES = List.of(
-            new TrustedSource("wikipedia", "위키백과", "https://ko.wikipedia.org/wiki/", 0.9),
-            new TrustedSource("wikipedia_en", "Wikipedia", "https://en.wikipedia.org/wiki/", 0.9),
-            new TrustedSource("britannica", "브리태니커", "https://www.britannica.com/search?query=", 0.95),
-            new TrustedSource("namu", "나무위키", "https://namu.wiki/w/", 0.6),
-            new TrustedSource("kosis", "통계청", "https://kosis.kr/search/search.do?query=", 0.95),
-            new TrustedSource("scholar", "학술 자료", "https://scholar.google.com/scholar?q=", 0.85)
-    );
 
     // ============================================
     // DTO Classes
