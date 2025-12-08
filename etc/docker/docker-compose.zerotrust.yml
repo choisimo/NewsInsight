@@ -90,7 +90,6 @@ services:
       - "8000"
     networks:
       - default
-      - capstone-net
 
   frontend:
     image: node:20-alpine
@@ -99,9 +98,9 @@ services:
       - ../../frontend:/app
       - frontend-node-modules:/app/node_modules
     environment:
-      # Zero Trust 환경: 외부 도메인 사용
-      - VITE_API_BASE_URL=https://news.nodove.com
-      - VITE_BROWSER_USE_URL=https://news.nodove.com
+      # Zero Trust 환경: Vite 프록시를 통해 내부 api-gateway로 라우팅
+      - VITE_API_BASE_URL=http://api-gateway:8000
+      - VITE_BROWSER_USE_URL=http://api-gateway:8000
     command: >
       sh -c "(npm ci --legacy-peer-deps || npm install --legacy-peer-deps) \
       && npm run dev -- --host 0.0.0.0 --port 8080"
@@ -150,10 +149,12 @@ services:
       - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
       - PERPLEXITY_MODEL=${PERPLEXITY_MODEL:-sonar}
       - PERPLEXITY_BASE_URL=${PERPLEXITY_BASE_URL:-https://api.perplexity.ai}
+      # AI Service URLs (can be overridden via Consul KV)
       - COLLECTOR_AIDOVE_BASE_URL=${COLLECTOR_SERVICE_AIDOVE_BASE_URL:-https://workflow.nodove.com/webhook/aidove}
-      - COLLECTOR_DEEP_SEARCH_WEBHOOK_URL=${COLLECTOR_SERVICE_DEEP_SEARCH_WEBHOOK_URL:-https://n8n.nodove.com/webhook/crawl-agent}
-      - COLLECTOR_N8N_BASE_URL=${COLLECTOR_SERVICE_N8N_BASE_URL:-https://n8n.nodove.com/webhook}
       - COLLECTOR_CALLBACK_BASE_URL=${COLLECTOR_SERVICE_CALLBACK_BASE_URL:-http://collector-service:8081}
+      # DeepSearch - uses IntegratedCrawlerService (n8n deprecated)
+      - COLLECTOR_DEEP_SEARCH_ENABLED=false
+      - COLLECTOR_DEEP_SEARCH_FALLBACK_TO_WEBHOOK=false
       - DB_HOST=${DB_HOST:-postgres}
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=${DB_NAME:-newsinsight}
@@ -167,7 +168,6 @@ services:
       - "8081"
     networks:
       - default
-      - capstone-net
 
   web-crawler:
     image: unclecode/crawl4ai:latest
@@ -240,7 +240,6 @@ services:
       - "9644"
     networks:
       - default
-      - capstone-net
 
   redis:
     image: redis:7-alpine
@@ -301,7 +300,6 @@ services:
     shm_size: 2g
     networks:
       - default
-      - capstone-net
 
   browser-use-api:
     build:
@@ -325,7 +323,6 @@ services:
       retries: 3
     networks:
       - default
-      - capstone-net
 
 volumes:
   postgres-data:
@@ -336,6 +333,3 @@ volumes:
 networks:
   default:
     name: newsinsight-zerotrust-net
-  capstone-net:
-    name: compose_capstone-net
-    driver: bridge

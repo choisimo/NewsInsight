@@ -128,9 +128,10 @@ services:
       - PERPLEXITY_BASE_URL=${PERPLEXITY_BASE_URL:-https://api.perplexity.ai}
       # AI Service URLs (can be overridden via Consul KV)
       - COLLECTOR_AIDOVE_BASE_URL=${COLLECTOR_SERVICE_AIDOVE_BASE_URL:-https://workflow.nodove.com/webhook/aidove}
-      - COLLECTOR_DEEP_SEARCH_WEBHOOK_URL=${COLLECTOR_SERVICE_DEEP_SEARCH_WEBHOOK_URL:-https://n8n.nodove.com/webhook/crawl-agent}
-      - COLLECTOR_N8N_BASE_URL=${COLLECTOR_SERVICE_N8N_BASE_URL:-https://n8n.nodove.com/webhook}
       - COLLECTOR_CALLBACK_BASE_URL=${COLLECTOR_SERVICE_CALLBACK_BASE_URL:-http://collector-service:8081}
+      # DeepSearch - uses IntegratedCrawlerService (n8n deprecated)
+      - COLLECTOR_DEEP_SEARCH_ENABLED=false
+      - COLLECTOR_DEEP_SEARCH_FALLBACK_TO_WEBHOOK=false
       # Database configuration
       - DB_HOST=${DB_HOST:-postgres}
       - DB_PORT=${DB_PORT:-5432}

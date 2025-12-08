@@ -8,5 +8,6 @@ public record ArticleDto(
         String source,
         @JsonProperty("published_at") String publishedAt,
         String url,
-        String snippet
+        String snippet,
+        String content  // 전체 본문 (export/저장용)
 ) {}

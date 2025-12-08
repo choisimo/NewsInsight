@@ -77,7 +77,184 @@ const createDefaultCollection = (): UrlCollection => ({
     id: 'root',
     type: 'folder',
     name: 'Root',
-    children: [],
+    children: [
+      // Korean News Sources folder
+      {
+        id: 'korean-news-sources',
+        type: 'folder',
+        name: '한국 뉴스 소스',
+        description: '주요 한국 뉴스 사이트 모음',
+        isExpanded: true,
+        createdAt: new Date().toISOString(),
+        children: [
+          {
+            id: 'yonhap-news',
+            type: 'url',
+            name: '연합뉴스',
+            url: 'https://www.yna.co.kr',
+            description: '대한민국 대표 통신사',
+            tags: ['news', 'korean', 'official'],
+            category: 'news',
+            reliability: 'high',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'kbs-news',
+            type: 'url',
+            name: 'KBS 뉴스',
+            url: 'https://news.kbs.co.kr',
+            description: '한국방송공사 뉴스',
+            tags: ['news', 'korean', 'broadcast'],
+            category: 'news',
+            reliability: 'high',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'chosun-news',
+            type: 'url',
+            name: '조선일보',
+            url: 'https://www.chosun.com',
+            description: '조선일보 메인',
+            tags: ['news', 'korean', 'newspaper'],
+            category: 'news',
+            reliability: 'medium',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'joongang-news',
+            type: 'url',
+            name: '중앙일보',
+            url: 'https://www.joongang.co.kr',
+            description: '중앙일보 메인',
+            tags: ['news', 'korean', 'newspaper'],
+            category: 'news',
+            reliability: 'medium',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'hankyoreh-news',
+            type: 'url',
+            name: '한겨레',
+            url: 'https://www.hani.co.kr',
+            description: '한겨레신문 메인',
+            tags: ['news', 'korean', 'newspaper'],
+            category: 'news',
+            reliability: 'medium',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'donga-news',
+            type: 'url',
+            name: '동아일보',
+            url: 'https://www.donga.com',
+            description: '동아일보 메인',
+            tags: ['news', 'korean', 'newspaper'],
+            category: 'news',
+            reliability: 'medium',
+            createdAt: new Date().toISOString(),
+          },
+        ] as UrlItem[],
+      },
+      // Korean Community/Forum folder
+      {
+        id: 'korean-communities',
+        type: 'folder',
+        name: '한국 커뮤니티',
+        description: '주요 한국 커뮤니티 및 포럼',
+        isExpanded: false,
+        createdAt: new Date().toISOString(),
+        children: [
+          {
+            id: 'dcinside',
+            type: 'url',
+            name: '디시인사이드',
+            url: 'https://www.dcinside.com',
+            description: '대표 익명 커뮤니티',
+            tags: ['community', 'korean', 'forum'],
+            category: 'forum',
+            reliability: 'low',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'fmkorea',
+            type: 'url',
+            name: '에펨코리아',
+            url: 'https://www.fmkorea.com',
+            description: '종합 커뮤니티',
+            tags: ['community', 'korean', 'forum'],
+            category: 'forum',
+            reliability: 'low',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'clien',
+            type: 'url',
+            name: '클리앙',
+            url: 'https://www.clien.net',
+            description: 'IT/생활 커뮤니티',
+            tags: ['community', 'korean', 'tech'],
+            category: 'forum',
+            reliability: 'low',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'ruliweb',
+            type: 'url',
+            name: '루리웹',
+            url: 'https://www.ruliweb.com',
+            description: '게임/문화 커뮤니티',
+            tags: ['community', 'korean', 'gaming'],
+            category: 'forum',
+            reliability: 'low',
+            createdAt: new Date().toISOString(),
+          },
+        ] as UrlItem[],
+      },
+      // Tech/IT News folder
+      {
+        id: 'tech-news-sources',
+        type: 'folder',
+        name: 'IT/테크 뉴스',
+        description: 'IT 및 기술 관련 뉴스',
+        isExpanded: false,
+        createdAt: new Date().toISOString(),
+        children: [
+          {
+            id: 'zdnet-korea',
+            type: 'url',
+            name: 'ZDNet Korea',
+            url: 'https://zdnet.co.kr',
+            description: 'IT 전문 미디어',
+            tags: ['tech', 'korean', 'it'],
+            category: 'news',
+            reliability: 'medium',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'etnews',
+            type: 'url',
+            name: '전자신문',
+            url: 'https://www.etnews.com',
+            description: 'IT/전자 전문 미디어',
+            tags: ['tech', 'korean', 'it'],
+            category: 'news',
+            reliability: 'medium',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'bloter',
+            type: 'url',
+            name: '블로터',
+            url: 'https://www.bloter.net',
+            description: 'IT 전문 온라인 미디어',
+            tags: ['tech', 'korean', 'startup'],
+            category: 'news',
+            reliability: 'medium',
+            createdAt: new Date().toISOString(),
+          },
+        ] as UrlItem[],
+      },
+    ] as (FolderItem | UrlItem)[],
     isExpanded: true,
     createdAt: new Date().toISOString(),
   },
@@ -92,7 +269,19 @@ const deepClone = <T>(obj: T): T => JSON.parse(JSON.stringify(obj));
 
 // URL category classification patterns
 const CATEGORY_PATTERNS: Array<{ pattern: RegExp; category: UrlCategory }> = [
-  // News sites
+  // Korean News sites (prioritized before general news pattern)
+  { pattern: /\b(yna\.co\.kr|yonhapnews|kbs\.co\.kr|mbc\.co\.kr|sbs\.co\.kr|jtbc\.co\.kr)\b/i, category: 'news' },
+  { pattern: /\b(chosun\.com|joongang\.co\.kr|donga\.com|hani\.co\.kr|khan\.co\.kr|mk\.co\.kr|hankyung\.com|mt\.co\.kr)\b/i, category: 'news' },
+  { pattern: /\b(newsis|news1|newsen|edaily|zdnet\.co\.kr|etnews|bloter)\b/i, category: 'news' },
+  // Korean Communities/Forums
+  { pattern: /\b(dcinside|fmkorea|clien|ruliweb|ppomppu|todayhumor|bobaedream|mlbpark)\b/i, category: 'forum' },
+  { pattern: /\b(inven\.co\.kr|theqoo|instiz|humoruniv)\b/i, category: 'forum' },
+  // Korean Portals (blog/social)
+  { pattern: /\b(naver\.com\/blog|blog\.naver|post\.naver|brunch\.co\.kr)\b/i, category: 'blog' },
+  { pattern: /\b(tistory\.com|velog\.io)\b/i, category: 'blog' },
+  // Korean Government
+  { pattern: /\b(go\.kr|korea\.kr|mois\.go\.kr|mofa\.go\.kr)\b/i, category: 'government' },
+  // General News sites
   { pattern: /\b(news|times|post|journal|herald|gazette|tribune|reporter|press|daily|bbc|cnn|reuters|ap|nytimes|washingtonpost|guardian)\b/i, category: 'news' },
   { pattern: /\.(news|media)$/i, category: 'news' },
   // Academic
@@ -104,7 +293,7 @@ const CATEGORY_PATTERNS: Array<{ pattern: RegExp; category: UrlCategory }> = [
   // Social media
   { pattern: /\b(twitter|x\.com|facebook|instagram|tiktok|linkedin|reddit|threads|mastodon|bluesky)\b/i, category: 'social' },
   // Wikipedia/Wiki
-  { pattern: /\b(wikipedia|wiki|wikimedia|wiktionary)\b/i, category: 'wiki' },
+  { pattern: /\b(wikipedia|wiki|wikimedia|wiktionary|namu\.wiki|namuwiki)\b/i, category: 'wiki' },
   // Forums
   { pattern: /\b(forum|community|discuss|stackexchange|stackoverflow|quora|answers)\b/i, category: 'forum' },
   // Blogs
@@ -112,21 +301,26 @@ const CATEGORY_PATTERNS: Array<{ pattern: RegExp; category: UrlCategory }> = [
   // Corporate
   { pattern: /\b(about|company|corporate|enterprise|business|inc|corp|ltd)\b/i, category: 'corporate' },
   // E-commerce
-  { pattern: /\b(amazon|ebay|shop|store|buy|cart|checkout|alibaba|etsy)\b/i, category: 'ecommerce' },
+  { pattern: /\b(amazon|ebay|shop|store|buy|cart|checkout|alibaba|etsy|coupang|gmarket|11st)\b/i, category: 'ecommerce' },
 ];
 
 // Reliability patterns
 const HIGH_RELIABILITY_PATTERNS = [
   /\.gov$/i,
   /\.edu$/i,
+  /\.go\.kr$/i, // Korean government
   /\b(reuters|ap|bbc|npr|pbs)\b/i,
   /\b(nature|science|pubmed|arxiv)\b/i,
+  // Korean high-reliability sources (major wire services and public broadcasters)
+  /\b(yna\.co\.kr|yonhapnews|kbs\.co\.kr|korea\.kr)\b/i,
 ];
 
 const LOW_RELIABILITY_PATTERNS = [
   /\b(blog|tumblr|wordpress\.com|medium\.com)\b/i,
   /\b(reddit|twitter|facebook|tiktok)\b/i,
   /\b(forum|community)\b/i,
+  // Korean community/forum sites (lower reliability for news)
+  /\b(dcinside|fmkorea|clien|ruliweb|ppomppu|todayhumor|theqoo|instiz)\b/i,
 ];
 
 /**

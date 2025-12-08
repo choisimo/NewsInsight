@@ -52,7 +52,9 @@ import { InsightFlow } from "@/components/insight";
 import { useDeepSearchSSE } from "@/hooks/useDeepSearchSSE";
 import { useBackgroundTasks } from "@/contexts/BackgroundTaskContext";
 import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
+import { useSearchRecordFromState } from "@/hooks/useSearchRecord";
 import { AnalysisProgressTimeline, type AnalysisStep } from "@/components/AnalysisProgressTimeline";
+import { PriorityUrlEditor, type PriorityUrl } from "@/components/PriorityUrlEditor";
 import {
   startDeepSearch,
   startDrilldownSearch,
@@ -65,6 +67,8 @@ import {
   type Evidence,
   type DrilldownRequest,
 } from "@/lib/api";
+
+const DEEPSEARCH_PRIORITY_URLS_KEY = "deepSearch_priorityUrls";
 
 const STATUS_CONFIG = {
   PENDING: { label: "대기 중", icon: Clock, color: "bg-yellow-500" },
@@ -234,6 +238,16 @@ const DeepSearch = () => {
   const { getTask } = useBackgroundTasks();
   const { saveDeepSearch, saveFailedSearch } = useAutoSaveSearch();
   
+  // Load priority URLs and context from parent search record (if navigating from SearchHistory)
+  const { 
+    priorityUrls: parentPriorityUrls, 
+    parentQuery,
+    parentSearchId,
+    depthLevel: parentDepthLevel,
+    isFromHistory: isFromParentSearch,
+    loading: parentLoading,
+  } = useSearchRecordFromState(location.state);
+  
   // Track search start time for duration calculation
   const [searchStartTime, setSearchStartTime] = useState<number | null>(null);
   
@@ -242,6 +256,9 @@ const DeepSearch = () => {
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [activeStance, setActiveStance] = useState<"all" | "pro" | "con" | "neutral">("all");
   const [viewMode, setViewMode] = useState<"insight" | "list">("insight");
+  
+  // Priority URLs state
+  const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
   
   // Drilldown state
   const [drilldownHistory, setDrilldownHistory] = useState<DrilldownHistoryItem[]>([]);
@@ -292,6 +309,68 @@ const DeepSearch = () => {
       }
     }
   }, [location.state, currentJobId, toast]);
+  
+  // Load priority URLs from sessionStorage on mount
+  useEffect(() => {
+    const stored = sessionStorage.getItem(DEEPSEARCH_PRIORITY_URLS_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored) as PriorityUrl[];
+        setPriorityUrls(parsed);
+      } catch {
+        // Ignore parse errors
+      }
+    }
+  }, []);
+  
+  // Load context from parent search record (when navigating from SearchHistory with derive context)
+  useEffect(() => {
+    if (!parentLoading && isFromParentSearch && !currentJobId) {
+      // Set topic from parent query if not already set
+      if (parentQuery && !topic) {
+        setTopic(parentQuery);
+      }
+      
+      // Merge parent priority URLs with existing ones
+      if (parentPriorityUrls.length > 0) {
+        setPriorityUrls((prev) => {
+          const existingUrls = new Set(prev.map((p) => p.url));
+          const newUrls = parentPriorityUrls
+            .filter((p) => !existingUrls.has(p.url))
+            .map((p): PriorityUrl => ({
+              id: p.id,
+              url: p.url,
+              name: p.name,
+              reliability: p.reliability,
+            }));
+          
+          if (newUrls.length === 0) return prev;
+          
+          const merged = [...prev, ...newUrls];
+          sessionStorage.setItem(DEEPSEARCH_PRIORITY_URLS_KEY, JSON.stringify(merged));
+          return merged;
+        });
+        
+        // Use first priority URL as base URL for starting the search
+        if (!baseUrl) {
+          const firstUrl = parentPriorityUrls[0]?.url;
+          if (firstUrl) {
+            setBaseUrl(firstUrl);
+          }
+        }
+      }
+      
+      // Set initial depth from parent
+      if (parentDepthLevel > 0) {
+        setCurrentDepth(parentDepthLevel);
+      }
+      
+      toast({
+        title: "이전 검색에서 연결됨",
+        description: `${parentPriorityUrls.length}개의 참고 URL이 있는 파생 검색입니다.`,
+      });
+    }
+  }, [parentLoading, isFromParentSearch, parentQuery, parentPriorityUrls, parentDepthLevel, currentJobId, topic, baseUrl, toast]);
 
   // Load query from URL params (e.g., from FactCheck page)
   useEffect(() => {
@@ -508,9 +587,20 @@ const DeepSearch = () => {
     setSearchParams({});
     setDrilldownHistory([]);
     setCurrentDepth(0);
+    setPriorityUrls([]);
+    sessionStorage.removeItem(DEEPSEARCH_PRIORITY_URLS_KEY);
     queryClient.removeQueries({ queryKey: ['deepSearch', 'job'] });
     queryClient.removeQueries({ queryKey: ['deepSearch', 'result'] });
   }, [queryClient, setSearchParams]);
+
+  // Handler for PriorityUrlEditor changes
+  const handlePriorityUrlsChange = useCallback((newUrls: PriorityUrl[]) => {
+    setPriorityUrls(newUrls);
+    // If a URL is added and no baseUrl is set, use the first URL as baseUrl
+    if (newUrls.length > 0 && !baseUrl) {
+      setBaseUrl(newUrls[0].url);
+    }
+  }, [baseUrl]);
 
   // 드릴다운 핸들러
   const handleDrilldown = useCallback((evidence: Evidence) => {
@@ -790,6 +880,19 @@ const DeepSearch = () => {
           </CardContent>
         </Card>
 
+        {/* Priority URLs Editor */}
+        <PriorityUrlEditor
+          storageKey={DEEPSEARCH_PRIORITY_URLS_KEY}
+          urls={priorityUrls}
+          onUrlsChange={handlePriorityUrlsChange}
+          disabled={isProcessing}
+          maxUrls={10}
+          title="참고 URL"
+          description="분석 시 우선적으로 참고할 URL을 추가하세요. 첫 번째 URL이 검색 시작점으로 사용됩니다."
+          defaultCollapsed={priorityUrls.length === 0}
+          className="mb-8"
+        />
+
         {/* Processing Status */}
         {isProcessing && (
           <Card className="mb-8">
@@ -868,17 +971,32 @@ const DeepSearch = () => {
                     url: e.url,
                     source: e.source,
                     stance: e.stance,
+                    stanceLabel: e.stance === 'pro' ? '찬성' : e.stance === 'con' ? '반대' : '중립',
                   }))}
                   options={{
                     filename: `newsinsight-deepsearch-${result.topic.replace(/\s+/g, '-')}`,
                     title: `"${result.topic}" Deep Search 결과`,
                     metadata: {
                       주제: result.topic,
+                      분석완료: result.completedAt ? new Date(result.completedAt).toLocaleString("ko-KR") : "-",
                       총증거: result.evidence.length,
-                      찬성: result.stanceDistribution.pro,
-                      반대: result.stanceDistribution.con,
-                      중립: result.stanceDistribution.neutral,
+                      '찬성 증거': result.stanceDistribution.pro,
+                      '반대 증거': result.stanceDistribution.con,
+                      '중립 증거': result.stanceDistribution.neutral,
+                      '찬성 비율': `${result.stanceDistribution.proRatio.toFixed(1)}%`,
+                      '반대 비율': `${result.stanceDistribution.conRatio.toFixed(1)}%`,
+                      '중립 비율': `${result.stanceDistribution.neutralRatio.toFixed(1)}%`,
+                      jobId: result.jobId,
                     },
+                    sections: [
+                      {
+                        title: '입장 분포 요약',
+                        content: `총 ${result.evidence.length}개의 증거 중:\n` +
+                          `- 찬성: ${result.stanceDistribution.pro}건 (${result.stanceDistribution.proRatio.toFixed(1)}%)\n` +
+                          `- 반대: ${result.stanceDistribution.con}건 (${result.stanceDistribution.conRatio.toFixed(1)}%)\n` +
+                          `- 중립: ${result.stanceDistribution.neutral}건 (${result.stanceDistribution.neutralRatio.toFixed(1)}%)`,
+                      },
+                    ],
                   }}
                   size="sm"
                   disabled={result.evidence.length === 0}

@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SearchHistoryPanel } from '@/components/SearchHistoryPanel';
+import { DeriveSearchDialog } from '@/components/DeriveSearchDialog';
 import type { SearchHistoryRecord, SearchHistoryType } from '@/lib/api';
 
 /**
@@ -11,6 +13,10 @@ import type { SearchHistoryRecord, SearchHistoryType } from '@/lib/api';
  */
 export default function SearchHistory() {
   const navigate = useNavigate();
+  
+  // Dialog state
+  const [deriveDialogOpen, setDeriveDialogOpen] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState<SearchHistoryRecord | null>(null);
 
   // Navigate to the appropriate page based on search type
   const getSearchPagePath = (searchType: SearchHistoryType): string => {
@@ -41,18 +47,10 @@ export default function SearchHistory() {
     });
   };
 
-  // Handle deriving a new search from an existing one
+  // Handle deriving a new search from an existing one - opens dialog
   const handleDeriveSearch = (search: SearchHistoryRecord) => {
-    const path = getSearchPagePath(search.searchType);
-    // Navigate to the search page with derive context
-    navigate(path, { 
-      state: { 
-        query: search.query,
-        deriveFrom: search.id,
-        parentSearchId: search.id,
-        depthLevel: (search.depthLevel || 0) + 1
-      } 
-    });
+    setSelectedRecord(search);
+    setDeriveDialogOpen(true);
   };
 
   return (
@@ -73,6 +71,15 @@ export default function SearchHistory() {
           className="h-full"
         />
       </div>
+      
+      {/* Derive Search Dialog */}
+      {selectedRecord && (
+        <DeriveSearchDialog
+          open={deriveDialogOpen}
+          onOpenChange={setDeriveDialogOpen}
+          searchRecord={selectedRecord}
+        />
+      )}
     </div>
   );
 }

@@ -20,9 +20,6 @@ import {
   X,
   ChevronDown,
   ChevronUp,
-  Info,
-  FolderOpen,
-  Link as LinkIcon,
   Save,
   Download,
   FileJson,
@@ -50,11 +47,15 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useFactCheckStorage, SavedFactCheckResult } from "@/hooks/useFactCheckStorage";
 import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
+import { useSearchRecordFromState, type PriorityUrl as SearchRecordPriorityUrl } from "@/hooks/useSearchRecord";
 import { UrlClaimExtractor } from "@/components/UrlClaimExtractor";
+import { PriorityUrlEditor, type PriorityUrl } from "@/components/PriorityUrlEditor";
 import {
   openDeepAnalysisStream,
   checkUnifiedSearchHealth,
 } from "@/lib/api";
+
+const FACTCHECK_PRIORITY_URLS_KEY = "factCheck_priorityUrls";
 
 // Verification status configuration
 const STATUS_CONFIG = {
@@ -360,19 +361,20 @@ const CredibilityMeter = ({ assessment }: CredibilityMeterProps) => {
   );
 };
 
-// Interface for priority URLs passed from UrlCollections page
-interface PriorityUrl {
-  id: string;
-  url: string;
-  name: string;
-}
-
 // Main Component
 const FactCheck = () => {
   const { toast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
   const { saveFactCheck, saveFailedSearch } = useAutoSaveSearch();
+  
+  // Load priority URLs from parent search record (if navigating from SearchHistory)
+  const { 
+    priorityUrls: parentPriorityUrls, 
+    parentQuery,
+    isFromHistory,
+    loading: parentLoading,
+  } = useSearchRecordFromState(location.state);
 
   const [topic, setTopic] = useState("");
   const [claims, setClaims] = useState<string[]>([""]);
@@ -406,6 +408,7 @@ const FactCheck = () => {
     deleteResult,
     exportToJson,
     exportToMarkdown,
+    exportToText,
   } = useFactCheckStorage();
 
   // Health check
@@ -424,12 +427,12 @@ const FactCheck = () => {
     if (locationState?.priorityUrls && locationState.priorityUrls.length > 0) {
       setPriorityUrls(locationState.priorityUrls);
       // Save to sessionStorage for persistence across page refreshes
-      sessionStorage.setItem("factCheck_priorityUrls", JSON.stringify(locationState.priorityUrls));
+      sessionStorage.setItem(FACTCHECK_PRIORITY_URLS_KEY, JSON.stringify(locationState.priorityUrls));
       // Clear the location state to prevent re-adding on refresh
       window.history.replaceState({}, document.title);
     } else {
       // Try to load from sessionStorage
-      const stored = sessionStorage.getItem("factCheck_priorityUrls");
+      const stored = sessionStorage.getItem(FACTCHECK_PRIORITY_URLS_KEY);
       if (stored) {
         try {
           const parsed = JSON.parse(stored) as PriorityUrl[];
@@ -440,6 +443,39 @@ const FactCheck = () => {
       }
     }
   }, [location.state]);
+  
+  // Load priority URLs from parent search record (when navigating from SearchHistory with derive context)
+  useEffect(() => {
+    if (!parentLoading && isFromHistory && parentPriorityUrls.length > 0) {
+      // Merge with existing priority URLs, avoiding duplicates by URL
+      setPriorityUrls((prev) => {
+        const existingUrls = new Set(prev.map((p) => p.url));
+        const newUrls = parentPriorityUrls
+          .filter((p: SearchRecordPriorityUrl) => !existingUrls.has(p.url))
+          .map((p: SearchRecordPriorityUrl): PriorityUrl => ({
+            id: p.id,
+            url: p.url,
+            name: p.name,
+          }));
+        
+        if (newUrls.length === 0) return prev;
+        
+        const merged = [...prev, ...newUrls];
+        sessionStorage.setItem(FACTCHECK_PRIORITY_URLS_KEY, JSON.stringify(merged));
+        return merged;
+      });
+      
+      // Also set the topic from parent query if not already set
+      if (parentQuery && !topic) {
+        setTopic(parentQuery);
+      }
+      
+      toast({
+        title: "이전 검색에서 URL 불러옴",
+        description: `${parentPriorityUrls.length}개의 참고 URL이 추가되었습니다.`,
+      });
+    }
+  }, [parentLoading, isFromHistory, parentPriorityUrls, parentQuery, topic, toast]);
 
   // Load query from location state (e.g., from Search History page)
   useEffect(() => {
@@ -475,29 +511,11 @@ const FactCheck = () => {
       }
     }
   }, [location.state, isAnalyzing, toast]);
-  
-  // Remove a priority URL
-  const removePriorityUrl = useCallback((id: string) => {
-    setPriorityUrls((prev) => {
-      const updated = prev.filter((u) => u.id !== id);
-      if (updated.length > 0) {
-        sessionStorage.setItem("factCheck_priorityUrls", JSON.stringify(updated));
-      } else {
-        sessionStorage.removeItem("factCheck_priorityUrls");
-      }
-      return updated;
-    });
+
+  // Handler for PriorityUrlEditor changes
+  const handlePriorityUrlsChange = useCallback((newUrls: PriorityUrl[]) => {
+    setPriorityUrls(newUrls);
   }, []);
-  
-  // Clear all priority URLs
-  const clearPriorityUrls = useCallback(() => {
-    setPriorityUrls([]);
-    sessionStorage.removeItem("factCheck_priorityUrls");
-    toast({
-      title: "초기화됨",
-      description: "참고 URL이 모두 제거되었습니다.",
-    });
-  }, [toast]);
 
   // Save current result
   const handleSaveResult = useCallback(() => {
@@ -599,12 +617,14 @@ const FactCheck = () => {
   }, [toast]);
 
   // Handle export
-  const handleExport = useCallback((id: string, format: "json" | "markdown") => {
+  const handleExport = useCallback((id: string, format: "json" | "markdown" | "txt") => {
     let filename: string | null = null;
     if (format === "json") {
       filename = exportToJson(id);
-    } else {
+    } else if (format === "markdown") {
       filename = exportToMarkdown(id);
+    } else if (format === "txt") {
+      filename = exportToText(id);
     }
     
     if (filename) {
@@ -613,7 +633,7 @@ const FactCheck = () => {
         description: `${filename} 파일이 다운로드되었습니다.`,
       });
     }
-  }, [exportToJson, exportToMarkdown, toast]);
+  }, [exportToJson, exportToMarkdown, exportToText, toast]);
 
   // Handle delete
   const handleDeleteResult = useCallback((id: string) => {
@@ -1042,6 +1062,10 @@ const FactCheck = () => {
                                 <FileText className="h-4 w-4 mr-2" />
                                 Markdown
                               </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleExport(result.id, "txt")}>
+                                <FileText className="h-4 w-4 mr-2" />
+                                텍스트
+                              </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                           <Button
@@ -1063,75 +1087,18 @@ const FactCheck = () => {
           </Card>
         )}
 
-        {/* Priority URLs from URL Collections */}
-        {priorityUrls.length > 0 && (
-          <Card className="mb-8 border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/10">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FolderOpen className="h-5 w-5 text-blue-600" />
-                  <CardTitle className="text-lg">참고 URL</CardTitle>
-                  <Badge variant="secondary">{priorityUrls.length}개</Badge>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearPriorityUrls}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <X className="h-4 w-4 mr-1" />
-                  모두 제거
-                </Button>
-              </div>
-              <CardDescription>
-                URL 컬렉션에서 선택한 URL입니다. 팩트체크 시 추가 참고 자료로 활용됩니다.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-2">
-                {priorityUrls.map((item) => {
-                  // Safe URL hostname extraction
-                  let displayName = item.name;
-                  if (!displayName && item.url) {
-                    try {
-                      displayName = new URL(item.url).hostname;
-                    } catch {
-                      displayName = item.url;
-                    }
-                  }
-                  if (!displayName) {
-                    displayName = '알 수 없는 URL';
-                  }
-
-                  return (
-                    <Badge
-                      key={item.id}
-                      variant="outline"
-                      className="pl-2 pr-1 py-1 flex items-center gap-1 bg-white dark:bg-gray-800"
-                    >
-                      <LinkIcon className="h-3 w-3 text-blue-500" />
-                      <span className="max-w-[200px] truncate" title={item.url || ''}>
-                        {displayName}
-                      </span>
-                      <button
-                        onClick={() => removePriorityUrl(item.id)}
-                        className="ml-1 p-0.5 rounded hover:bg-muted transition-colors"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </Badge>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-muted-foreground mt-3">
-                <Link to="/url-collections" className="text-blue-600 hover:underline">
-                  URL 컬렉션
-                </Link>
-                에서 더 많은 URL을 추가할 수 있습니다.
-              </p>
-            </CardContent>
-          </Card>
-        )}
+        {/* Priority URLs Editor */}
+        <PriorityUrlEditor
+          storageKey={FACTCHECK_PRIORITY_URLS_KEY}
+          urls={priorityUrls}
+          onUrlsChange={handlePriorityUrlsChange}
+          disabled={isAnalyzing}
+          maxUrls={10}
+          title="참고 URL"
+          description="팩트체크 시 우선적으로 참고할 URL을 추가하세요. 신뢰할 수 있는 출처를 추가하면 검증 품질이 향상됩니다."
+          defaultCollapsed={priorityUrls.length === 0}
+          className="mb-8"
+        />
 
         {/* Input Form */}
         <Card className="mb-8">

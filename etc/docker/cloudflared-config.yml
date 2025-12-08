@@ -1,0 +1,14 @@
+tunnel: ed317942-3e87-4b0e-a3c2-3df106d4c0f4
+ingress:
+  - hostname: news.nodove.com
+    path: "/api/.*"
+    service: http://172.18.0.10:8000
+    originRequest:
+      connectTimeout: 30s
+      noTLSVerify: true
+  - hostname: news.nodove.com
+    service: http://172.18.0.12:8080
+    originRequest:
+      connectTimeout: 30s
+      noTLSVerify: true
+  - service: http_status:404

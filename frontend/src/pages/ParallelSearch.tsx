@@ -1418,6 +1418,7 @@ const ParallelSearch = () => {
                       id: r.id,
                       title: r.title,
                       snippet: r.snippet,
+                      content: r.content,
                       url: r.url,
                       source: r.source,
                       publishedAt: r.publishedAt,
@@ -1432,6 +1433,8 @@ const ParallelSearch = () => {
                         총결과: results.length,
                         DB결과: sourceStatus.database.count,
                         웹결과: sourceStatus.web.count,
+                        AI분석: aiContent ? '포함됨' : '없음',
+                        ...(aiContent && { AI분석내용: aiContent }),
                       },
                     }}
                     disabled={results.length === 0}

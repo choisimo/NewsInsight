@@ -73,7 +73,8 @@ public class UnifiedSearchService {
         private String source;          // "database", "web", "ai"
         private String sourceLabel;     // 사용자에게 보여줄 출처명
         private String title;
-        private String snippet;
+        private String snippet;         // UI 표시용 요약 (200자)
+        private String content;         // 전체 본문 (export/저장용)
         private String url;
         private String publishedAt;
         private Double relevanceScore;
@@ -255,6 +256,7 @@ public class UnifiedSearchService {
                 .sourceLabel(sourceName)
                 .title(data.getTitle())
                 .snippet(buildSnippet(data.getContent()))
+                .content(cleanContent(data.getContent()))  // 전체 본문 추가
                 .url(data.getUrl())
                 .publishedAt(publishedAt)
                 .relevanceScore(data.getQualityScore());
@@ -312,12 +314,16 @@ public class UnifiedSearchService {
                     try {
                         Crawl4aiClient.CrawlResult crawlResult = crawl4aiClient.crawl(url);
                         if (crawlResult != null && crawlResult.getContent() != null) {
+                            String rawContent = crawlResult.getContent();
+                            String fullContent = cleanContent(rawContent);  // 전체 본문 정제
+                            
                             SearchResult result = SearchResult.builder()
                                     .id(UUID.randomUUID().toString())
                                     .source("web")
                                     .sourceLabel("웹 검색")
                                     .title(crawlResult.getTitle() != null ? crawlResult.getTitle() : extractTitleFromUrl(url))
-                                    .snippet(buildSnippet(crawlResult.getContent()))
+                                    .snippet(buildSnippet(rawContent))
+                                    .content(fullContent)  // 전체 본문 보존
                                     .url(url)
                                     .build();
 
@@ -419,15 +425,17 @@ public class UnifiedSearchService {
                                 .build());
                     })
                     .doOnComplete(() -> {
-                        // AI 분석 완료
+                        // AI 분석 완료 - 전체 텍스트 보존
+                        String fullContent = fullResponse.toString();
                         SearchResult aiResult = SearchResult.builder()
                                 .id(UUID.randomUUID().toString())
                                 .source("ai")
                                 .sourceLabel("AI 분석")
                                 .title("'" + query + "' AI 분석 결과")
-                                .snippet(fullResponse.length() > SNIPPET_MAX_LENGTH
-                                        ? fullResponse.substring(0, SNIPPET_MAX_LENGTH) + "..."
-                                        : fullResponse.toString())
+                                .snippet(fullContent.length() > SNIPPET_MAX_LENGTH
+                                        ? fullContent.substring(0, SNIPPET_MAX_LENGTH) + "..."
+                                        : fullContent)
+                                .content(fullContent)  // 전체 AI 분석 결과 보존
                                 .build();
 
                         sink.next(SearchEvent.builder()
@@ -532,6 +540,31 @@ public class UnifiedSearchService {
         }
 
         return text.substring(0, cut).trim() + "...";
+    }
+
+    /**
+     * HTML 태그를 제거하고 정리된 전체 텍스트를 반환합니다.
+     * snippet과 달리 길이 제한 없이 전체 내용을 반환합니다.
+     *
+     * @param content 원본 콘텐츠 (HTML 포함 가능)
+     * @return 정리된 전체 텍스트
+     */
+    private String cleanContent(String content) {
+        if (content == null || content.isBlank()) {
+            return null;
+        }
+
+        String text;
+        try {
+            text = Jsoup.parse(content).text();
+        } catch (Exception e) {
+            text = content;
+        }
+
+        // 연속 공백 정리
+        text = text.replaceAll("\\s+", " ").trim();
+        
+        return text.isEmpty() ? null : text;
     }
 
     // ============================================
@@ -644,12 +677,14 @@ public class UnifiedSearchService {
                 try {
                     Crawl4aiClient.CrawlResult crawlResult = crawl4aiClient.crawl(url);
                     if (crawlResult != null && crawlResult.getContent() != null) {
+                        String fullContent = cleanContent(crawlResult.getContent());
                         SearchResult result = SearchResult.builder()
                                 .id(UUID.randomUUID().toString())
                                 .source("web")
                                 .sourceLabel("웹 검색")
                                 .title(crawlResult.getTitle() != null ? crawlResult.getTitle() : extractTitleFromUrl(url))
                                 .snippet(buildSnippet(crawlResult.getContent()))
+                                .content(fullContent)  // 전체 본문 추가
                                 .url(url)
                                 .build();
 
@@ -700,15 +735,17 @@ public class UnifiedSearchService {
                     })
                     .blockLast(Duration.ofMinutes(2));
 
-            // Publish final AI result
+            // Publish final AI result - 전체 텍스트 보존
+            String fullContent = fullResponse.toString();
             SearchResult aiResult = SearchResult.builder()
                     .id(UUID.randomUUID().toString())
                     .source("ai")
                     .sourceLabel("AI 분석")
                     .title("'" + query + "' AI 분석 결과")
-                    .snippet(fullResponse.length() > SNIPPET_MAX_LENGTH
-                            ? fullResponse.substring(0, SNIPPET_MAX_LENGTH) + "..."
-                            : fullResponse.toString())
+                    .snippet(fullContent.length() > SNIPPET_MAX_LENGTH
+                            ? fullContent.substring(0, SNIPPET_MAX_LENGTH) + "..."
+                            : fullContent)
+                    .content(fullContent)  // 전체 AI 분석 결과 보존
                     .build();
 
             unifiedSearchEventService.publishResult(jobId, "ai", aiResult);

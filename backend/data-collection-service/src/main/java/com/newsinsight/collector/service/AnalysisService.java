@@ -122,8 +122,9 @@ public class AnalysisService {
 
         String url = data.getUrl();
         String snippet = buildSnippet(data.getContent());
+        String content = cleanContent(data.getContent());  // 전체 본문 추가
 
-        return new ArticleDto(id, title, sourceName, publishedAt, url, snippet);
+        return new ArticleDto(id, title, sourceName, publishedAt, url, snippet, content);
     }
 
     private List<KeywordDataDto> extractTopKeywords(List<CollectedData> documents, String query) {
@@ -211,5 +212,30 @@ public class AnalysisService {
         }
 
         return text.substring(0, cut).trim() + "...";
+    }
+
+    /**
+     * HTML 태그를 제거하고 정리된 전체 텍스트를 반환합니다.
+     * snippet과 달리 길이 제한 없이 전체 내용을 반환합니다.
+     *
+     * @param content 원본 콘텐츠 (HTML 포함 가능)
+     * @return 정리된 전체 텍스트
+     */
+    private String cleanContent(String content) {
+        if (content == null || content.isBlank()) {
+            return null;
+        }
+
+        String text;
+        try {
+            text = Jsoup.parse(content).text();
+        } catch (Exception e) {
+            text = content;
+        }
+
+        // 연속 공백 정리
+        text = text.replaceAll("\\s+", " ").trim();
+        
+        return text.isEmpty() ? null : text;
     }
 }

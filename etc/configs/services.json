@@ -1,0 +1,277 @@
+{
+  "$schema": "./services.schema.json",
+  "version": "1.0.0",
+  "description": "NewsInsight service configuration profiles",
+  
+  "services": {
+    "api-gateway": {
+      "name": "API Gateway",
+      "description": "Spring Boot API Gateway service",
+      "port": 8000,
+      "healthcheck": "/actuator/health",
+      "dependencies": ["postgres", "mongo", "redis", "consul", "redpanda"],
+      "profiles": {
+        "development": {
+          "replicas": 1,
+          "resources": {
+            "memory": "512Mi",
+            "cpu": "250m"
+          },
+          "env": {
+            "SPRING_PROFILES_ACTIVE": "development",
+            "LOG_LEVEL": "DEBUG",
+            "JAVA_OPTS": "-Xms128m -Xmx256m"
+          }
+        },
+        "staging": {
+          "replicas": 1,
+          "resources": {
+            "memory": "1Gi",
+            "cpu": "500m"
+          },
+          "env": {
+            "SPRING_PROFILES_ACTIVE": "staging",
+            "LOG_LEVEL": "DEBUG",
+            "JAVA_OPTS": "-Xms256m -Xmx512m"
+          }
+        },
+        "production": {
+          "replicas": 3,
+          "resources": {
+            "memory": "2Gi",
+            "cpu": "1000m"
+          },
+          "env": {
+            "SPRING_PROFILES_ACTIVE": "production",
+            "LOG_LEVEL": "INFO",
+            "JAVA_OPTS": "-Xms256m -Xmx512m"
+          }
+        }
+      }
+    },
+    
+    "collector-service": {
+      "name": "Data Collector Service",
+      "description": "News data collection and processing service",
+      "port": 8081,
+      "healthcheck": "/actuator/health",
+      "dependencies": ["postgres", "mongo", "redis", "consul", "redpanda"],
+      "profiles": {
+        "development": {
+          "replicas": 1,
+          "resources": {
+            "memory": "512Mi",
+            "cpu": "250m"
+          },
+          "env": {
+            "SPRING_PROFILES_ACTIVE": "development",
+            "LOG_LEVEL": "DEBUG",
+            "JAVA_OPTS": "-Xms128m -Xmx256m"
+          }
+        },
+        "staging": {
+          "replicas": 1,
+          "resources": {
+            "memory": "1Gi",
+            "cpu": "500m"
+          },
+          "env": {
+            "SPRING_PROFILES_ACTIVE": "staging",
+            "LOG_LEVEL": "DEBUG",
+            "JAVA_OPTS": "-Xms256m -Xmx512m"
+          }
+        },
+        "production": {
+          "replicas": 2,
+          "resources": {
+            "memory": "2Gi",
+            "cpu": "1000m"
+          },
+          "env": {
+            "SPRING_PROFILES_ACTIVE": "production",
+            "LOG_LEVEL": "INFO",
+            "JAVA_OPTS": "-Xms256m -Xmx512m"
+          }
+        }
+      }
+    },
+    
+    "browser-use-api": {
+      "name": "Browser-Use API",
+      "description": "AI-powered browser automation service",
+      "port": 8500,
+      "healthcheck": "/health",
+      "dependencies": [],
+      "profiles": {
+        "development": {
+          "replicas": 1,
+          "resources": {
+            "memory": "1Gi",
+            "cpu": "500m"
+          },
+          "env": {
+            "PYTHONUNBUFFERED": "1",
+            "LOG_LEVEL": "DEBUG"
+          }
+        },
+        "staging": {
+          "replicas": 1,
+          "resources": {
+            "memory": "2Gi",
+            "cpu": "1000m"
+          },
+          "env": {
+            "PYTHONUNBUFFERED": "1",
+            "LOG_LEVEL": "DEBUG"
+          }
+        },
+        "production": {
+          "replicas": 2,
+          "resources": {
+            "memory": "4Gi",
+            "cpu": "2000m"
+          },
+          "env": {
+            "PYTHONUNBUFFERED": "1",
+            "LOG_LEVEL": "INFO"
+          }
+        }
+      }
+    },
+    
+    "autonomous-crawler": {
+      "name": "Autonomous Crawler",
+      "description": "Autonomous web crawling and data extraction service",
+      "port": 9090,
+      "healthcheck": "/health",
+      "dependencies": ["postgres", "mongo", "redis", "browser-use-api", "web-crawler"],
+      "profiles": {
+        "development": {
+          "replicas": 1,
+          "resources": {
+            "memory": "512Mi",
+            "cpu": "250m"
+          },
+          "env": {
+            "LOG_LEVEL": "DEBUG"
+          }
+        },
+        "staging": {
+          "replicas": 1,
+          "resources": {
+            "memory": "1Gi",
+            "cpu": "500m"
+          },
+          "env": {
+            "LOG_LEVEL": "DEBUG"
+          }
+        },
+        "production": {
+          "replicas": 2,
+          "resources": {
+            "memory": "2Gi",
+            "cpu": "1000m"
+          },
+          "env": {
+            "LOG_LEVEL": "INFO"
+          }
+        }
+      }
+    },
+    
+    "frontend": {
+      "name": "Frontend",
+      "description": "React/Vite frontend application",
+      "port": 8080,
+      "healthcheck": "/health",
+      "dependencies": ["api-gateway"],
+      "profiles": {
+        "development": {
+          "replicas": 1,
+          "resources": {
+            "memory": "128Mi",
+            "cpu": "100m"
+          },
+          "env": {}
+        },
+        "staging": {
+          "replicas": 1,
+          "resources": {
+            "memory": "256Mi",
+            "cpu": "200m"
+          },
+          "env": {}
+        },
+        "production": {
+          "replicas": 3,
+          "resources": {
+            "memory": "512Mi",
+            "cpu": "500m"
+          },
+          "env": {}
+        }
+      }
+    }
+  },
+  
+  "ml-addons": {
+    "sentiment-addon": {
+      "name": "Sentiment Analysis Addon",
+      "port": 8100,
+      "healthcheck": "/health",
+      "enabled": {
+        "development": false,
+        "staging": false,
+        "production": true
+      }
+    },
+    "factcheck-addon": {
+      "name": "Fact Check Addon",
+      "port": 8101,
+      "healthcheck": "/health",
+      "enabled": {
+        "development": false,
+        "staging": false,
+        "production": true
+      }
+    },
+    "bias-addon": {
+      "name": "Bias Detection Addon",
+      "port": 8102,
+      "healthcheck": "/health",
+      "enabled": {
+        "development": false,
+        "staging": false,
+        "production": true
+      }
+    }
+  },
+  
+  "infrastructure": {
+    "postgres": {
+      "image": "postgres:15-alpine",
+      "port": 5432,
+      "healthcheck": "pg_isready"
+    },
+    "mongo": {
+      "image": "mongo:7",
+      "port": 27017,
+      "healthcheck": "mongosh --eval db.adminCommand('ping')"
+    },
+    "redis": {
+      "image": "redis:7-alpine",
+      "port": 6379,
+      "healthcheck": "redis-cli ping"
+    },
+    "consul": {
+      "image": "hashicorp/consul:1.18",
+      "port": 8500,
+      "healthcheck": "consul members"
+    },
+    "redpanda": {
+      "image": "docker.redpanda.com/redpandadata/redpanda:latest",
+      "port": 9092,
+      "healthcheck": "rpk cluster health"
+    }
+  }
+}

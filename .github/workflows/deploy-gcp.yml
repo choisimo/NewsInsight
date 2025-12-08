@@ -1,0 +1,387 @@
+name: Deploy to GCP
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.github/workflows/publish-mkdocs-wiki.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      services:
+        description: 'Services to deploy (comma-separated or "all")'
+        required: false
+        default: 'all'
+        type: string
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: asia-northeast3
+  ARTIFACT_REGISTRY: ${{ secrets.GCP_PROJECT_ID }}/newsinsight-repo
+  GKE_CLUSTER: newsinsight-cluster
+
+jobs:
+  # ============================================================================
+  # Detect Changes
+  # ============================================================================
+  detect-changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.changes.outputs.frontend }}
+      api-gateway: ${{ steps.changes.outputs.api-gateway }}
+      collector-service: ${{ steps.changes.outputs.collector-service }}
+      browser-use-api: ${{ steps.changes.outputs.browser-use-api }}
+      autonomous-crawler: ${{ steps.changes.outputs.autonomous-crawler }}
+      sentiment-addon: ${{ steps.changes.outputs.sentiment-addon }}
+      factcheck-addon: ${{ steps.changes.outputs.factcheck-addon }}
+      bias-addon: ${{ steps.changes.outputs.bias-addon }}
+      k8s: ${{ steps.changes.outputs.k8s }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            api-gateway:
+              - 'backend/api-gateway-service/**'
+              - 'backend/shared-libs/**'
+            collector-service:
+              - 'backend/data-collection-service/**'
+              - 'backend/shared-libs/**'
+            browser-use-api:
+              - 'backend/browser-use/**'
+            autonomous-crawler:
+              - 'backend/autonomous-crawler-service/**'
+            sentiment-addon:
+              - 'backend/ml-addons/sentiment-addon/**'
+            factcheck-addon:
+              - 'backend/ml-addons/factcheck-addon/**'
+            bias-addon:
+              - 'backend/ml-addons/bias-addon/**'
+            k8s:
+              - 'k8s/**'
+
+  # ============================================================================
+  # Build and Push Docker Images
+  # ============================================================================
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.frontend == 'true' || 
+      github.event.inputs.services == 'all' ||
+      contains(github.event.inputs.services, 'frontend')
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - uses: google-github-actions/setup-gcloud@v2
+      
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+      
+      - name: Build and Push
+        run: |
+          cd frontend
+          docker build \
+            --build-arg VITE_API_BASE_URL=${{ secrets.PRODUCTION_API_URL }} \
+            --build-arg VITE_BROWSER_USE_URL=${{ secrets.PRODUCTION_API_URL }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/frontend:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/frontend:latest \
+            .
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/frontend:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/frontend:latest
+
+  build-api-gateway:
+    name: Build API Gateway
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.api-gateway == 'true' || 
+      github.event.inputs.services == 'all' ||
+      contains(github.event.inputs.services, 'api-gateway')
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - uses: google-github-actions/setup-gcloud@v2
+      
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+      
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+      
+      - name: Build and Push
+        run: |
+          docker build \
+            -f backend/api-gateway-service/Dockerfile \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/api-gateway:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/api-gateway:latest \
+            .
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/api-gateway:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/api-gateway:latest
+
+  build-collector-service:
+    name: Build Collector Service
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.collector-service == 'true' || 
+      github.event.inputs.services == 'all' ||
+      contains(github.event.inputs.services, 'collector-service')
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - uses: google-github-actions/setup-gcloud@v2
+      
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+      
+      - name: Build and Push
+        run: |
+          docker build \
+            -f backend/data-collection-service/Dockerfile \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/collector-service:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/collector-service:latest \
+            .
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/collector-service:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/collector-service:latest
+
+  build-browser-use-api:
+    name: Build Browser-Use API
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.browser-use-api == 'true' || 
+      github.event.inputs.services == 'all' ||
+      contains(github.event.inputs.services, 'browser-use-api')
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - uses: google-github-actions/setup-gcloud@v2
+      
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+      
+      - name: Build and Push
+        run: |
+          docker build \
+            -f backend/browser-use/Dockerfile.api \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/browser-use-api:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/browser-use-api:latest \
+            backend/browser-use
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/browser-use-api:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/browser-use-api:latest
+
+  build-autonomous-crawler:
+    name: Build Autonomous Crawler
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.autonomous-crawler == 'true' || 
+      github.event.inputs.services == 'all' ||
+      contains(github.event.inputs.services, 'autonomous-crawler')
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - uses: google-github-actions/setup-gcloud@v2
+      
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+      
+      - name: Build and Push
+        run: |
+          docker build \
+            -f backend/autonomous-crawler-service/Dockerfile \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/autonomous-crawler:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/autonomous-crawler:latest \
+            .
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/autonomous-crawler:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/autonomous-crawler:latest
+
+  build-ml-addons:
+    name: Build ML Addons
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.sentiment-addon == 'true' ||
+      needs.detect-changes.outputs.factcheck-addon == 'true' ||
+      needs.detect-changes.outputs.bias-addon == 'true' ||
+      github.event.inputs.services == 'all' ||
+      contains(github.event.inputs.services, 'ml-addons')
+    strategy:
+      matrix:
+        addon: [sentiment, factcheck, bias]
+        include:
+          - addon: sentiment
+            port: 8100
+          - addon: factcheck
+            port: 8101
+          - addon: bias
+            port: 8102
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - uses: google-github-actions/setup-gcloud@v2
+      
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+      
+      - name: Build and Push ${{ matrix.addon }}-addon
+        run: |
+          docker build \
+            -f backend/ml-addons/${{ matrix.addon }}-addon/Dockerfile \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/${{ matrix.addon }}-addon:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/${{ matrix.addon }}-addon:latest \
+            backend/ml-addons/${{ matrix.addon }}-addon
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/${{ matrix.addon }}-addon:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/${{ matrix.addon }}-addon:latest
+
+  # ============================================================================
+  # Deploy to GKE
+  # ============================================================================
+  deploy:
+    name: Deploy to GKE
+    runs-on: ubuntu-latest
+    needs: 
+      - detect-changes
+      - build-frontend
+      - build-api-gateway
+      - build-collector-service
+      - build-browser-use-api
+      - build-autonomous-crawler
+      - build-ml-addons
+    if: |
+      always() && 
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - uses: google-github-actions/setup-gcloud@v2
+      
+      - name: Install gke-gcloud-auth-plugin
+        run: |
+          gcloud components install gke-gcloud-auth-plugin
+      
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials ${{ env.GKE_CLUSTER }} \
+            --region ${{ env.REGION }} \
+            --project ${{ env.PROJECT_ID }}
+      
+      - name: Set up Kustomize
+        run: |
+          curl -sfLo kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.3.0/kustomize_v5.3.0_linux_amd64.tar.gz
+          tar xzf kustomize
+          chmod +x kustomize
+          sudo mv kustomize /usr/local/bin/
+      
+      - name: Deploy with Kustomize
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'staging' }}
+        run: |
+          cd k8s/overlays/${ENVIRONMENT}
+          
+          # Update image tags
+          kustomize edit set image \
+            frontend=${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/frontend:${{ github.sha }} \
+            api-gateway=${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/api-gateway:${{ github.sha }} \
+            collector-service=${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/collector-service:${{ github.sha }} \
+            browser-use-api=${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/browser-use-api:${{ github.sha }} \
+            autonomous-crawler=${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/autonomous-crawler:${{ github.sha }} \
+            sentiment-addon=${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/sentiment-addon:${{ github.sha }} \
+            factcheck-addon=${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/factcheck-addon:${{ github.sha }} \
+            bias-addon=${{ env.REGION }}-docker.pkg.dev/${{ env.ARTIFACT_REGISTRY }}/bias-addon:${{ github.sha }}
+          
+          # Apply manifests
+          kustomize build . | kubectl apply -f -
+          
+          # Wait for rollouts
+          kubectl rollout status deployment/frontend -n newsinsight --timeout=300s || true
+          kubectl rollout status deployment/api-gateway -n newsinsight --timeout=300s || true
+          kubectl rollout status deployment/collector-service -n newsinsight --timeout=300s || true
+      
+      - name: Verify Deployment
+        run: |
+          echo "=== Deployment Status ==="
+          kubectl get deployments -n newsinsight
+          echo ""
+          echo "=== Pod Status ==="
+          kubectl get pods -n newsinsight
+          echo ""
+          echo "=== Services ==="
+          kubectl get services -n newsinsight
+          echo ""
+          echo "=== Ingress ==="
+          kubectl get ingress -n newsinsight
+
+  # ============================================================================
+  # Notify
+  # ============================================================================
+  notify:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: always()
+    steps:
+      - name: Notify Success
+        if: needs.deploy.result == 'success'
+        run: |
+          echo "✅ Deployment successful!"
+          echo "Environment: ${{ github.event.inputs.environment || 'staging' }}"
+          echo "Commit: ${{ github.sha }}"
+      
+      - name: Notify Failure
+        if: needs.deploy.result == 'failure'
+        run: |
+          echo "❌ Deployment failed!"
+          echo "Environment: ${{ github.event.inputs.environment || 'staging' }}"
+          echo "Commit: ${{ github.sha }}"
+          exit 1

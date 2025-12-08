@@ -258,6 +258,137 @@ export function useFactCheckStorage() {
     return filename;
   }, [savedResults]);
 
+  // 텍스트로 내보내기
+  const exportToText = useCallback((id: string) => {
+    const result = savedResults.find((r) => r.id === id);
+    if (!result) return null;
+
+    const lines: string[] = [
+      `팩트체크 보고서`,
+      `${"=".repeat(40)}`,
+      ``,
+      `주제: ${result.topic}`,
+      `분석 일시: ${new Date(result.savedAt).toLocaleString("ko-KR")}`,
+      ``,
+      `${"─".repeat(40)}`,
+      ``,
+      `[ 검증한 주장 ]`,
+      ``,
+    ];
+
+    result.claims.forEach((claim, i) => {
+      lines.push(`${i + 1}. ${claim}`);
+    });
+
+    lines.push(``, `${"─".repeat(40)}`, ``, `[ 검증 결과 ]`);
+
+    result.verificationResults.forEach((v, i) => {
+      const statusLabel = {
+        VERIFIED: "[검증됨]",
+        PARTIALLY_VERIFIED: "[부분 검증]",
+        UNVERIFIED: "[검증 불가]",
+        DISPUTED: "[논쟁 중]",
+        FALSE: "[거짓]",
+      }[v.status] || v.status;
+
+      lines.push(
+        ``,
+        `${i + 1}. ${v.originalClaim}`,
+        `   판정: ${statusLabel}`,
+        `   신뢰도: ${Math.round(v.confidenceScore * 100)}%`,
+        `   지지 근거: ${v.supportingCount}개 / 반박 근거: ${v.contradictingCount}개`,
+        ``,
+        `   요약: ${v.verificationSummary}`
+      );
+    });
+
+    if (result.credibility) {
+      const riskLabel = {
+        low: "낮음",
+        medium: "주의",
+        high: "높음",
+      }[result.credibility.riskLevel] || result.credibility.riskLevel;
+
+      lines.push(
+        ``,
+        `${"─".repeat(40)}`,
+        ``,
+        `[ 전체 신뢰도 평가 ]`,
+        ``,
+        `종합 점수: ${Math.round(result.credibility.overallScore * 100)}%`,
+        `검증된 주장: ${result.credibility.verifiedCount}/${result.credibility.totalClaims}`,
+        `위험 수준: ${riskLabel}`
+      );
+
+      if (result.credibility.warnings.length > 0) {
+        lines.push(``, `주의사항:`);
+        result.credibility.warnings.forEach((w) => {
+          lines.push(`  - ${w}`);
+        });
+      }
+    }
+
+    lines.push(
+      ``,
+      `${"─".repeat(40)}`,
+      ``,
+      `[ 수집된 근거 ]`,
+      ``,
+      `총 ${result.evidenceSummary.total}개의 근거 수집`,
+      ``
+    );
+
+    Object.entries(result.evidenceSummary.bySource).forEach(([source, count]) => {
+      lines.push(`  ${source}: ${count}개`);
+    });
+
+    if (result.aiConclusion) {
+      lines.push(
+        ``,
+        `${"─".repeat(40)}`,
+        ``,
+        `[ AI 종합 분석 ]`,
+        ``,
+        result.aiConclusion
+      );
+    }
+
+    if (result.priorityUrls.length > 0) {
+      lines.push(
+        ``,
+        `${"─".repeat(40)}`,
+        ``,
+        `[ 참고 URL ]`,
+        ``
+      );
+      result.priorityUrls.forEach((url) => {
+        lines.push(`  ${url}`);
+      });
+    }
+
+    lines.push(
+      ``,
+      `${"─".repeat(40)}`,
+      ``,
+      `이 보고서는 NewsInsight 팩트체크 시스템에서 생성되었습니다.`
+    );
+
+    const text = lines.join("\n");
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const filename = `factcheck_${result.topic.replace(/[^a-zA-Z0-9가-힣]/g, "_")}_${new Date(result.savedAt).toISOString().split("T")[0]}.txt`;
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    return filename;
+  }, [savedResults]);
+
   return {
     savedResults,
     isLoaded,
@@ -267,5 +398,6 @@ export function useFactCheckStorage() {
     getResult,
     exportToJson,
     exportToMarkdown,
+    exportToText,
   };
 }

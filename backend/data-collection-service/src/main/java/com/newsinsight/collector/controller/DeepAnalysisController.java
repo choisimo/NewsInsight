@@ -1,10 +1,10 @@
 package com.newsinsight.collector.controller;
 
-import com.newsinsight.collector.client.DeepAISearchClient;
 import com.newsinsight.collector.dto.*;
 import com.newsinsight.collector.entity.CrawlJobStatus;
 import com.newsinsight.collector.service.DeepAnalysisService;
 import com.newsinsight.collector.service.DeepSearchEventService;
+import com.newsinsight.collector.service.IntegratedCrawlerService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,14 +18,20 @@ import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * Controller for deep AI search operations.
  * Provides endpoints for:
  * - Starting a new deep search
- * - Receiving callbacks from n8n workflow
+ * - Receiving callbacks from internal workers
  * - Retrieving search results
+ * - Real-time SSE streaming of search progress
+ * 
+ * Uses IntegratedCrawlerService for multi-strategy crawling:
+ * - Crawl4AI for JS-rendered pages
+ * - Browser-Use API for complex interactions
+ * - Direct HTTP for simple pages
+ * - Search Engines for topic-based searches
  */
 @RestController
 @RequestMapping("/api/v1/analysis/deep")
@@ -34,8 +40,8 @@ import java.util.stream.Collectors;
 public class DeepAnalysisController {
 
     private final DeepAnalysisService deepAnalysisService;
-    private final DeepAISearchClient deepAISearchClient;
     private final DeepSearchEventService deepSearchEventService;
+    private final IntegratedCrawlerService integratedCrawlerService;
 
     /**
      * Start a new deep AI search job.
@@ -49,11 +55,11 @@ public class DeepAnalysisController {
     ) {
         log.info("Starting deep search for topic: {}", request.getTopic());
         
-        if (!deepAISearchClient.isEnabled()) {
+        if (!integratedCrawlerService.isAvailable()) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(DeepSearchJobDto.builder()
-                            .status("DISABLED")
-                            .errorMessage("Deep AI search is currently disabled")
+                            .status("UNAVAILABLE")
+                            .errorMessage("Deep search service is not available. Please check crawler configuration.")
                             .build());
         }
 
@@ -192,10 +198,11 @@ public class DeepAnalysisController {
     }
 
     /**
-     * Callback endpoint for n8n workflow to deliver results.
+     * Callback endpoint for internal async workers to deliver results.
+     * This can be used by future Kafka-based workers or other internal services.
      * 
      * @param callbackToken Token for authentication (from header)
-     * @param payload The callback payload from n8n
+     * @param payload The callback payload
      * @return Processing result
      */
     @PostMapping("/callback")
@@ -203,30 +210,28 @@ public class DeepAnalysisController {
             @RequestHeader(value = "X-Crawl-Callback-Token", required = false) String callbackToken,
             @RequestBody DeepSearchCallbackDto payload
     ) {
-        log.info("Received callback for job: {}, status: {}", payload.getJobId(), payload.getStatus());
+        log.info("Received internal callback for job: {}, status: {}", payload.getJobId(), payload.getStatus());
 
         try {
-            // Convert DTO to client payload format
-            DeepAISearchClient.DeepSearchCallbackPayload clientPayload = 
-                    new DeepAISearchClient.DeepSearchCallbackPayload(
-                            payload.getJobId(),
-                            payload.getStatus(),
-                            payload.getTopic(),
-                            payload.getBaseUrl(),
-                            payload.getEvidence() != null 
-                                    ? payload.getEvidence().stream()
-                                            .map(e -> new DeepAISearchClient.Evidence(
-                                                    e.getUrl(),
-                                                    e.getTitle(),
-                                                    e.getStance(),
-                                                    e.getSnippet(),
-                                                    e.getSource()
-                                            ))
-                                            .collect(Collectors.toList())
-                                    : List.of()
-                    );
+            // Convert DTO evidence to service format
+            List<EvidenceDto> evidenceList = payload.getEvidence() != null 
+                    ? payload.getEvidence().stream()
+                            .map(e -> EvidenceDto.builder()
+                                    .url(e.getUrl())
+                                    .title(e.getTitle())
+                                    .stance(e.getStance())
+                                    .snippet(e.getSnippet())
+                                    .source(e.getSource())
+                                    .build())
+                            .toList()
+                    : List.of();
 
-            DeepSearchResultDto result = deepAnalysisService.processCallback(callbackToken, clientPayload);
+            DeepSearchResultDto result = deepAnalysisService.processInternalCallback(
+                    callbackToken, 
+                    payload.getJobId(),
+                    payload.getStatus(),
+                    evidenceList
+            );
             
             return ResponseEntity.ok(Map.of(
                     "status", "received",
@@ -256,10 +261,11 @@ public class DeepAnalysisController {
      */
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> healthCheck() {
+        boolean isAvailable = integratedCrawlerService.isAvailable();
         return ResponseEntity.ok(Map.of(
-                "enabled", deepAISearchClient.isEnabled(),
-                "webhookUrl", deepAISearchClient.getWebhookUrl(),
-                "callbackBaseUrl", deepAISearchClient.getCallbackBaseUrl()
+                "available", isAvailable,
+                "service", "IntegratedCrawlerService",
+                "status", isAvailable ? "READY" : "UNAVAILABLE"
         ));
     }
 }

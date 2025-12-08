@@ -171,7 +171,7 @@ collector:
       topic: ${COLLECTOR_AI_ORCHESTRATION_TOPIC:ai.tasks.requests}
       # Base URL for callback (this service's public URL)
       callback-base-url: ${COLLECTOR_AI_ORCHESTRATION_CALLBACK_BASE_URL:${collector.deep-search.callback-base-url}}
-      # Token for validating callbacks from workers/n8n
+      # Token for validating callbacks from internal workers
       callback-token: ${COLLECTOR_AI_ORCHESTRATION_CALLBACK_TOKEN:${collector.deep-search.callback-token}}
       # Minutes before marking a job as timed out
       timeout-minutes: ${COLLECTOR_AI_ORCHESTRATION_TIMEOUT_MINUTES:30}
@@ -181,8 +181,6 @@ collector:
       cleanup-days: ${COLLECTOR_AI_ORCHESTRATION_CLEANUP_DAYS:7}
       # Cron expression for cleanup job (3 AM daily)
       cleanup-cron: ${COLLECTOR_AI_ORCHESTRATION_CLEANUP_CRON:0 0 3 * * ?}
-      # n8n webhook base URL for AI agents
-      n8n-base-url: ${COLLECTOR_N8N_BASE_URL:${COLLECTOR_AI_N8N_BASE_URL:https://n8n.nodove.com/webhook}}
 
   crawl:
     topic:
@@ -201,20 +199,20 @@ collector:
     callback-base-url: ${COLLECTOR_CALLBACK_BASE_URL:${COLLECTOR_BROWSER_AGENT_CALLBACK_BASE_URL:http://collector-service:8081}}
     callback-token: ${COLLECTOR_BROWSER_AGENT_CALLBACK_TOKEN:}
 
-  # Deep AI Search Configuration (n8n Crawl Agent Workflow)
+  # Deep AI Search Configuration
+  # DeepSearch now runs entirely on internal services (IntegratedCrawlerService + AIDove).
+  # The n8n webhook integration is DEPRECATED and disabled by default.
   # These settings can be managed via Consul KV under config/collector-service/
-  # Example Consul keys:
-  #   config/collector-service/DEEP_SEARCH_ENABLED=true
-  #   config/collector-service/DEEP_SEARCH_WEBHOOK_URL=https://n8n.nodove.com/webhook/crawl-agent
   deep-search:
-    enabled: ${COLLECTOR_SERVICE_DEEP_SEARCH_ENABLED:${DEEP_SEARCH_ENABLED:true}}
-    # n8n webhook URL for crawl-agent workflow
-    webhook-url: ${COLLECTOR_DEEP_SEARCH_WEBHOOK_URL:${COLLECTOR_SERVICE_DEEP_SEARCH_WEBHOOK_URL:${DEEP_SEARCH_WEBHOOK_URL:https://n8n.nodove.com/webhook/crawl-agent}}}
-    # Base URL for callback (this service's public URL)
+    # DEPRECATED: n8n webhook is disabled. Set to true only for legacy/fallback mode.
+    enabled: ${COLLECTOR_SERVICE_DEEP_SEARCH_ENABLED:${DEEP_SEARCH_ENABLED:false}}
+    # DEPRECATED: n8n webhook URL (only used if enabled=true)
+    webhook-url: ${COLLECTOR_DEEP_SEARCH_WEBHOOK_URL:${COLLECTOR_SERVICE_DEEP_SEARCH_WEBHOOK_URL:${DEEP_SEARCH_WEBHOOK_URL:}}}
+    # Base URL for internal callbacks (used by integrated crawler)
     callback-base-url: ${COLLECTOR_CALLBACK_BASE_URL:${COLLECTOR_SERVICE_DEEP_SEARCH_CALLBACK_BASE_URL:${DEEP_SEARCH_CALLBACK_BASE_URL:http://collector-service:8081}}}
-    # Token for validating callbacks from n8n
+    # Token for validating internal callbacks
     callback-token: ${COLLECTOR_SERVICE_DEEP_SEARCH_CALLBACK_TOKEN:${DEEP_SEARCH_CALLBACK_TOKEN:}}
-    # Timeout for webhook requests in seconds
+    # Timeout for requests in seconds
     timeout-seconds: ${COLLECTOR_SERVICE_DEEP_SEARCH_TIMEOUT_SECONDS:${DEEP_SEARCH_TIMEOUT_SECONDS:120}}
     # Minutes before marking a job as timed out
     timeout-minutes: ${COLLECTOR_SERVICE_DEEP_SEARCH_TIMEOUT_MINUTES:${DEEP_SEARCH_TIMEOUT_MINUTES:30}}
@@ -224,10 +222,10 @@ collector:
     cleanup-days: ${COLLECTOR_SERVICE_DEEP_SEARCH_CLEANUP_DAYS:${DEEP_SEARCH_CLEANUP_DAYS:7}}
     # Cron expression for cleanup job (3 AM daily)
     cleanup-cron: ${COLLECTOR_SERVICE_DEEP_SEARCH_CLEANUP_CRON:${DEEP_SEARCH_CLEANUP_CRON:0 0 3 * * ?}}
-    # Use integrated crawler instead of webhook (multi-strategy: Crawl4AI, Browser-Use, Direct HTTP)
+    # Use integrated crawler (multi-strategy: Crawl4AI, Browser-Use, Direct HTTP, Search Engines)
     use-integrated-crawler: ${COLLECTOR_DEEP_SEARCH_USE_INTEGRATED:${DEEP_SEARCH_USE_INTEGRATED:true}}
-    # Fallback to webhook when integrated crawler fails or finds no evidence
-    fallback-to-integrated: ${COLLECTOR_DEEP_SEARCH_FALLBACK_TO_WEBHOOK:${DEEP_SEARCH_FALLBACK_TO_WEBHOOK:true}}
+    # DEPRECATED: Do not fallback to n8n webhook when integrated crawler fails
+    fallback-to-webhook: ${COLLECTOR_DEEP_SEARCH_FALLBACK_TO_WEBHOOK:${DEEP_SEARCH_FALLBACK_TO_WEBHOOK:false}}
 
   # Integrated Crawler Configuration (multi-strategy crawling)
   integrated-crawler:

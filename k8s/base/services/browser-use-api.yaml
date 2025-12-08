@@ -1,0 +1,85 @@
+# Browser-Use API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: browser-use-api
+  namespace: newsinsight
+  labels:
+    app: browser-use-api
+    app.kubernetes.io/name: browser-use-api
+    app.kubernetes.io/component: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: browser-use-api
+  template:
+    metadata:
+      labels:
+        app: browser-use-api
+    spec:
+      serviceAccountName: newsinsight-sa
+      containers:
+        - name: browser-use-api
+          image: browser-use-api:latest
+          ports:
+            - containerPort: 8500
+              name: http
+          env:
+            - name: SERVER_PORT
+              value: "8500"
+            - name: BROWSER_HEADLESS
+              valueFrom:
+                configMapKeyRef:
+                  name: newsinsight-config
+                  key: BROWSER_HEADLESS
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: newsinsight-config
+                  key: LOG_LEVEL
+            - name: AIDOVE_WEBHOOK_URL
+              value: "https://workflow.nodove.com/webhook/aidove"
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          # Shared memory for browser
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8500
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8500
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: browser-use-api
+  namespace: newsinsight
+spec:
+  selector:
+    app: browser-use-api
+  ports:
+    - port: 8500
+      targetPort: 8500
+      name: http
+  type: ClusterIP

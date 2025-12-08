@@ -1,0 +1,286 @@
+# =============================================================================
+# NewsInsight - Validate Configuration Files
+# =============================================================================
+# This reusable workflow validates configuration files against schemas
+# and ensures consistency across environments.
+#
+# Can be called from other workflows or run manually.
+# =============================================================================
+
+name: Validate Configuration
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'etc/configs/**'
+      - '.github/workflows/validate-config.yml'
+  pull_request:
+    paths:
+      - 'etc/configs/**'
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      valid:
+        description: "Whether all configurations are valid"
+        value: ${{ jobs.validate.outputs.valid }}
+
+jobs:
+  validate:
+    name: Validate Configurations
+    runs-on: ubuntu-latest
+    outputs:
+      valid: ${{ steps.result.outputs.valid }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (for JSON schema validation)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install ajv-cli for JSON schema validation
+        run: npm install -g ajv-cli ajv-formats
+
+      - name: Validate services.json against schema
+        id: validate-json
+        run: |
+          echo "Validating services.json against schema..."
+          
+          if ajv validate \
+            -s etc/configs/services.schema.json \
+            -d etc/configs/services.json \
+            --all-errors \
+            --verbose \
+            -c ajv-formats; then
+            echo "✅ services.json is valid"
+            echo "json_valid=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ services.json validation failed"
+            echo "json_valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Validate .env.example structure
+        id: validate-env
+        run: |
+          echo "Validating .env.example..."
+          
+          ENV_FILE="etc/configs/.env.example"
+          
+          if [[ ! -f "$ENV_FILE" ]]; then
+            echo "❌ .env.example not found"
+            echo "env_valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check for required sections
+          REQUIRED_SECTIONS=(
+            "API Gateway"
+            "Collector Service"
+            "AI/LLM API Keys"
+          )
+          
+          MISSING_SECTIONS=()
+          for section in "${REQUIRED_SECTIONS[@]}"; do
+            if ! grep -q "$section" "$ENV_FILE"; then
+              MISSING_SECTIONS+=("$section")
+            fi
+          done
+          
+          if [[ ${#MISSING_SECTIONS[@]} -gt 0 ]]; then
+            echo "❌ Missing required sections in .env.example:"
+            printf '  - %s\n' "${MISSING_SECTIONS[@]}"
+            echo "env_valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check for required variables
+          REQUIRED_VARS=(
+            "API_GATEWAY_PORT"
+            "API_GATEWAY_JWT_SECRET_KEY"
+            "COLLECTOR_SERVICE_PORT"
+            "COLLECTOR_SERVICE_DATABASE_URL"
+            "COLLECTOR_SERVICE_PERPLEXITY_API_KEY"
+          )
+          
+          MISSING_VARS=()
+          for var in "${REQUIRED_VARS[@]}"; do
+            if ! grep -q "^${var}=" "$ENV_FILE"; then
+              MISSING_VARS+=("$var")
+            fi
+          done
+          
+          if [[ ${#MISSING_VARS[@]} -gt 0 ]]; then
+            echo "❌ Missing required variables in .env.example:"
+            printf '  - %s\n' "${MISSING_VARS[@]}"
+            echo "env_valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "✅ .env.example is valid"
+          echo "env_valid=true" >> $GITHUB_OUTPUT
+
+      - name: Check services.json consistency with workflows
+        id: validate-consistency
+        run: |
+          echo "Checking service consistency..."
+          
+          # Extract services from services.json
+          JSON_SERVICES=$(jq -r '.services | keys[]' etc/configs/services.json | sort)
+          
+          # Check each service exists in deploy workflows
+          MISSING_IN_WORKFLOWS=()
+          
+          for service in $JSON_SERVICES; do
+            # Skip frontend for this check (always present)
+            if [[ "$service" == "frontend" ]]; then
+              continue
+            fi
+            
+            # Check if service is mentioned in deploy workflows
+            if ! grep -rq "$service" .github/workflows/deploy-*.yml 2>/dev/null; then
+              MISSING_IN_WORKFLOWS+=("$service")
+            fi
+          done
+          
+          if [[ ${#MISSING_IN_WORKFLOWS[@]} -gt 0 ]]; then
+            echo "⚠️ Services in services.json but not found in deploy workflows:"
+            printf '  - %s\n' "${MISSING_IN_WORKFLOWS[@]}"
+            echo "Note: This may be intentional if these services are not yet deployed."
+          fi
+          
+          echo "consistency_valid=true" >> $GITHUB_OUTPUT
+
+      - name: Validate port uniqueness
+        id: validate-ports
+        run: |
+          echo "Checking for port conflicts..."
+          
+          # Extract all ports from services.json
+          PORTS=$(jq -r '
+            [
+              (.services | to_entries[] | .value.port),
+              (."ml-addons" | to_entries[] | .value.port),
+              (.infrastructure | to_entries[] | .value.port)
+            ] | sort | .[]
+          ' etc/configs/services.json)
+          
+          # Check for duplicates
+          DUPLICATES=$(echo "$PORTS" | sort | uniq -d)
+          
+          if [[ -n "$DUPLICATES" ]]; then
+            echo "❌ Duplicate ports found:"
+            echo "$DUPLICATES"
+            echo "ports_valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "✅ All ports are unique"
+          echo "ports_valid=true" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        id: result
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
+          echo "                    Validation Summary"
+          echo "════════════════════════════════════════════════════════════"
+          echo ""
+          
+          JSON_VALID="${{ steps.validate-json.outputs.json_valid }}"
+          ENV_VALID="${{ steps.validate-env.outputs.env_valid }}"
+          PORTS_VALID="${{ steps.validate-ports.outputs.ports_valid }}"
+          
+          if [[ "$JSON_VALID" == "true" ]]; then
+            echo "✅ services.json schema validation: PASSED"
+          else
+            echo "❌ services.json schema validation: FAILED"
+          fi
+          
+          if [[ "$ENV_VALID" == "true" ]]; then
+            echo "✅ .env.example validation: PASSED"
+          else
+            echo "❌ .env.example validation: FAILED"
+          fi
+          
+          if [[ "$PORTS_VALID" == "true" ]]; then
+            echo "✅ Port uniqueness check: PASSED"
+          else
+            echo "❌ Port uniqueness check: FAILED"
+          fi
+          
+          echo ""
+          
+          if [[ "$JSON_VALID" == "true" && "$ENV_VALID" == "true" && "$PORTS_VALID" == "true" ]]; then
+            echo "🎉 All validations passed!"
+            echo "valid=true" >> $GITHUB_OUTPUT
+          else
+            echo "💥 Some validations failed. Please fix the issues above."
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+  lint-shell-scripts:
+    name: Lint Shell Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Lint consul_seed.sh
+        run: |
+          echo "Linting etc/scripts/consul_seed.sh..."
+          
+          # Run shellcheck with specific exclusions
+          shellcheck \
+            --severity=warning \
+            --exclude=SC2034,SC2086 \
+            etc/scripts/consul_seed.sh || {
+            echo "⚠️ ShellCheck found issues (non-blocking)"
+            # Don't fail the job for lint warnings
+            true
+          }
+          
+          echo "✅ Shell script lint complete"
+
+  # Output configuration summary for PR comments
+  config-summary:
+    name: Configuration Summary
+    runs-on: ubuntu-latest
+    needs: [validate]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate summary
+        run: |
+          echo "## Configuration Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Count services
+          SERVICE_COUNT=$(jq '.services | length' etc/configs/services.json)
+          ADDON_COUNT=$(jq '."ml-addons" | length' etc/configs/services.json)
+          INFRA_COUNT=$(jq '.infrastructure | length' etc/configs/services.json)
+          
+          echo "| Category | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Services | $SERVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| ML Addons | $ADDON_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Infrastructure | $INFRA_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # List services
+          echo "### Services" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          jq -r '.services | to_entries[] | "- **\(.key)**: port \(.value.port)"' etc/configs/services.json >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Version
+          VERSION=$(jq -r '.version' etc/configs/services.json)
+          echo "**Config Version**: $VERSION" >> $GITHUB_STEP_SUMMARY

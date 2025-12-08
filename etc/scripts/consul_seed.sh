@@ -3,22 +3,28 @@
 # Consul KV Seed Script
 # 
 # This script loads configuration from environment-specific files into Consul KV store.
-# It parses .env files and populates Consul with the appropriate key-value pairs.
+# Supports both .env files and JSON configuration (services.json).
 #
 # Usage:
-#   ./scripts/consul_seed.sh [environment]
+#   ./scripts/consul_seed.sh [environment] [--json|--env]
 #
 # Arguments:
 #   environment - Optional. One of: development (default), staging, production
+#   --json      - Use JSON config from services.json (service definitions + env-specific settings)
+#   --env       - Use .env file (default, legacy behavior)
+#   --both      - Load both JSON service config and .env secrets
 #
 # Environment Variables:
-#   CONSUL_HTTP_ADDR - Consul HTTP API address (default: http://localhost:8500)
+#   CONSUL_HTTP_ADDR  - Consul HTTP API address (default: http://localhost:8500)
 #   CONSUL_HTTP_TOKEN - Consul ACL token (optional, for secured Consul)
+#   CONFIG_MODE       - Alternative to --json/--env flag: "json", "env", or "both"
 #
 # Examples:
 #   ./scripts/consul_seed.sh development
+#   ./scripts/consul_seed.sh production --json
+#   ./scripts/consul_seed.sh staging --both
 #   CONSUL_HTTP_ADDR=http://consul:8500 ./scripts/consul_seed.sh staging
-#   CONSUL_HTTP_TOKEN=secret ./scripts/consul_seed.sh production
+#   CONFIG_MODE=json ./scripts/consul_seed.sh production
 
 set -euo pipefail
 
@@ -27,16 +33,43 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# Parse arguments
+ENVIRONMENT="development"
+CONFIG_MODE="${CONFIG_MODE:-env}"
+
+for arg in "$@"; do
+    case "$arg" in
+        --json)
+            CONFIG_MODE="json"
+            ;;
+        --env)
+            CONFIG_MODE="env"
+            ;;
+        --both)
+            CONFIG_MODE="both"
+            ;;
+        development|staging|production)
+            ENVIRONMENT="$arg"
+            ;;
+        *)
+            if [[ "$arg" != -* ]]; then
+                ENVIRONMENT="$arg"
+            fi
+            ;;
+    esac
+done
+
 # Configuration
-ENVIRONMENT="${1:-development}"
 CONSUL_ADDR="${CONSUL_HTTP_ADDR:-http://localhost:8500}"
 CONSUL_TOKEN="${CONSUL_HTTP_TOKEN:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ETC_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_ROOT="$(dirname "$ETC_DIR")"
 CONFIG_FILE="$ETC_DIR/configs/${ENVIRONMENT}.env"
+JSON_CONFIG_FILE="$ETC_DIR/configs/services.json"
 
 # Logging functions
 log_info() {
@@ -64,6 +97,26 @@ print_banner() {
     echo ""
 }
 
+# Print usage
+print_usage() {
+    echo "Usage: $0 [environment] [options]"
+    echo ""
+    echo "Arguments:"
+    echo "  environment    One of: development, staging, production (default: development)"
+    echo ""
+    echo "Options:"
+    echo "  --env          Load configuration from .env file (default)"
+    echo "  --json         Load configuration from services.json"
+    echo "  --both         Load both JSON service config and .env secrets"
+    echo "  --help, -h     Show this help message"
+    echo ""
+    echo "Environment Variables:"
+    echo "  CONSUL_HTTP_ADDR   Consul HTTP API address (default: http://localhost:8500)"
+    echo "  CONSUL_HTTP_TOKEN  Consul ACL token (optional)"
+    echo "  CONFIG_MODE        Alternative to flags: 'json', 'env', or 'both'"
+    echo ""
+}
+
 # Check prerequisites
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -74,16 +127,30 @@ check_prerequisites() {
         exit 1
     fi
     
-    # Check if jq is installed (optional but recommended)
+    # Check if jq is installed
     if ! command -v jq &> /dev/null; then
-        log_warning "jq is not installed. Output formatting will be limited."
+        if [[ "$CONFIG_MODE" == "json" || "$CONFIG_MODE" == "both" ]]; then
+            log_error "jq is required for JSON config mode. Please install jq."
+            exit 1
+        else
+            log_warning "jq is not installed. Output formatting will be limited."
+        fi
     fi
     
-    # Check if config file exists
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        log_error "Configuration file not found: $CONFIG_FILE"
-        log_error "Available environments: development, staging, production"
-        exit 1
+    # Check config files based on mode
+    if [[ "$CONFIG_MODE" == "env" || "$CONFIG_MODE" == "both" ]]; then
+        if [[ ! -f "$CONFIG_FILE" ]]; then
+            log_error "Configuration file not found: $CONFIG_FILE"
+            log_error "Available environments: development, staging, production"
+            exit 1
+        fi
+    fi
+    
+    if [[ "$CONFIG_MODE" == "json" || "$CONFIG_MODE" == "both" ]]; then
+        if [[ ! -f "$JSON_CONFIG_FILE" ]]; then
+            log_error "JSON configuration file not found: $JSON_CONFIG_FILE"
+            exit 1
+        fi
     fi
     
     log_success "Prerequisites check passed"
@@ -188,8 +255,166 @@ consul_kv_put() {
     fi
 }
 
-# Load configuration from file into Consul
-load_config() {
+# Load configuration from JSON file (services.json) into Consul
+load_json_config() {
+    log_info "Loading configuration from $JSON_CONFIG_FILE (environment: $ENVIRONMENT)..."
+    echo ""
+    
+    local total_keys=0
+    local successful_keys=0
+    local failed_keys=0
+    
+    # Validate JSON
+    if ! jq empty "$JSON_CONFIG_FILE" 2>/dev/null; then
+        log_error "Invalid JSON in $JSON_CONFIG_FILE"
+        return 1
+    fi
+    
+    # Store entire config version for reference
+    local version
+    version=$(jq -r '.version' "$JSON_CONFIG_FILE")
+    if consul_kv_put "config/version" "$version"; then
+        log_success "✓ config/version = $version"
+    fi
+    
+    # -------------------------------------------------------------------------
+    # Load Service Configurations
+    # -------------------------------------------------------------------------
+    log_info "Loading service configurations..."
+    
+    local services
+    services=$(jq -r '.services | keys[]' "$JSON_CONFIG_FILE")
+    
+    for service in $services; do
+        echo -e "${CYAN}=== Service: $service ===${NC}"
+        
+        # Get service base info
+        local port healthcheck
+        port=$(jq -r ".services[\"$service\"].port" "$JSON_CONFIG_FILE")
+        healthcheck=$(jq -r ".services[\"$service\"].healthcheck" "$JSON_CONFIG_FILE")
+        
+        # Store service metadata
+        consul_kv_put "config/${service}/PORT" "$port" && ((successful_keys++)) || ((failed_keys++))
+        ((total_keys++))
+        log_success "  ✓ config/${service}/PORT = $port"
+        
+        consul_kv_put "config/${service}/HEALTHCHECK" "$healthcheck" && ((successful_keys++)) || ((failed_keys++))
+        ((total_keys++))
+        log_success "  ✓ config/${service}/HEALTHCHECK = $healthcheck"
+        
+        # Get dependencies
+        local dependencies
+        dependencies=$(jq -r ".services[\"$service\"].dependencies | join(\",\")" "$JSON_CONFIG_FILE")
+        if [[ -n "$dependencies" && "$dependencies" != "null" ]]; then
+            consul_kv_put "config/${service}/DEPENDENCIES" "$dependencies" && ((successful_keys++)) || ((failed_keys++))
+            ((total_keys++))
+            log_success "  ✓ config/${service}/DEPENDENCIES = $dependencies"
+        fi
+        
+        # Get environment-specific settings
+        local env_settings
+        env_settings=$(jq -r ".services[\"$service\"].profiles[\"$ENVIRONMENT\"] // empty" "$JSON_CONFIG_FILE")
+        
+        if [[ -n "$env_settings" ]]; then
+            # Replicas
+            local replicas
+            replicas=$(jq -r ".services[\"$service\"].profiles[\"$ENVIRONMENT\"].replicas // 1" "$JSON_CONFIG_FILE")
+            consul_kv_put "config/${service}/REPLICAS" "$replicas" && ((successful_keys++)) || ((failed_keys++))
+            ((total_keys++))
+            log_success "  ✓ config/${service}/REPLICAS = $replicas"
+            
+            # Resources
+            local memory cpu
+            memory=$(jq -r ".services[\"$service\"].profiles[\"$ENVIRONMENT\"].resources.memory // \"256Mi\"" "$JSON_CONFIG_FILE")
+            cpu=$(jq -r ".services[\"$service\"].profiles[\"$ENVIRONMENT\"].resources.cpu // \"250m\"" "$JSON_CONFIG_FILE")
+            consul_kv_put "config/${service}/MEMORY" "$memory" && ((successful_keys++)) || ((failed_keys++))
+            consul_kv_put "config/${service}/CPU" "$cpu" && ((successful_keys++)) || ((failed_keys++))
+            ((total_keys+=2))
+            log_success "  ✓ config/${service}/MEMORY = $memory"
+            log_success "  ✓ config/${service}/CPU = $cpu"
+            
+            # Environment variables from profile
+            local env_keys
+            env_keys=$(jq -r ".services[\"$service\"].profiles[\"$ENVIRONMENT\"].env // {} | keys[]" "$JSON_CONFIG_FILE" 2>/dev/null || echo "")
+            
+            for env_key in $env_keys; do
+                local env_value
+                env_value=$(jq -r ".services[\"$service\"].profiles[\"$ENVIRONMENT\"].env[\"$env_key\"]" "$JSON_CONFIG_FILE")
+                consul_kv_put "config/${service}/${env_key}" "$env_value" && ((successful_keys++)) || ((failed_keys++))
+                ((total_keys++))
+                log_success "  ✓ config/${service}/${env_key} = $env_value"
+            done
+        fi
+        
+        echo ""
+    done
+    
+    # -------------------------------------------------------------------------
+    # Load ML Addons Configuration
+    # -------------------------------------------------------------------------
+    log_info "Loading ML addon configurations..."
+    
+    local addons
+    addons=$(jq -r '."ml-addons" // {} | keys[]' "$JSON_CONFIG_FILE" 2>/dev/null || echo "")
+    
+    for addon in $addons; do
+        local enabled port
+        enabled=$(jq -r ".\"ml-addons\"[\"$addon\"].enabled[\"$ENVIRONMENT\"] // false" "$JSON_CONFIG_FILE")
+        port=$(jq -r ".\"ml-addons\"[\"$addon\"].port" "$JSON_CONFIG_FILE")
+        
+        consul_kv_put "config/ml-addons/${addon}/ENABLED" "$enabled" && ((successful_keys++)) || ((failed_keys++))
+        consul_kv_put "config/ml-addons/${addon}/PORT" "$port" && ((successful_keys++)) || ((failed_keys++))
+        ((total_keys+=2))
+        
+        if [[ "$enabled" == "true" ]]; then
+            log_success "✓ config/ml-addons/${addon} (ENABLED, port: $port)"
+        else
+            log_warning "○ config/ml-addons/${addon} (disabled, port: $port)"
+        fi
+    done
+    
+    echo ""
+    
+    # -------------------------------------------------------------------------
+    # Load Infrastructure Configuration
+    # -------------------------------------------------------------------------
+    log_info "Loading infrastructure configurations..."
+    
+    local infra_services
+    infra_services=$(jq -r '.infrastructure // {} | keys[]' "$JSON_CONFIG_FILE" 2>/dev/null || echo "")
+    
+    for infra in $infra_services; do
+        local image port
+        image=$(jq -r ".infrastructure[\"$infra\"].image" "$JSON_CONFIG_FILE")
+        port=$(jq -r ".infrastructure[\"$infra\"].port" "$JSON_CONFIG_FILE")
+        
+        consul_kv_put "config/infrastructure/${infra}/IMAGE" "$image" && ((successful_keys++)) || ((failed_keys++))
+        consul_kv_put "config/infrastructure/${infra}/PORT" "$port" && ((successful_keys++)) || ((failed_keys++))
+        ((total_keys+=2))
+        
+        log_success "✓ config/infrastructure/${infra} (image: $image, port: $port)"
+    done
+    
+    echo ""
+    log_info "════════════════════════════════════════════════════════════"
+    log_info "JSON configuration loading completed"
+    log_info "Total keys: $total_keys"
+    log_success "Successful: $successful_keys"
+    if [[ $failed_keys -gt 0 ]]; then
+        log_error "Failed: $failed_keys"
+    fi
+    log_info "════════════════════════════════════════════════════════════"
+    echo ""
+    
+    if [[ $failed_keys -gt 0 ]]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Load configuration from .env file into Consul
+load_env_config() {
     log_info "Loading configuration from $CONFIG_FILE..."
     echo ""
     
@@ -240,7 +465,7 @@ load_config() {
     
     echo ""
     log_info "════════════════════════════════════════════════════════════"
-    log_info "Configuration loading completed"
+    log_info ".env configuration loading completed"
     log_info "Total keys: $total_keys"
     log_success "Successful: $successful_keys"
     if [[ $failed_keys -gt 0 ]]; then
@@ -256,18 +481,45 @@ load_config() {
     return 0
 }
 
+# Unified load_config function that calls appropriate loader based on mode
+load_config() {
+    local exit_code=0
+    
+    case "$CONFIG_MODE" in
+        json)
+            load_json_config || exit_code=1
+            ;;
+        env)
+            load_env_config || exit_code=1
+            ;;
+        both)
+            log_info "Loading both JSON and .env configurations..."
+            echo ""
+            load_json_config || exit_code=1
+            echo ""
+            load_env_config || exit_code=1
+            ;;
+        *)
+            log_error "Unknown config mode: $CONFIG_MODE"
+            exit_code=1
+            ;;
+    esac
+    
+    return $exit_code
+}
+
 # List loaded keys by service
 list_loaded_keys() {
     log_info "Listing loaded keys by service..."
     echo ""
     
-    local services=("api-gateway" "analysis-service" "collector-service" "web-crawler" "autonomous-crawler")
+    # List application services
+    local services=("api-gateway" "collector-service" "browser-use-api" "autonomous-crawler" "frontend")
     
     for service in "${services[@]}"; do
         log_info "Service: $service"
         
         local response
-        local http_code
         
         # Use curl with error handling - don't fail on 404
         response=$(curl -s "${CONSUL_ADDR}/v1/kv/config/${service}/?keys" 2>/dev/null) || true
@@ -283,15 +535,65 @@ list_loaded_keys() {
         fi
         echo ""
     done
+    
+    # List ML addons if JSON mode was used
+    if [[ "$CONFIG_MODE" == "json" || "$CONFIG_MODE" == "both" ]]; then
+        log_info "ML Addons:"
+        local response
+        response=$(curl -s "${CONSUL_ADDR}/v1/kv/config/ml-addons/?keys&recurse" 2>/dev/null) || true
+        
+        if [[ -n "$response" && "$response" != "null" && "$response" != "" ]]; then
+            if command -v jq &> /dev/null; then
+                echo "$response" | jq -r '.[]' 2>/dev/null | sed 's/^/  - /' || log_warning "  No keys found"
+            else
+                echo "$response"
+            fi
+        else
+            log_warning "  No ML addon keys found"
+        fi
+        echo ""
+        
+        log_info "Infrastructure:"
+        response=$(curl -s "${CONSUL_ADDR}/v1/kv/config/infrastructure/?keys&recurse" 2>/dev/null) || true
+        
+        if [[ -n "$response" && "$response" != "null" && "$response" != "" ]]; then
+            if command -v jq &> /dev/null; then
+                echo "$response" | jq -r '.[]' 2>/dev/null | sed 's/^/  - /' || log_warning "  No keys found"
+            else
+                echo "$response"
+            fi
+        else
+            log_warning "  No infrastructure keys found"
+        fi
+        echo ""
+    fi
 }
 
 # Main execution
 main() {
+    # Handle help flag
+    for arg in "$@"; do
+        case "$arg" in
+            --help|-h)
+                print_banner
+                print_usage
+                exit 0
+                ;;
+        esac
+    done
+    
     print_banner
     
     log_info "Environment: $ENVIRONMENT"
+    log_info "Config Mode: $CONFIG_MODE"
     log_info "Consul Address: $CONSUL_ADDR"
-    log_info "Config File: $CONFIG_FILE"
+    
+    if [[ "$CONFIG_MODE" == "env" || "$CONFIG_MODE" == "both" ]]; then
+        log_info "Env Config File: $CONFIG_FILE"
+    fi
+    if [[ "$CONFIG_MODE" == "json" || "$CONFIG_MODE" == "both" ]]; then
+        log_info "JSON Config File: $JSON_CONFIG_FILE"
+    fi
     echo ""
     
     check_prerequisites
@@ -309,4 +611,4 @@ main() {
 }
 
 # Run main function
-main
+main "$@"

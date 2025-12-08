@@ -13,14 +13,20 @@ import java.time.Duration;
 import java.util.Map;
 
 /**
- * DeepAISearchClient SDK for n8n Crawl Agent Workflow.
+ * DeepAISearchClient SDK for external webhook-based crawling workflows.
  * 
- * This client triggers an AI-powered web crawling workflow that:
- * 1. Discovers relevant pages from a base URL
- * 2. Extracts and analyzes content
- * 3. Classifies evidence as pro/con/neutral
- * 4. Returns structured results via callback
+ * @deprecated This client was used for n8n webhook integration which is now deprecated.
+ *             DeepSearch now uses IntegratedCrawlerService for all crawling operations.
+ *             This class is kept for backward compatibility but is disabled by default.
+ *             
+ *             Migration notes:
+ *             - Set collector.deep-search.enabled=false (default)
+ *             - Use IntegratedCrawlerService instead
+ *             - This class may be removed in a future version
+ * 
+ * @see com.newsinsight.collector.service.IntegratedCrawlerService
  */
+@Deprecated(since = "2.0.0", forRemoval = true)
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -29,13 +35,13 @@ public class DeepAISearchClient {
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
 
-    @Value("${collector.deep-search.enabled:true}")
+    @Value("${collector.deep-search.enabled:false}")
     private boolean enabled;
 
-    @Value("${collector.deep-search.webhook-url:${COLLECTOR_DEEP_SEARCH_WEBHOOK_URL:https://n8n.nodove.com/webhook/crawl-agent}}")
+    @Value("${collector.deep-search.webhook-url:}")
     private String webhookUrl;
 
-    @Value("${collector.deep-search.callback-base-url:${COLLECTOR_CALLBACK_BASE_URL:http://collector-service:8081}}")
+    @Value("${collector.deep-search.callback-base-url:http://collector-service:8081}")
     private String callbackBaseUrl;
 
     @Value("${collector.deep-search.callback-token:}")
@@ -46,7 +52,9 @@ public class DeepAISearchClient {
 
     /**
      * Request payload for deep AI search
+     * @deprecated Use IntegratedCrawlerService.CrawlRequest instead
      */
+    @Deprecated
     public record DeepSearchRequest(
             String jobId,
             String topic,
@@ -57,7 +65,9 @@ public class DeepAISearchClient {
 
     /**
      * Response from webhook trigger
+     * @deprecated Use IntegratedCrawlerService.CrawlResult instead
      */
+    @Deprecated
     public record DeepSearchTriggerResponse(
             boolean success,
             String jobId,
@@ -65,8 +75,10 @@ public class DeepAISearchClient {
     ) {}
 
     /**
-     * Evidence item returned from n8n workflow
+     * Evidence item returned from external workflow
+     * @deprecated Use EvidenceDto instead
      */
+    @Deprecated
     public record Evidence(
             String url,
             String title,
@@ -76,8 +88,10 @@ public class DeepAISearchClient {
     ) {}
 
     /**
-     * Callback payload received from n8n workflow
+     * Callback payload received from external workflow
+     * @deprecated Callbacks are now handled internally by IntegratedCrawlerService
      */
+    @Deprecated
     public record DeepSearchCallbackPayload(
             String jobId,
             String status,
@@ -87,24 +101,34 @@ public class DeepAISearchClient {
     ) {}
 
     /**
-     * Check if deep search is enabled
+     * Check if external webhook-based deep search is enabled.
+     * @deprecated Always returns false as n8n integration is deprecated.
+     *             Use IntegratedCrawlerService.isAvailable() instead.
      */
+    @Deprecated
     public boolean isEnabled() {
-        return enabled;
+        if (enabled) {
+            log.warn("DeepAISearchClient is deprecated. Consider using IntegratedCrawlerService instead.");
+        }
+        return enabled && webhookUrl != null && !webhookUrl.isBlank();
     }
 
     /**
      * Trigger a deep AI search for the given topic and base URL.
      * 
+     * @deprecated Use IntegratedCrawlerService.crawl() instead.
+     * 
      * @param jobId Unique job identifier
      * @param topic Search topic/keyword
-     * @param baseUrl Starting URL for crawling (optional, defaults to news aggregator)
+     * @param baseUrl Starting URL for crawling (optional)
      * @return Mono containing trigger response
      */
+    @Deprecated
     public Mono<DeepSearchTriggerResponse> triggerSearch(String jobId, String topic, String baseUrl) {
-        if (!enabled) {
-            log.warn("DeepAISearchClient is disabled");
-            return Mono.just(new DeepSearchTriggerResponse(false, jobId, "Deep search is disabled"));
+        if (!isEnabled()) {
+            log.warn("DeepAISearchClient is disabled. Use IntegratedCrawlerService instead.");
+            return Mono.just(new DeepSearchTriggerResponse(false, jobId, 
+                    "External webhook search is disabled. Use IntegratedCrawlerService."));
         }
 
         if (topic == null || topic.isBlank()) {
@@ -126,7 +150,8 @@ public class DeepAISearchClient {
                 "callback_token", callbackToken != null ? callbackToken : ""
         );
 
-        log.info("Triggering deep AI search: jobId={}, topic={}, baseUrl={}", jobId, topic, effectiveBaseUrl);
+        log.info("Triggering external webhook search (DEPRECATED): jobId={}, topic={}, baseUrl={}", 
+                jobId, topic, effectiveBaseUrl);
 
         return webClient.post()
                 .uri(webhookUrl)
@@ -136,25 +161,29 @@ public class DeepAISearchClient {
                 .bodyToMono(String.class)
                 .timeout(Duration.ofSeconds(timeoutSeconds))
                 .map(response -> {
-                    log.debug("Deep search webhook response: {}", response);
+                    log.debug("External webhook response: {}", response);
                     return new DeepSearchTriggerResponse(true, jobId, "Search triggered successfully");
                 })
                 .onErrorResume(e -> {
-                    log.error("Failed to trigger deep search for jobId={}: {}", jobId, e.getMessage());
+                    log.error("Failed to trigger external webhook for jobId={}: {}", jobId, e.getMessage());
                     return Mono.just(new DeepSearchTriggerResponse(false, jobId, "Failed to trigger: " + e.getMessage()));
                 });
     }
 
     /**
      * Synchronous version of triggerSearch
+     * @deprecated Use IntegratedCrawlerService.crawl().block() instead.
      */
+    @Deprecated
     public DeepSearchTriggerResponse triggerSearchSync(String jobId, String topic, String baseUrl) {
         return triggerSearch(jobId, topic, baseUrl).block();
     }
 
     /**
-     * Parse callback payload from n8n webhook response
+     * Parse callback payload from JSON
+     * @deprecated Internal callbacks no longer use this format.
      */
+    @Deprecated
     public DeepSearchCallbackPayload parseCallback(String json) {
         try {
             return objectMapper.readValue(json, DeepSearchCallbackPayload.class);
@@ -166,7 +195,9 @@ public class DeepAISearchClient {
 
     /**
      * Parse callback payload from Map
+     * @deprecated Internal callbacks no longer use this format.
      */
+    @Deprecated
     public DeepSearchCallbackPayload parseCallback(Map<String, Object> payload) {
         try {
             String json = objectMapper.writeValueAsString(payload);
@@ -178,7 +209,7 @@ public class DeepAISearchClient {
     }
 
     /**
-     * Build the callback URL for n8n to call back
+     * Build the callback URL
      */
     private String buildCallbackUrl() {
         String base = callbackBaseUrl.endsWith("/") 
@@ -199,14 +230,16 @@ public class DeepAISearchClient {
     }
 
     /**
-     * Get webhook URL (for testing/debugging)
+     * Get webhook URL (for debugging)
+     * @deprecated This configuration is deprecated.
      */
+    @Deprecated
     public String getWebhookUrl() {
-        return webhookUrl;
+        return webhookUrl != null ? webhookUrl : "";
     }
 
     /**
-     * Get callback base URL (for testing/debugging)
+     * Get callback base URL (for debugging)
      */
     public String getCallbackBaseUrl() {
         return callbackBaseUrl;

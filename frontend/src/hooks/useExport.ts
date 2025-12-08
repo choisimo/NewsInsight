@@ -13,6 +13,8 @@ export interface ExportableSearchResult {
   id?: string;
   title?: string;
   snippet?: string;
+  /** Full content text (not truncated) - used for export/analysis */
+  content?: string;
   url?: string;
   source?: string;
   publishedAt?: string;
@@ -20,6 +22,16 @@ export interface ExportableSearchResult {
   reliabilityScore?: number;
   sentimentLabel?: string;
   [key: string]: unknown;
+}
+
+/**
+ * Export section for structured content
+ */
+export interface ExportSection {
+  /** Section title */
+  title: string;
+  /** Section content (text, can include newlines) */
+  content: string;
 }
 
 /**
@@ -32,6 +44,8 @@ export interface ExportOptions {
   title?: string;
   /** 추가 메타데이터 */
   metadata?: Record<string, unknown>;
+  /** Additional content sections (rendered after metadata, before data) */
+  sections?: ExportSection[];
   /** CSV 구분자 */
   csvDelimiter?: string;
   /** BOM 추가 (한글 엑셀 호환) */
@@ -45,12 +59,13 @@ const exportToJson = (
   data: unknown,
   options: ExportOptions = {}
 ): string => {
-  const { title, metadata } = options;
+  const { title, metadata, sections } = options;
   
   const exportData = {
     ...(title && { title }),
     exportedAt: new Date().toISOString(),
     ...metadata,
+    ...(sections && sections.length > 0 && { sections }),
     data,
   };
   
@@ -106,7 +121,7 @@ const exportToMarkdown = (
   data: ExportableSearchResult[],
   options: ExportOptions = {}
 ): string => {
-  const { title, metadata } = options;
+  const { title, metadata, sections } = options;
   
   let md = "";
   
@@ -124,8 +139,16 @@ const exportToMarkdown = (
     md += "\n";
   }
   
+  // 추가 섹션 (요약, 분석 결과 등)
+  if (sections && sections.length > 0) {
+    sections.forEach((section) => {
+      md += `## ${section.title}\n\n`;
+      md += `${section.content}\n\n`;
+    });
+  }
+  
   // 결과 수
-  md += `총 ${data.length}개의 결과\n\n---\n\n`;
+  md += `---\n\n## 상세 결과 (총 ${data.length}개)\n\n`;
   
   // 데이터
   data.forEach((item, index) => {
@@ -137,8 +160,10 @@ const exportToMarkdown = (
     if (item.reliabilityScore !== undefined) md += `**신뢰도:** ${item.reliabilityScore}%\n\n`;
     if (item.sentimentLabel) md += `**감성:** ${item.sentimentLabel}\n\n`;
     
-    if (item.snippet) {
-      md += `### 내용\n\n${item.snippet}\n\n`;
+    // Use full content if available, otherwise fall back to snippet
+    const displayContent = item.content || item.snippet;
+    if (displayContent) {
+      md += `### 내용\n\n${displayContent}\n\n`;
     }
     
     if (item.url) {
@@ -158,7 +183,7 @@ const exportToText = (
   data: ExportableSearchResult[],
   options: ExportOptions = {}
 ): string => {
-  const { title, metadata } = options;
+  const { title, metadata, sections } = options;
   
   let txt = "";
   
@@ -174,11 +199,24 @@ const exportToText = (
     txt += "\n" + "-".repeat(40) + "\n\n";
   }
   
+  // 추가 섹션 (요약, 분석 결과 등)
+  if (sections && sections.length > 0) {
+    sections.forEach((section) => {
+      txt += `[ ${section.title} ]\n`;
+      txt += `${section.content}\n\n`;
+    });
+    txt += "-".repeat(40) + "\n\n";
+  }
+  
+  txt += `상세 결과 (총 ${data.length}개)\n\n`;
+  
   data.forEach((item, index) => {
     txt += `[${index + 1}] ${item.title || "제목 없음"}\n`;
     if (item.source) txt += `출처: ${item.source}\n`;
     if (item.publishedAt) txt += `날짜: ${new Date(item.publishedAt).toLocaleDateString("ko-KR")}\n`;
-    if (item.snippet) txt += `\n${item.snippet}\n`;
+    // Use full content if available, otherwise fall back to snippet
+    const displayContent = item.content || item.snippet;
+    if (displayContent) txt += `\n${displayContent}\n`;
     if (item.url) txt += `\nURL: ${item.url}\n`;
     txt += "\n" + "-".repeat(40) + "\n\n";
   });

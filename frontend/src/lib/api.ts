@@ -604,6 +604,8 @@ export interface UnifiedSearchResult {
   sourceLabel: string;
   title: string;
   snippet?: string;
+  /** Full content text (not truncated) - used for export/analysis */
+  content?: string;
   url?: string;
   publishedAt?: string;
   relevanceScore?: number;

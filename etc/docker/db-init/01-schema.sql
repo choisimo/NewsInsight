@@ -86,8 +86,14 @@ ALTER TABLE collection_jobs
     CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED'));
 
 -- ============================================
--- Deep AI Search Tables (n8n Crawl Agent)
+-- Deep Search Tables (IntegratedCrawlerService)
 -- ============================================
+-- DeepSearch uses IntegratedCrawlerService with multiple crawling strategies:
+-- - Crawl4AI for JS-rendered pages
+-- - Browser-Use API for complex interactions  
+-- - Direct HTTP for simple pages
+-- - Search Engines (Google, Naver, Daum) for topic-based searches
+-- Results are analyzed by AIDove for evidence extraction and stance analysis.
 
 -- Crawl jobs table for deep AI search
 CREATE TABLE IF NOT EXISTS crawl_jobs (
