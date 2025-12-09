@@ -850,6 +850,8 @@ export function useUrlCollection() {
         }
       };
 
+      // Include the target folder itself in the selection
+      newFolders.add(folder.id);
       selectRecursive(folder);
       return { folders: newFolders, urls: newUrls };
     });

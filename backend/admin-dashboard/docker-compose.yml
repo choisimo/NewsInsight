@@ -1,0 +1,59 @@
+# Admin Dashboard Docker Compose
+# 개발 및 운영 환경에서 Admin Dashboard를 실행합니다.
+
+services:
+  admin-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: newsinsight/admin-dashboard:local
+    container_name: newsinsight-admin-api
+    restart: unless-stopped
+    environment:
+      - PORT=8888
+      - PROJECT_ROOT=/workspace
+      - ADMIN_CONFIG_DIR=/app/config
+      - ADMIN_SECRET_KEY=${ADMIN_SECRET_KEY:-change-this-secret-key-in-production}
+      - CORS_ORIGINS=http://localhost:3001,http://localhost:8888
+    ports:
+      - "8888:8888"
+    volumes:
+      # 프로젝트 루트를 마운트하여 docker compose 명령 실행 가능
+      - ../../:/workspace:ro
+      # Docker 소켓 마운트 (컨테이너 관리용)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 설정 파일 영속화
+      - admin-config:/app/config
+    networks:
+      - admin-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  admin-web:
+    image: node:20-alpine
+    container_name: newsinsight-admin-web
+    working_dir: /app
+    volumes:
+      - ./web:/app
+      - admin-web-node-modules:/app/node_modules
+    environment:
+      - VITE_API_URL=http://admin-api:8888/api/v1/admin
+    command: >
+      sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "3001:3001"
+    depends_on:
+      - admin-api
+    networks:
+      - admin-net
+
+volumes:
+  admin-config:
+  admin-web-node-modules:
+
+networks:
+  admin-net:
+    name: newsinsight-admin-net

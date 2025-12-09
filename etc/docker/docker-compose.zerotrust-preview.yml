@@ -1,26 +1,26 @@
-# Cloudflare Zero Trust Tunnel 기반 NewsInsight Stack
-# newsinsight.nodove.com 으로만 접근 가능하도록 구성
+# Cloudflare Zero Trust Tunnel 기반 NewsInsight Stack (Preview)
+# news.nodove.com (프리뷰 프로덕션) 으로만 접근 가능하도록 구성
 #
 # 사전 준비:
 # 1. Cloudflare Dashboard에서 Zero Trust > Access > Tunnels 메뉴 진입
-# 2. Create a tunnel 클릭 후 tunnel 이름 지정 (예: newsinsight-tunnel)
-# 3. 생성된 tunnel token 복사
-# 4. .env 파일에 CLOUDFLARE_TUNNEL_TOKEN=<your-token> 추가
+# 2. Create a tunnel 클릭 후 tunnel 이름 지정 (예: news-preview-tunnel)
+# 3. 생성된 preview tunnel token 복사
+# 4. etc/docker/.env 파일에 CLOUDFLARE_TUNNEL_TOKEN_PREVIEW=<your-preview-token> 추가
 # 5. Public hostname 설정:
-#    - newsinsight.nodove.com -> http://frontend:8080
-#    - newsinsight.nodove.com/api/* -> http://api-gateway:8000
+#    - news.nodove.com -> http://frontend:8080
+#    - news.nodove.com/api/* -> http://api-gateway:8000
 #
-# 실행: docker compose -f docker-compose.zerotrust.yml up -d
+# 실행: docker compose -f docker-compose.zerotrust-preview.yml up -d
 
 services:
-  # Cloudflare Tunnel - 외부 트래픽을 내부 서비스로 라우팅
+  # Cloudflare Tunnel - 외부 트래픽을 내부 서비스로 라우팅 (Preview)
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: newsinsight-cloudflared
+    container_name: newsinsight-preview-cloudflared
     restart: unless-stopped
     command: tunnel run
     environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN_PREVIEW}
     depends_on:
       frontend:
         condition: service_started
@@ -66,7 +66,7 @@ services:
     build:
       context: ../../
       dockerfile: backend/api-gateway-service/Dockerfile
-    image: newsinsight/api-gateway:local
+    image: newsinsight/api-gateway:local-preview
     depends_on:
       consul:
         condition: service_healthy
@@ -98,7 +98,7 @@ services:
       - ../../frontend:/app
       - frontend-node-modules:/app/node_modules
     environment:
-      # Zero Trust 환경: Vite 프록시를 통해 내부 api-gateway로 라우팅
+      # Zero Trust Preview 환경: Vite 프록시를 통해 내부 api-gateway로 라우팅
       - VITE_API_BASE_URL=http://api-gateway:8000
       - VITE_BROWSER_USE_URL=http://api-gateway:8000
     command: >
@@ -117,7 +117,7 @@ services:
     build:
       context: ../../
       dockerfile: backend/data-collection-service/Dockerfile
-    image: newsinsight/collector-service:local
+    image: newsinsight/collector-service:local-preview
     depends_on:
       consul:
         condition: service_healthy
@@ -258,7 +258,7 @@ services:
     build:
       context: ../../
       dockerfile: backend/autonomous-crawler-service/Dockerfile
-    image: newsinsight/autonomous-crawler:local
+    image: newsinsight/autonomous-crawler:local-preview
     restart: unless-stopped
     depends_on:
       consul:
@@ -305,7 +305,7 @@ services:
     build:
       context: ../../backend/browser-use
       dockerfile: Dockerfile.api
-    image: newsinsight/browser-use-api:local
+    image: newsinsight/browser-use-api:local-preview
     restart: unless-stopped
     environment:
       - AIDOVE_WEBHOOK_URL=${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
@@ -332,4 +332,4 @@ volumes:
 
 networks:
   default:
-    name: newsinsight-zerotrust-net
+    name: newsinsight-zerotrust-preview-net

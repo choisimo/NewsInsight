@@ -796,15 +796,21 @@ export interface UnifiedSearchJob {
 /**
  * Start a new unified search job.
  * Returns immediately with job details; results are delivered via SSE.
+ * 
+ * @param query - Search query string
+ * @param window - Time window (1d, 7d, 30d)
+ * @param priorityUrls - Optional array of URLs to prioritize for web crawling
  */
 export const startUnifiedSearchJob = async (
   query: string,
   window: string = '7d',
+  priorityUrls?: string[],
 ): Promise<UnifiedSearchJob> => {
   const client = await getApiClient();
   const response = await client.post<UnifiedSearchJob>('/api/v1/search/jobs', {
     query,
     window,
+    ...(priorityUrls && priorityUrls.length > 0 && { priorityUrls }),
   });
   return response.data;
 };

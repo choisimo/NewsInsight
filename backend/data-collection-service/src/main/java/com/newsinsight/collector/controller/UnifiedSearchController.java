@@ -168,14 +168,17 @@ public class UnifiedSearchController {
 
         String jobId = UUID.randomUUID().toString();
         String window = request.getWindow() != null ? request.getWindow() : "7d";
+        List<String> priorityUrls = request.getPriorityUrls();
         
-        log.info("Starting search job: {} for query: '{}', window: {}", jobId, request.getQuery(), window);
+        log.info("Starting search job: {} for query: '{}', window: {}, priorityUrls: {}", 
+                jobId, request.getQuery(), window, 
+                priorityUrls != null ? priorityUrls.size() : 0);
 
         // Create job in event service
         var metadata = unifiedSearchEventService.createJob(jobId, request.getQuery(), window);
         
-        // Start async search execution
-        unifiedSearchService.executeSearchAsync(jobId, request.getQuery(), window);
+        // Start async search execution with priorityUrls
+        unifiedSearchService.executeSearchAsync(jobId, request.getQuery(), window, priorityUrls);
 
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
                 "jobId", jobId,
@@ -351,6 +354,7 @@ public class UnifiedSearchController {
     public static class SearchJobRequest {
         private String query;
         private String window;
+        private List<String> priorityUrls;
 
         public String getQuery() {
             return query;
@@ -366,6 +370,14 @@ public class UnifiedSearchController {
 
         public void setWindow(String window) {
             this.window = window;
+        }
+
+        public List<String> getPriorityUrls() {
+            return priorityUrls;
+        }
+
+        public void setPriorityUrls(List<String> priorityUrls) {
+            this.priorityUrls = priorityUrls;
         }
     }
 }

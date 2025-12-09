@@ -89,6 +89,12 @@ spring:
           predicates:
             - Path=/api/v1/search-history/**
 
+        # Search Template API - SmartSearch 검색 템플릿 관리
+        - id: search-templates
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/search-templates/**
+
         # Config API - 프론트엔드 설정
         - id: config-api
           uri: lb://collector-service

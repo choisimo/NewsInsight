@@ -1100,8 +1100,12 @@ const ParallelSearch = () => {
     setSearchStartTime(Date.now()); // Track start time for duration
 
     try {
-      // Step 1: Create a new search job
-      const job = await startUnifiedSearchJob(effectiveQuery.trim(), filters.timeWindow);
+      // Step 1: Create a new search job with priorityUrls
+      const priorityUrlStrings = priorityUrls.length > 0 
+        ? priorityUrls.map(p => p.url) 
+        : undefined;
+      
+      const job = await startUnifiedSearchJob(effectiveQuery.trim(), filters.timeWindow, priorityUrlStrings);
       
       setCurrentJobId(job.jobId);
       setJobStatus(job.status);

@@ -579,10 +579,12 @@ public class UnifiedSearchService {
      * @param jobId The job ID
      * @param query Search query
      * @param window Time window (1d, 7d, 30d)
+     * @param priorityUrls Optional list of URLs to prioritize for web crawling
      */
     @Async
-    public void executeSearchAsync(String jobId, String query, String window) {
-        log.info("Starting async search for job: {}, query: '{}', window: {}", jobId, query, window);
+    public void executeSearchAsync(String jobId, String query, String window, List<String> priorityUrls) {
+        log.info("Starting async search for job: {}, query: '{}', window: {}, priorityUrls: {}", 
+                jobId, query, window, priorityUrls != null ? priorityUrls.size() : 0);
         
         unifiedSearchEventService.updateJobStatus(jobId, "IN_PROGRESS");
         
@@ -595,7 +597,7 @@ public class UnifiedSearchService {
                     executeDbSearch(jobId, query, window, totalResults));
             
             CompletableFuture<Void> webFuture = CompletableFuture.runAsync(() -> 
-                    executeWebSearch(jobId, query, window, totalResults));
+                    executeWebSearch(jobId, query, window, totalResults, priorityUrls));
             
             CompletableFuture<Void> aiFuture = CompletableFuture.runAsync(() -> 
                     executeAiSearch(jobId, query, window, totalResults));
@@ -666,11 +668,20 @@ public class UnifiedSearchService {
         }
     }
 
-    private void executeWebSearch(String jobId, String query, String window, AtomicInteger totalResults) {
+    private void executeWebSearch(String jobId, String query, String window, AtomicInteger totalResults, List<String> priorityUrls) {
         try {
             unifiedSearchEventService.publishStatusUpdate(jobId, "web", "웹에서 최신 정보 수집 중...");
             
-            List<String> searchUrls = generateSearchUrls(query, window);
+            // Use priorityUrls if provided, otherwise fall back to generated URLs
+            List<String> searchUrls;
+            if (priorityUrls != null && !priorityUrls.isEmpty()) {
+                searchUrls = priorityUrls;
+                log.info("Using {} priority URLs for web search in job: {}", priorityUrls.size(), jobId);
+            } else {
+                searchUrls = generateSearchUrls(query, window);
+                log.info("Using {} generated search URLs for web search in job: {}", searchUrls.size(), jobId);
+            }
+            
             int successCount = 0;
 
             for (String url : searchUrls) {
