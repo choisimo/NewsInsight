@@ -417,6 +417,7 @@ const UrlCollections = () => {
     addUrl,
     updateItem,
     deleteItem,
+    moveItem,
     toggleFolder,
     toggleSelection,
     selectAllInFolder,
@@ -662,6 +663,7 @@ const UrlCollections = () => {
                 onAddFolder={handleAddFolder}
                 onAddUrl={handleAddUrl}
                 onSelectAll={selectAllInFolder}
+                onMoveItem={moveItem}
               />
             </ScrollArea>
           </CardContent>
@@ -672,6 +674,7 @@ const UrlCollections = () => {
           <Info className="h-4 w-4" />
           <AlertDescription>
             <strong>사용법:</strong> 폴더와 URL을 추가하고, 체크박스로 분석할 항목을 선택하세요.
+            드래그 앤 드롭으로 항목을 이동할 수 있습니다.
             JSON 내보내기/가져오기로 컬렉션을 공유할 수 있습니다.
             더블클릭으로 이름을 변경할 수 있습니다.
           </AlertDescription>

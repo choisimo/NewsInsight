@@ -1,26 +1,26 @@
-# Cloudflare Zero Trust Tunnel 기반 NewsInsight Stack (Preview)
-# news.nodove.com (프리뷰 프로덕션) 으로만 접근 가능하도록 구성
+# Cloudflare Zero Trust Tunnel 기반 NewsInsight Stack
+# news.nodove.com 전용 구성 (Preview 환경)
 #
 # 사전 준비:
 # 1. Cloudflare Dashboard에서 Zero Trust > Access > Tunnels 메뉴 진입
-# 2. Create a tunnel 클릭 후 tunnel 이름 지정 (예: news-preview-tunnel)
-# 3. 생성된 preview tunnel token 복사
-# 4. etc/docker/.env 파일에 CLOUDFLARE_TUNNEL_TOKEN_PREVIEW=<your-preview-token> 추가
+# 2. Create a tunnel 클릭 후 tunnel 이름 지정 (예: news-tunnel)
+# 3. 생성된 tunnel token 복사
+# 4. .env 파일에 CLOUDFLARE_TUNNEL_TOKEN_NEWS=<your-token> 추가
 # 5. Public hostname 설정:
 #    - news.nodove.com -> http://frontend:8080
 #    - news.nodove.com/api/* -> http://api-gateway:8000
 #
-# 실행: docker compose -f docker-compose.zerotrust-preview.yml up -d
+# 실행: docker compose -f docker-compose.zerotrust-news.yml up -d
 
 services:
-  # Cloudflare Tunnel - 외부 트래픽을 내부 서비스로 라우팅 (Preview)
+  # Cloudflare Tunnel - 외부 트래픽을 내부 서비스로 라우팅
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: newsinsight-preview-cloudflared
+    container_name: news-cloudflared
     restart: unless-stopped
     command: tunnel run
     environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN_PREVIEW}
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN_NEWS}
     depends_on:
       frontend:
         condition: service_started
@@ -32,6 +32,7 @@ services:
 
   consul:
     image: hashicorp/consul:1.18
+    container_name: news-consul
     command: ["agent", "-dev", "-client", "0.0.0.0", "-ui"]
     # 외부 포트 노출 제거 - 내부 네트워크에서만 접근 가능
     expose:
@@ -46,6 +47,7 @@ services:
 
   consul-seed:
     image: alpine:3.18
+    container_name: news-consul-seed
     depends_on:
       consul:
         condition: service_healthy
@@ -58,7 +60,7 @@ services:
     command: >
       sh -c "
         apk add --no-cache curl bash jq &&
-        /scripts/consul_seed.sh ${ENVIRONMENT:-production}
+        /scripts/consul_seed.sh ${ENVIRONMENT:-staging}
       "
     restart: "no"
 
@@ -66,7 +68,8 @@ services:
     build:
       context: ../../
       dockerfile: backend/api-gateway-service/Dockerfile
-    image: newsinsight/api-gateway:local-preview
+    image: news/api-gateway:local
+    container_name: news-api-gateway
     depends_on:
       consul:
         condition: service_healthy
@@ -75,12 +78,6 @@ services:
       collector-service:
         condition: service_started
       browser-use-api:
-        condition: service_started
-      sentiment-addon:
-        condition: service_started
-      factcheck-addon:
-        condition: service_started
-      bias-addon:
         condition: service_started
     environment:
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -91,9 +88,6 @@ services:
       - PORT=${API_GATEWAY_PORT:-8000}
       - BROWSER_USE_URL=http://browser-use-api:8500
       - BROWSER_USE_WS_URL=ws://browser-use-api:8500
-      - ML_ADDON_SENTIMENT_URL=http://sentiment-addon:8100
-      - ML_ADDON_FACTCHECK_URL=http://factcheck-addon:8101
-      - ML_ADDON_BIAS_URL=http://bias-addon:8102
     # 외부 포트 노출 제거 - Cloudflare Tunnel을 통해서만 접근
     expose:
       - "8000"
@@ -101,21 +95,23 @@ services:
       - default
 
   frontend:
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - ../../frontend:/app
-      - frontend-node-modules:/app/node_modules
-    environment:
-      # Zero Trust Preview 환경: Vite 프록시를 통해 내부 api-gateway로 라우팅
-      - VITE_API_BASE_URL=http://api-gateway:8000
-      - VITE_BROWSER_USE_URL=http://api-gateway:8000
-    command: >
-      sh -c "(npm ci --legacy-peer-deps || npm install --legacy-peer-deps) \
-      && npm run dev -- --host 0.0.0.0 --port 8080"
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      args:
+        # API URL은 브라우저에서 접근 가능한 경로로 설정 (nginx가 프록시함)
+        - VITE_API_BASE_URL=
+        - VITE_BROWSER_USE_URL=
+    image: news/frontend:local
+    container_name: news-frontend
     # 외부 포트 노출 제거 - Cloudflare Tunnel을 통해서만 접근
     expose:
       - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
     depends_on:
       api-gateway:
         condition: service_started
@@ -126,7 +122,8 @@ services:
     build:
       context: ../../
       dockerfile: backend/data-collection-service/Dockerfile
-    image: newsinsight/collector-service:local-preview
+    image: news/collector-service:local
+    container_name: news-collector-service
     depends_on:
       consul:
         condition: service_healthy
@@ -166,13 +163,13 @@ services:
       - COLLECTOR_DEEP_SEARCH_FALLBACK_TO_WEBHOOK=false
       - DB_HOST=${DB_HOST:-postgres}
       - DB_PORT=${DB_PORT:-5432}
-      - DB_NAME=${DB_NAME:-newsinsight}
+      - DB_NAME=${DB_NAME:-news}
       - DB_USER=${DB_USER:-postgres}
       - DB_PASSWORD=${DB_PASSWORD:-postgres}
-      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/news}
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-redpanda-dev:9092}
       - SERVER_PORT=${COLLECTOR_PORT:-8081}
-      - SPRING_CLOUD_INETUTILS_PREFERRED_NETWORKS=172.20
+      - SPRING_CLOUD_INETUTILS_PREFERRED_NETWORKS=172.21
     expose:
       - "8081"
     networks:
@@ -180,6 +177,7 @@ services:
 
   web-crawler:
     image: unclecode/crawl4ai:latest
+    container_name: news-web-crawler
     shm_size: 1g
     environment:
       - LOG_LEVEL=${WEB_CRAWLER_LOG_LEVEL:-INFO}
@@ -194,8 +192,9 @@ services:
 
   postgres:
     image: postgres:15-alpine
+    container_name: news-postgres
     environment:
-      - POSTGRES_DB=${DB_NAME:-newsinsight}
+      - POSTGRES_DB=${DB_NAME:-news}
       - POSTGRES_USER=${DB_USER:-postgres}
       - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
     expose:
@@ -211,9 +210,10 @@ services:
 
   mongo:
     image: mongo:7
+    container_name: news-mongo
     restart: unless-stopped
     environment:
-      - MONGO_INITDB_DATABASE=${DB_NAME:-newsinsight}
+      - MONGO_INITDB_DATABASE=${DB_NAME:-news}
     expose:
       - "27017"
     volumes:
@@ -226,6 +226,7 @@ services:
 
   redpanda-dev:
     image: docker.redpanda.com/redpandadata/redpanda:latest
+    container_name: news-redpanda
     command:
       - redpanda
       - start
@@ -252,6 +253,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    container_name: news-redis
     expose:
       - "6379"
     command: redis-server --appendonly yes
@@ -267,7 +269,8 @@ services:
     build:
       context: ../../
       dockerfile: backend/autonomous-crawler-service/Dockerfile
-    image: newsinsight/autonomous-crawler:local-preview
+    image: news/autonomous-crawler:local
+    container_name: news-autonomous-crawler
     restart: unless-stopped
     depends_on:
       consul:
@@ -284,8 +287,8 @@ services:
       - CONSUL_SERVICE_NAME=autonomous-crawler
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-redpanda-dev:9092}
       - KAFKA_CONSUMER_GROUP_ID=${CRAWLER_CONSUMER_GROUP:-autonomous-crawler-group}
-      - KAFKA_BROWSER_TASK_TOPIC=${CRAWLER_TASK_TOPIC:-newsinsight.crawl.browser.tasks}
-      - KAFKA_CRAWL_RESULT_TOPIC=${CRAWLER_RESULT_TOPIC:-newsinsight.crawl.results}
+      - KAFKA_BROWSER_TASK_TOPIC=${CRAWLER_TASK_TOPIC:-news.crawl.browser.tasks}
+      - KAFKA_CRAWL_RESULT_TOPIC=${CRAWLER_RESULT_TOPIC:-news.crawl.results}
       - BROWSER_HEADLESS=${CRAWLER_HEADLESS:-true}
       - BROWSER_MAX_CONCURRENT_SESSIONS=${CRAWLER_MAX_SESSIONS:-2}
       - BROWSER_DEFAULT_TIMEOUT_SECONDS=${CRAWLER_TIMEOUT:-300}
@@ -314,7 +317,8 @@ services:
     build:
       context: ../../backend/browser-use
       dockerfile: Dockerfile.api
-    image: newsinsight/browser-use-api:local-preview
+    image: news/browser-use-api:local
+    container_name: news-browser-use-api
     restart: unless-stopped
     environment:
       - AIDOVE_WEBHOOK_URL=${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
@@ -333,66 +337,14 @@ services:
     networks:
       - default
 
-  # ML Add-ons - 감정 분석 (Sentiment Analysis)
-  sentiment-addon:
-    build:
-      context: ../../backend/ml-addons/sentiment-addon
-      dockerfile: Dockerfile
-    image: newsinsight/sentiment-addon:local-preview
-    restart: unless-stopped
-    expose:
-      - "8100"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    networks:
-      - default
-
-  # ML Add-ons - 팩트체크 (Fact Check)
-  factcheck-addon:
-    build:
-      context: ../../backend/ml-addons/factcheck-addon
-      dockerfile: Dockerfile
-    image: newsinsight/factcheck-addon:local-preview
-    restart: unless-stopped
-    expose:
-      - "8101"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    networks:
-      - default
-
-  # ML Add-ons - 편향도 분석 (Bias Analysis)
-  bias-addon:
-    build:
-      context: ../../backend/ml-addons/bias-addon
-      dockerfile: Dockerfile
-    image: newsinsight/bias-addon:local-preview
-    restart: unless-stopped
-    expose:
-      - "8102"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8102/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    networks:
-      - default
-
 volumes:
   postgres-data:
+    name: news-postgres-data
   redis-data:
-  frontend-node-modules:
+    name: news-redis-data
   mongo-data:
+    name: news-mongo-data
 
 networks:
   default:
-    name: newsinsight-zerotrust-preview-net
+    name: news-zerotrust-net

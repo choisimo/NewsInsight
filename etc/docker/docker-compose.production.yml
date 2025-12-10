@@ -16,6 +16,7 @@ volumes:
   mongo_prod_data:
   redis_prod_data:
   consul_prod_data:
+  ai_agent_data:
 
 services:
   # ============================================================================
@@ -332,12 +333,56 @@ services:
         condition: service_healthy
       browser-use-api:
         condition: service_healthy
+      web-crawler:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9090/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 90s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # AI Agent Worker - Kafka Consumer for AI Processing
+  # Consumes newsinsight.ai.requests, produces to newsinsight.ai.responses
+  # ============================================================================
+  ai-agent-worker:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/ai-agent-worker:${TAG:-latest}
+    container_name: newsinsight-prod-ai-agent-worker
+    restart: unless-stopped
+    environment:
+      # Admin Server
+      ADMIN_PORT: "7080"
+      ADMIN_JWT_SECRET: ${JWT_SECRET_KEY:-change-me}
+      ADMIN_DB_PATH: /data/proxy-admin.db
+      ADMIN_EMAIL: ${AI_AGENT_ADMIN_EMAIL:-admin@newsinsight.nodove.com}
+      ADMIN_PASSWORD: ${AI_AGENT_ADMIN_PASSWORD:-}
+      # Kafka
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_GROUP_ID: ai-agent-worker
+      KAFKA_REQUEST_TOPIC: newsinsight.ai.requests
+      KAFKA_RESPONSE_TOPIC: newsinsight.ai.responses
+      # Upstream LLM (OpenCode or external)
+      OPENCODE_BASE: ${OPENCODE_BASE:-http://opencode:7012}
+    volumes:
+      - ai_agent_data:/data
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.25
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:7080/admin/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     logging:
       driver: "json-file"
       options:

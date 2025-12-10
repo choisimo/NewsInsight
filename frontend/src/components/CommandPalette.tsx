@@ -1,18 +1,20 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search,
   Home,
-  Sparkles,
-  Shield,
   Bot,
   FolderOpen,
   History,
-  Settings,
   Moon,
   Sun,
   FileJson,
   Command,
+  Cpu,
+  Brain,
+  Shield,
+  Database,
+  Link as LinkIcon,
 } from "lucide-react";
 import {
   CommandDialog,
@@ -82,34 +84,59 @@ export function CommandPalette({
     },
   ]);
 
-  // 명령어 목록
+  // 명령어 목록 (Consolidated navigation)
   const commands = useMemo<CommandItem[]>(() => [
-    // 네비게이션
+    // 네비게이션 - 통합 검색
     {
-      id: "home",
-      label: "홈으로 이동",
-      icon: Home,
+      id: "search",
+      label: "검색 (통합/Deep/팩트체크/URL분석)",
+      icon: Search,
       shortcut: "⌘H",
       action: () => { navigate("/"); setIsOpen(false); },
-      keywords: ["home", "main", "홈", "메인"],
+      keywords: ["home", "main", "홈", "메인", "검색", "search"],
       category: "navigation",
     },
     {
-      id: "deep-search",
-      label: "Deep AI Search",
-      icon: Sparkles,
+      id: "search-unified",
+      label: "통합 검색 모드",
+      icon: Search,
+      action: () => { navigate("/?mode=unified"); setIsOpen(false); },
+      keywords: ["unified", "통합", "검색"],
+      category: "search",
+    },
+    {
+      id: "search-deep",
+      label: "Deep Search 모드",
+      icon: Brain,
       shortcut: "⌘D",
-      action: () => { navigate("/deep-search"); setIsOpen(false); },
+      action: () => { navigate("/?mode=deep"); setIsOpen(false); },
       keywords: ["deep", "search", "ai", "분석", "심층"],
-      category: "navigation",
+      category: "search",
     },
     {
-      id: "fact-check",
-      label: "팩트체크",
+      id: "search-factcheck",
+      label: "팩트체크 모드",
       icon: Shield,
       shortcut: "⌘F",
-      action: () => { navigate("/fact-check"); setIsOpen(false); },
+      action: () => { navigate("/?mode=factcheck"); setIsOpen(false); },
       keywords: ["fact", "check", "verify", "팩트", "검증"],
+      category: "search",
+    },
+    {
+      id: "search-urlanalysis",
+      label: "URL 분석 모드",
+      icon: LinkIcon,
+      shortcut: "⌘U",
+      action: () => { navigate("/?mode=urlanalysis"); setIsOpen(false); },
+      keywords: ["url", "analysis", "extract", "claim", "분석", "추출", "주장"],
+      category: "search",
+    },
+    {
+      id: "ml-addons",
+      label: "ML Add-ons",
+      icon: Cpu,
+      action: () => { navigate("/ml-addons"); setIsOpen(false); },
+      keywords: ["ml", "machine", "learning", "addon", "sentiment", "bias"],
       category: "navigation",
     },
     {
@@ -123,23 +150,31 @@ export function CommandPalette({
     },
     {
       id: "url-collections",
-      label: "URL 컬렉션",
-      icon: FolderOpen,
+      label: "URL 원천 관리",
+      icon: Database,
       action: () => { navigate("/url-collections"); setIsOpen(false); },
-      keywords: ["url", "collection", "folder", "컬렉션", "폴더"],
+      keywords: ["url", "source", "원천", "소스", "관리"],
+      category: "navigation",
+    },
+    {
+      id: "projects",
+      label: "프로젝트",
+      icon: FolderOpen,
+      action: () => { navigate("/projects"); setIsOpen(false); },
+      keywords: ["project", "프로젝트", "폴더", "collection"],
       category: "navigation",
     },
     {
       id: "search-history",
       label: "검색 기록",
       icon: History,
-      action: () => { navigate("/search-history"); setIsOpen(false); },
+      action: () => { navigate("/history"); setIsOpen(false); },
       keywords: ["history", "기록", "이전"],
       category: "navigation",
     },
     {
       id: "admin-sources",
-      label: "데이터 소스 관리",
+      label: "데이터 소스 관리 (Admin)",
       icon: FileJson,
       action: () => { navigate("/admin/sources"); setIsOpen(false); },
       keywords: ["admin", "source", "관리", "소스", "rss"],
@@ -208,12 +243,12 @@ export function CommandPalette({
     {
       key: "ctrl+h",
       handler: () => { navigate("/"); },
-      description: "홈으로",
+      description: "검색으로",
     },
     {
       key: "ctrl+d",
-      handler: () => { navigate("/deep-search"); },
-      description: "Deep Search",
+      handler: () => { navigate("/?mode=deep"); },
+      description: "Deep Search 모드",
     },
     {
       key: "ctrl+shift+t",
@@ -266,6 +301,27 @@ export function CommandPalette({
         )}
 
         {recentCommands.length > 0 && <CommandSeparator />}
+
+        {/* 검색 모드 */}
+        <CommandGroup heading="검색 모드">
+          {commands
+            .filter((cmd) => cmd.category === "search")
+            .map((cmd) => (
+              <CommandItem
+                key={cmd.id}
+                onSelect={cmd.action}
+                className="gap-2"
+              >
+                <cmd.icon className="h-4 w-4" />
+                <span>{cmd.label}</span>
+                {cmd.shortcut && (
+                  <CommandShortcut>{cmd.shortcut}</CommandShortcut>
+                )}
+              </CommandItem>
+            ))}
+        </CommandGroup>
+
+        <CommandSeparator />
 
         {/* 페이지 이동 */}
         <CommandGroup heading="페이지 이동">

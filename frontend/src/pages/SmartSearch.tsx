@@ -1,10 +1,11 @@
 /**
  * SmartSearch - 통합 검색 페이지
  * 
- * 3가지 검색 모드를 탭으로 통합:
+ * 4가지 검색 모드를 탭으로 통합:
  * 1. 통합 검색 (Parallel Search) - 빠른 뉴스 검색
  * 2. Deep Search - AI 심층 분석
  * 3. 팩트체크 - 주장 검증
+ * 4. URL 분석 - URL에서 주장 추출 및 검증
  * 
  * 각 탭에서 결과를 카드로 표시하고, 선택한 결과들을 "검색 템플릿"으로 저장 가능
  */
@@ -41,6 +42,8 @@ import {
   Play,
   Trash2,
   Star,
+  Link as LinkIcon,
+  FileText,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -51,6 +54,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Tooltip,
   TooltipContent,
@@ -78,6 +82,7 @@ import {
   deleteSearchTemplate,
   recordTemplateUsage,
   toggleTemplateFavorite,
+  extractClaimsFromUrl,
   type UnifiedSearchResult,
   type Evidence,
   type DeepSearchResult,
@@ -85,16 +90,17 @@ import {
   type SearchTemplate as ApiSearchTemplate,
 } from "@/lib/api";
 import { useDeepSearchSSE } from "@/hooks/useDeepSearchSSE";
+import { PriorityUrlEditor, type PriorityUrl } from "@/components/PriorityUrlEditor";
 
 // ============================================
 // Types
 // ============================================
 
-type SearchMode = "unified" | "deep" | "factcheck";
+type SearchMode = "unified" | "deep" | "factcheck" | "urlanalysis";
 
 interface SelectedItem {
   id: string;
-  type: "unified" | "evidence" | "factcheck";
+  type: "unified" | "evidence" | "factcheck" | "urlclaim";
   title: string;
   url?: string;
   snippet?: string;
@@ -153,6 +159,14 @@ const MODE_CONFIG = {
     color: "text-green-600",
     bgColor: "bg-green-50 dark:bg-green-900/20",
     borderColor: "border-green-500",
+  },
+  urlanalysis: {
+    label: "URL 분석",
+    description: "URL에서 주장 추출 및 검증",
+    icon: LinkIcon,
+    color: "text-orange-600",
+    bgColor: "bg-orange-50 dark:bg-orange-900/20",
+    borderColor: "border-orange-500",
   },
 } as const;
 
@@ -509,8 +523,17 @@ export default function SmartSearch() {
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // Get initial mode from URL params (for backward compatibility redirects)
+  const getInitialMode = (): SearchMode => {
+    const modeParam = searchParams.get("mode");
+    if (modeParam === "deep" || modeParam === "factcheck" || modeParam === "unified" || modeParam === "urlanalysis") {
+      return modeParam;
+    }
+    return "unified";
+  };
+
   // State
-  const [activeTab, setActiveTab] = useState<SearchMode>("unified");
+  const [activeTab, setActiveTab] = useState<SearchMode>(getInitialMode);
   const [query, setQuery] = useState(searchParams.get("q") || "");
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
   const [templates, setTemplates] = useState<SearchTemplate[]>([]);
@@ -535,6 +558,20 @@ export default function SmartSearch() {
   const [factCheckResults, setFactCheckResults] = useState<VerificationResult[]>([]);
   const [factCheckLoading, setFactCheckLoading] = useState(false);
   const [factCheckError, setFactCheckError] = useState<string | null>(null);
+
+  // URL Analysis State
+  const [analysisUrl, setAnalysisUrl] = useState("");
+  const [urlClaims, setUrlClaims] = useState<Array<{
+    id: string;
+    text: string;
+    confidence: number;
+    context?: string;
+    selected: boolean;
+  }>>([]);
+  const [urlAnalysisLoading, setUrlAnalysisLoading] = useState(false);
+  const [urlAnalysisError, setUrlAnalysisError] = useState<string | null>(null);
+  const [urlPageTitle, setUrlPageTitle] = useState<string | null>(null);
+  const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
 
   // Deep Search SSE Hook
   const {
@@ -863,11 +900,102 @@ export default function SmartSearch() {
     setClaims((prev) => prev.map((c, i) => (i === index ? value : c)));
   };
 
+  // URL Analysis - Extract claims from URL
+  const runUrlAnalysis = useCallback(async () => {
+    if (!analysisUrl.trim()) {
+      setUrlAnalysisError("URL을 입력해주세요.");
+      return;
+    }
+
+    // Validate URL
+    try {
+      const parsed = new URL(analysisUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error("Invalid protocol");
+      }
+    } catch {
+      setUrlAnalysisError("올바른 URL 형식을 입력해주세요.");
+      return;
+    }
+
+    setUrlAnalysisLoading(true);
+    setUrlAnalysisError(null);
+    setUrlClaims([]);
+    setUrlPageTitle(null);
+
+    try {
+      const response = await extractClaimsFromUrl({
+        url: analysisUrl.trim(),
+        maxClaims: 10,
+        minConfidence: 0.5,
+      });
+
+      if (response.message && response.claims.length === 0) {
+        setUrlAnalysisError(response.message);
+        return;
+      }
+
+      if (response.pageTitle) {
+        setUrlPageTitle(response.pageTitle);
+      }
+
+      if (response.claims && Array.isArray(response.claims)) {
+        setUrlClaims(
+          response.claims.map((claim) => ({
+            id: claim.id,
+            text: claim.text,
+            confidence: claim.confidence || 0.7,
+            context: claim.context,
+            selected: true,
+          }))
+        );
+      }
+    } catch (e) {
+      setUrlAnalysisError(e instanceof Error ? e.message : "URL 분석 실패");
+    } finally {
+      setUrlAnalysisLoading(false);
+    }
+  }, [analysisUrl]);
+
+  // Toggle URL claim selection
+  const toggleUrlClaimSelection = useCallback((claimId: string) => {
+    setUrlClaims((prev) =>
+      prev.map((claim) =>
+        claim.id === claimId ? { ...claim, selected: !claim.selected } : claim
+      )
+    );
+  }, []);
+
+  // Select/deselect all URL claims
+  const selectAllUrlClaims = useCallback((selected: boolean) => {
+    setUrlClaims((prev) => prev.map((claim) => ({ ...claim, selected })));
+  }, []);
+
+  // Transfer selected URL claims to fact check
+  const transferToFactCheck = useCallback(() => {
+    const selectedClaims = urlClaims.filter((c) => c.selected).map((c) => c.text);
+    if (selectedClaims.length === 0) {
+      toast({
+        title: "선택된 주장이 없습니다",
+        description: "팩트체크로 전송할 주장을 선택해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setClaims(selectedClaims);
+    setActiveTab("factcheck");
+    toast({
+      title: "주장이 전송되었습니다",
+      description: `${selectedClaims.length}개의 주장이 팩트체크 탭으로 전송되었습니다.`,
+    });
+  }, [urlClaims, toast]);
+
   // Handle search based on active tab
   const handleSearch = () => {
     if (activeTab === "unified") runUnifiedSearch();
     else if (activeTab === "deep") runDeepSearch();
     else if (activeTab === "factcheck") runFactCheck();
+    else if (activeTab === "urlanalysis") runUrlAnalysis();
   };
 
   // Cleanup on unmount
@@ -886,10 +1014,10 @@ export default function SmartSearch() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Sparkles className="h-6 w-6 text-primary" />
-            스마트 검색
+            검색
           </h1>
           <p className="text-muted-foreground text-sm">
-            통합 검색, Deep Search, 팩트체크를 한 곳에서 - 결과를 선택하고 템플릿으로 저장
+            통합 검색, Deep Search, 팩트체크, URL 분석을 한 곳에서
           </p>
         </div>
         <Sheet open={showTemplates} onOpenChange={setShowTemplates}>
@@ -987,32 +1115,61 @@ export default function SmartSearch() {
         onSaveTemplate={saveAsTemplate}
       />
 
-      {/* Search Input */}
-      <div className="flex gap-2">
-        <Input
-          placeholder="검색어를 입력하세요..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          className="flex-1"
-        />
-        <Button onClick={handleSearch} disabled={unifiedLoading || deepLoading || factCheckLoading}>
-          {(unifiedLoading || deepLoading || factCheckLoading) ? (
-            <Loader2 className="h-4 w-4 animate-spin mr-1" />
-          ) : (
-            <Play className="h-4 w-4 mr-1" />
-          )}
-          검색
-        </Button>
-      </div>
+      {/* Search Input - Conditional based on mode */}
+      {activeTab === "urlanalysis" ? (
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <LinkIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="분석할 URL을 입력하세요... (예: https://example.com/article)"
+              value={analysisUrl}
+              onChange={(e) => setAnalysisUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              className="pl-10"
+            />
+          </div>
+          <Button onClick={handleSearch} disabled={urlAnalysisLoading}>
+            {urlAnalysisLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-1" />
+            ) : (
+              <Play className="h-4 w-4 mr-1" />
+            )}
+            분석
+          </Button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <Input
+            placeholder="검색어를 입력하세요..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+            className="flex-1"
+          />
+          <Button onClick={handleSearch} disabled={unifiedLoading || deepLoading || factCheckLoading}>
+            {(unifiedLoading || deepLoading || factCheckLoading) ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-1" />
+            ) : (
+              <Play className="h-4 w-4 mr-1" />
+            )}
+            검색
+          </Button>
+        </div>
+      )}
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SearchMode)}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           {(Object.keys(MODE_CONFIG) as SearchMode[]).map((mode) => {
             const config = MODE_CONFIG[mode];
             const Icon = config.icon;
-            const count = mode === "unified" ? unifiedResults.length : mode === "deep" ? (deepResults?.evidence?.length || 0) : factCheckResults.length;
+            const count = mode === "unified" 
+              ? unifiedResults.length 
+              : mode === "deep" 
+                ? (deepResults?.evidence?.length || 0) 
+                : mode === "factcheck"
+                  ? factCheckResults.length
+                  : urlClaims.length;
             return (
               <TabsTrigger key={mode} value={mode} className="flex items-center gap-2">
                 <Icon className="h-4 w-4" />
@@ -1230,6 +1387,185 @@ export default function SmartSearch() {
               )}
             </div>
           </ScrollArea>
+        </TabsContent>
+
+        {/* URL Analysis Tab */}
+        <TabsContent value="urlanalysis" className="space-y-4">
+          <Card className={`${MODE_CONFIG.urlanalysis.bgColor} border-none`}>
+            <CardContent className="py-3">
+              <div className="flex items-center gap-2 text-sm">
+                <LinkIcon className={`h-4 w-4 ${MODE_CONFIG.urlanalysis.color}`} />
+                <span className="text-muted-foreground">
+                  뉴스 기사나 웹 페이지의 URL을 입력하면 AI가 검증 가능한 주장을 추출합니다.
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {urlAnalysisError && (
+            <div className="p-4 rounded-lg bg-destructive/10 text-destructive flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" />
+              {urlAnalysisError}
+            </div>
+          )}
+
+          {/* URL Analysis Results */}
+          {urlPageTitle && (
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-2">
+                  <Globe className="h-4 w-4 text-muted-foreground" />
+                  <CardTitle className="text-base">{urlPageTitle}</CardTitle>
+                </div>
+                <CardDescription className="truncate">{analysisUrl}</CardDescription>
+              </CardHeader>
+            </Card>
+          )}
+
+          {urlClaims.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">추출된 주장 ({urlClaims.length})</CardTitle>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => selectAllUrlClaims(true)}
+                    >
+                      전체 선택
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => selectAllUrlClaims(false)}
+                    >
+                      전체 해제
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={transferToFactCheck}
+                      disabled={!urlClaims.some((c) => c.selected)}
+                    >
+                      <Shield className="h-4 w-4 mr-1" />
+                      팩트체크로 전송
+                    </Button>
+                  </div>
+                </div>
+                <CardDescription>
+                  팩트체크할 주장을 선택하세요. 선택한 주장은 팩트체크 탭으로 전송됩니다.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[400px]">
+                  <div className="space-y-3 pr-4">
+                    {urlClaims.map((claim) => (
+                      <Card
+                        key={claim.id}
+                        className={`cursor-pointer transition-all hover:shadow-md ${
+                          claim.selected
+                            ? "border-primary ring-2 ring-primary/30"
+                            : "border-transparent"
+                        }`}
+                        onClick={() => toggleUrlClaimSelection(claim.id)}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-start gap-3">
+                            <Checkbox
+                              checked={claim.selected}
+                              onCheckedChange={() => toggleUrlClaimSelection(claim.id)}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    claim.confidence >= 0.8
+                                      ? "text-green-600 border-green-300"
+                                      : claim.confidence >= 0.5
+                                        ? "text-yellow-600 border-yellow-300"
+                                        : "text-orange-600 border-orange-300"
+                                  }
+                                >
+                                  신뢰도 {Math.round(claim.confidence * 100)}%
+                                </Badge>
+                              </div>
+                              <p className="text-sm font-medium">{claim.text}</p>
+                              {claim.context && (
+                                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                                  {claim.context}
+                                </p>
+                              )}
+                            </div>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleSelection({
+                                        id: `urlclaim_${claim.id}`,
+                                        type: "urlclaim",
+                                        title: claim.text.slice(0, 50) + (claim.text.length > 50 ? "..." : ""),
+                                        snippet: claim.text,
+                                        url: analysisUrl,
+                                      });
+                                    }}
+                                    className={`p-2 rounded-md transition-colors ${
+                                      isSelected(`urlclaim_${claim.id}`)
+                                        ? "bg-primary text-primary-foreground"
+                                        : "hover:bg-muted text-muted-foreground"
+                                    }`}
+                                  >
+                                    <Pin className="h-4 w-4" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {isSelected(`urlclaim_${claim.id}`) ? "선택 해제" : "템플릿에 추가"}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          )}
+
+          {!urlAnalysisLoading && urlClaims.length === 0 && !urlAnalysisError && (
+            <div className="text-center py-12 text-muted-foreground">
+              <LinkIcon className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <p>분석할 URL을 입력하고 분석 버튼을 눌러주세요.</p>
+              <p className="text-xs mt-1">
+                AI가 웹 페이지를 분석하여 검증 가능한 주장을 추출합니다.
+              </p>
+            </div>
+          )}
+
+          {urlAnalysisLoading && (
+            <div className="text-center py-12">
+              <Loader2 className="h-12 w-12 mx-auto mb-4 animate-spin text-muted-foreground" />
+              <p className="text-muted-foreground">URL을 분석하고 있습니다...</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                페이지 크기에 따라 시간이 소요될 수 있습니다.
+              </p>
+            </div>
+          )}
+
+          {/* Priority URLs for reference */}
+          <PriorityUrlEditor
+            storageKey="smartsearch-priority-urls"
+            urls={priorityUrls}
+            onUrlsChange={setPriorityUrls}
+            disabled={urlAnalysisLoading}
+            title="참고 URL"
+            description="팩트체크 시 우선적으로 참고할 신뢰 URL을 추가하세요."
+            defaultCollapsed={true}
+          />
         </TabsContent>
       </Tabs>
 

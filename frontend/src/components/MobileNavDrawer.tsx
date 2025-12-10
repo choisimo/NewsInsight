@@ -4,20 +4,17 @@ import {
   Menu,
   X,
   Search,
-  Sparkles,
-  Shield,
   Bot,
   FolderOpen,
   History,
   Settings,
   Moon,
   Sun,
-  Home,
   Command,
-  Brain,
+  Database,
+  Cpu,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { useTheme } from "@/contexts/ThemeContext";
 import { cn } from "@/lib/utils";
@@ -27,18 +24,17 @@ interface NavItem {
   label: string;
   icon: typeof Search;
   color?: string;
-  badge?: string;
 }
 
+// Consolidated navigation matching AppLayout.tsx
 const navItems: NavItem[] = [
-  { href: "/smart-search", label: "스마트 검색", icon: Sparkles, color: "text-primary", badge: "NEW" },
-  { href: "/", label: "통합 검색", icon: Search },
-  { href: "/deep-search", label: "Deep Search", icon: Brain, color: "text-purple-600" },
-  { href: "/fact-check", label: "팩트체크", icon: Shield, color: "text-green-600" },
+  { href: "/", label: "검색", icon: Search },
+  { href: "/ml-addons", label: "ML Add-ons", icon: Cpu, color: "text-purple-600" },
   { href: "/ai-agent", label: "브라우저 에이전트", icon: Bot, color: "text-blue-600" },
-  { href: "/url-collections", label: "URL 컬렉션", icon: FolderOpen, color: "text-orange-600" },
+  { href: "/url-collections", label: "URL 원천 관리", icon: Database, color: "text-orange-600" },
+  { href: "/projects", label: "프로젝트", icon: FolderOpen, color: "text-green-600" },
   { href: "/history", label: "검색 기록", icon: History },
-  { href: "/admin/sources", label: "소스 관리", icon: Settings },
+  { href: "/settings", label: "설정", icon: Settings },
 ];
 
 interface MobileNavDrawerProps {
@@ -113,11 +109,6 @@ export function MobileNavDrawer({ className }: MobileNavDrawerProps) {
                     >
                       <Icon className={cn("h-5 w-5", item.color)} />
                       <span>{item.label}</span>
-                      {item.badge && (
-                        <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0">
-                          {item.badge}
-                        </Badge>
-                      )}
                     </Link>
                   </li>
                 );

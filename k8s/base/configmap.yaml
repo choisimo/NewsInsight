@@ -23,6 +23,10 @@ data:
   
   # Kafka Configuration
   KAFKA_BOOTSTRAP_SERVERS: "redpanda:9092"
+  KAFKA_AI_REQUEST_TOPIC: "newsinsight.ai.requests"
+  KAFKA_AI_RESPONSE_TOPIC: "newsinsight.ai.responses"
+  KAFKA_CRAWL_TASK_TOPIC: "newsinsight.crawl.browser.tasks"
+  KAFKA_CRAWL_RESULT_TOPIC: "newsinsight.crawl.results"
   
   # Browser Settings
   BROWSER_HEADLESS: "true"

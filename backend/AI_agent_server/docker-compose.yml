@@ -75,7 +75,7 @@ services:
     image: chromadb/chroma
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8010:8000"
     volumes:
       - chroma-data:/chroma/.chroma/index
     security_opt:

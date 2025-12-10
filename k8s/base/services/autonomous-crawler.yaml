@@ -72,6 +72,9 @@ spec:
                   key: BROWSER_MAX_CONCURRENT_SESSIONS
             - name: BROWSER_DEFAULT_TIMEOUT_SECONDS
               value: "300"
+            # Web Crawler (Crawl4AI) URL
+            - name: WEB_CRAWLER_URL
+              value: "http://web-crawler:11235"
             # LLM
             - name: LLM_PROVIDER
               value: "openai"

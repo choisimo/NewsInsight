@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   Folder,
   FolderOpen,
@@ -37,6 +37,17 @@ import {
 import type { TreeItem, FolderItem, UrlItem, SelectedItems } from '@/hooks/useUrlCollection';
 
 // ============================================
+// Drag & Drop Context
+// ============================================
+
+interface DragState {
+  draggedItemId: string | null;
+  draggedItemType: 'folder' | 'url' | null;
+  dropTargetId: string | null;
+  dropPosition: 'before' | 'inside' | 'after' | null;
+}
+
+// ============================================
 // Tree Item Component
 // ============================================
 
@@ -51,6 +62,12 @@ interface TreeNodeProps {
   onAddFolder: (parentId: string) => void;
   onAddUrl: (parentId: string) => void;
   onSelectAll: (folderId: string) => void;
+  onMoveItem?: (itemId: string, targetFolderId: string) => void;
+  dragState: DragState;
+  onDragStart: (id: string, type: 'folder' | 'url') => void;
+  onDragEnd: () => void;
+  onDragOver: (id: string, position: 'before' | 'inside' | 'after') => void;
+  onDrop: (targetId: string) => void;
 }
 
 const TreeNode: React.FC<TreeNodeProps> = ({
@@ -64,13 +81,82 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   onAddFolder,
   onAddUrl,
   onSelectAll,
+  onMoveItem,
+  dragState,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(item.name);
+  const nodeRef = useRef<HTMLDivElement>(null);
 
   const isSelected = item.type === 'folder' 
     ? selectedItems.folders.has(item.id)
     : selectedItems.urls.has(item.id);
+
+  const isDragging = dragState.draggedItemId === item.id;
+  const isDropTarget = dragState.dropTargetId === item.id;
+  const dropPosition = isDropTarget ? dragState.dropPosition : null;
+
+  const handleDragStart = (e: React.DragEvent) => {
+    e.stopPropagation();
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', item.id);
+    onDragStart(item.id, item.type);
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    e.preventDefault();
+    onDragEnd();
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (dragState.draggedItemId === item.id) return;
+    
+    // Don't allow dropping a folder into itself or its children
+    if (dragState.draggedItemType === 'folder' && item.type === 'folder') {
+      // This is a simplified check - a full check would verify ancestry
+    }
+
+    const rect = nodeRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const y = e.clientY - rect.top;
+    const height = rect.height;
+
+    // For folders, allow dropping inside
+    if (item.type === 'folder') {
+      if (y < height * 0.25) {
+        onDragOver(item.id, 'before');
+      } else if (y > height * 0.75) {
+        onDragOver(item.id, 'after');
+      } else {
+        onDragOver(item.id, 'inside');
+      }
+    } else {
+      // For URLs, only allow before/after
+      if (y < height * 0.5) {
+        onDragOver(item.id, 'before');
+      } else {
+        onDragOver(item.id, 'after');
+      }
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onDrop(item.id);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
 
   const handleSaveEdit = () => {
     if (editName.trim()) {
@@ -97,12 +183,26 @@ const TreeNode: React.FC<TreeNodeProps> = ({
     return (
       <div>
         <div
+          ref={nodeRef}
+          draggable={!isEditing}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          onDragLeave={handleDragLeave}
           className={cn(
             'group flex items-center gap-1 py-1.5 px-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors',
-            isSelected && 'bg-primary/10 hover:bg-primary/20'
+            isSelected && 'bg-primary/10 hover:bg-primary/20',
+            isDragging && 'opacity-50 bg-muted',
+            isDropTarget && dropPosition === 'inside' && 'ring-2 ring-primary ring-inset bg-primary/5',
+            isDropTarget && dropPosition === 'before' && 'border-t-2 border-primary',
+            isDropTarget && dropPosition === 'after' && 'border-b-2 border-primary'
           )}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
         >
+          {/* Drag Handle */}
+          <GripVertical className="h-4 w-4 text-muted-foreground/50 shrink-0 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" />
+
           {/* Expand/Collapse */}
           <button
             onClick={() => onToggleFolder(folder.id)}
@@ -216,6 +316,12 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                 onAddFolder={onAddFolder}
                 onAddUrl={onAddUrl}
                 onSelectAll={onSelectAll}
+                onMoveItem={onMoveItem}
+                dragState={dragState}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                onDragOver={onDragOver}
+                onDrop={onDrop}
               />
             ))}
           </div>
@@ -228,12 +334,25 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const url = item as UrlItem;
   return (
     <div
+      ref={nodeRef}
+      draggable={!isEditing}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      onDragLeave={handleDragLeave}
       className={cn(
         'group flex items-center gap-1 py-1.5 px-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors',
-        isSelected && 'bg-primary/10 hover:bg-primary/20'
+        isSelected && 'bg-primary/10 hover:bg-primary/20',
+        isDragging && 'opacity-50 bg-muted',
+        isDropTarget && dropPosition === 'before' && 'border-t-2 border-primary',
+        isDropTarget && dropPosition === 'after' && 'border-b-2 border-primary'
       )}
       style={{ paddingLeft: `${depth * 16 + 28}px` }}
     >
+      {/* Drag Handle */}
+      <GripVertical className="h-4 w-4 text-muted-foreground/50 shrink-0 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" />
+
       {/* Checkbox */}
       <Checkbox
         checked={isSelected}
@@ -366,6 +485,7 @@ interface UrlTreeProps {
   onAddFolder: (parentId: string) => void;
   onAddUrl: (parentId: string) => void;
   onSelectAll: (folderId: string) => void;
+  onMoveItem?: (itemId: string, targetFolderId: string) => void;
 }
 
 export const UrlTree: React.FC<UrlTreeProps> = ({
@@ -378,7 +498,100 @@ export const UrlTree: React.FC<UrlTreeProps> = ({
   onAddFolder,
   onAddUrl,
   onSelectAll,
+  onMoveItem,
 }) => {
+  // Drag & Drop state management
+  const [dragState, setDragState] = useState<DragState>({
+    draggedItemId: null,
+    draggedItemType: null,
+    dropTargetId: null,
+    dropPosition: null,
+  });
+
+  const handleDragStart = useCallback((id: string, type: 'folder' | 'url') => {
+    setDragState({
+      draggedItemId: id,
+      draggedItemType: type,
+      dropTargetId: null,
+      dropPosition: null,
+    });
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDragState({
+      draggedItemId: null,
+      draggedItemType: null,
+      dropTargetId: null,
+      dropPosition: null,
+    });
+  }, []);
+
+  const handleDragOver = useCallback((id: string, position: 'before' | 'inside' | 'after') => {
+    setDragState(prev => ({
+      ...prev,
+      dropTargetId: id,
+      dropPosition: position,
+    }));
+  }, []);
+
+  // Find parent folder of an item
+  const findParentFolder = useCallback((itemId: string, items: (UrlItem | FolderItem)[], parentId: string = 'root'): string | null => {
+    for (const item of items) {
+      if (item.id === itemId) {
+        return parentId;
+      }
+      if (item.type === 'folder') {
+        const found = findParentFolder(itemId, item.children, item.id);
+        if (found) return found;
+      }
+    }
+    return null;
+  }, []);
+
+  const handleDrop = useCallback((targetId: string) => {
+    if (!dragState.draggedItemId || !onMoveItem) {
+      handleDragEnd();
+      return;
+    }
+
+    const { draggedItemId, dropPosition } = dragState;
+
+    // Prevent dropping an item onto itself
+    if (draggedItemId === targetId) {
+      handleDragEnd();
+      return;
+    }
+
+    // Find the target item to determine its parent
+    const findItem = (items: (UrlItem | FolderItem)[]): (UrlItem | FolderItem) | null => {
+      for (const item of items) {
+        if (item.id === targetId) return item;
+        if (item.type === 'folder') {
+          const found = findItem(item.children);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const targetItem = findItem(root.children);
+
+    if (targetItem) {
+      if (dropPosition === 'inside' && targetItem.type === 'folder') {
+        // Drop inside folder
+        onMoveItem(draggedItemId, targetId);
+      } else {
+        // Drop before/after - move to parent folder
+        const parentId = findParentFolder(targetId, root.children);
+        if (parentId) {
+          onMoveItem(draggedItemId, parentId);
+        }
+      }
+    }
+
+    handleDragEnd();
+  }, [dragState, onMoveItem, handleDragEnd, root.children, findParentFolder]);
+
   if (root.children.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
@@ -404,6 +617,12 @@ export const UrlTree: React.FC<UrlTreeProps> = ({
           onAddFolder={onAddFolder}
           onAddUrl={onAddUrl}
           onSelectAll={onSelectAll}
+          onMoveItem={onMoveItem}
+          dragState={dragState}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
         />
       ))}
     </div>

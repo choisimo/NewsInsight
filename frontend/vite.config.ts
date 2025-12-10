@@ -10,6 +10,9 @@ export default defineConfig(({ mode }) => {
   // 프로덕션: docker-compose에서 api-gateway:8000
   // 개발: 로컬에서 실행 시 localhost:8000
   const apiGatewayUrl = env.VITE_API_BASE_URL || "http://localhost:8000";
+  
+  // Cloudflare Tunnel 환경인지 확인 (환경변수로 제어)
+  const isCloudflareTunnel = env.VITE_CLOUDFLARE_TUNNEL === 'true';
 
   return {
     server: {
@@ -18,12 +21,15 @@ export default defineConfig(({ mode }) => {
       allowedHosts: ["news.nodove.com", "localhost", "127.0.0.1", "frontend"],
       // Cloudflare Tunnel 환경에서 CORS 허용
       cors: true,
-      // HMR 설정 - Cloudflare Tunnel을 통한 WebSocket 연결
-      hmr: {
-        host: "news.nodove.com",
-        protocol: "wss",
-        clientPort: 443,
-      },
+      // HMR 설정 - Cloudflare Tunnel 환경에서만 외부 호스트로 설정
+      // 로컬 개발 환경에서는 기본값 사용 (localhost)
+      hmr: isCloudflareTunnel
+        ? {
+            host: "news.nodove.com",
+            protocol: "wss",
+            clientPort: 443,
+          }
+        : true, // 로컬: 기본 HMR 설정 사용
       proxy: {
         // API Gateway - 모든 /api/** 요청을 게이트웨이로 프록시
         // 게이트웨이가 내부적으로 각 서비스로 라우팅:

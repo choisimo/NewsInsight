@@ -44,6 +44,7 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         "/api/v1/data",
         "/api/v1/search",
         "/api/browser-use",  // Browser-Use API (gateway path)
+        "/api/ml-addons",    // ML Add-ons API (sentiment, factcheck, bias)
         "/browse",           // Browser-Use API (direct path - legacy)
         "/jobs",             // Browser-Use Jobs (direct path - legacy)
         "/ws"                // WebSocket (direct path - legacy)

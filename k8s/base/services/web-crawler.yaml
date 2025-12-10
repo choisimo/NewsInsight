@@ -1,0 +1,93 @@
+# Web Crawler (Crawl4AI) Deployment
+# Required by autonomous-crawler for web page scraping
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-crawler
+  namespace: newsinsight
+  labels:
+    app: web-crawler
+    app.kubernetes.io/name: web-crawler
+    app.kubernetes.io/component: crawler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-crawler
+  template:
+    metadata:
+      labels:
+        app: web-crawler
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "11235"
+    spec:
+      serviceAccountName: newsinsight-sa
+      containers:
+        - name: web-crawler
+          image: unclecode/crawl4ai:latest
+          ports:
+            - containerPort: 11235
+              name: http
+          env:
+            - name: CRAWL4AI_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: newsinsight-secrets
+                  key: CRAWL4AI_API_TOKEN
+                  optional: true
+            - name: MAX_CONCURRENT_TASKS
+              value: "5"
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: newsinsight-config
+                  key: LOG_LEVEL
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          # Shared memory for browser operations
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 11235
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 11235
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-crawler
+  namespace: newsinsight
+  labels:
+    app: web-crawler
+spec:
+  selector:
+    app: web-crawler
+  ports:
+    - port: 11235
+      targetPort: 11235
+      name: http
+  type: ClusterIP

@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Search, Shield, Brain, FolderOpen, Bot, History, Command, Sparkles } from 'lucide-react';
+import { Search, FolderOpen, Bot, History, Command, Settings, Database, Cpu } from 'lucide-react';
 import { BackgroundTaskIndicator } from '@/components/BackgroundTaskIndicator';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileNavDrawer } from '@/components/MobileNavDrawer';
@@ -46,13 +46,13 @@ export function AppLayout({ children }: AppLayoutProps) {
   const location = useLocation();
   const pathname = location.pathname;
 
+  // Consolidated navigation: Search hub absorbs unified/deep/factcheck modes
   const navItems = [
-    { to: '/smart-search', icon: <Sparkles className="h-4 w-4" />, label: '스마트 검색', badge: 'NEW' },
-    { to: '/', icon: <Search className="h-4 w-4" />, label: '통합 검색' },
-    { to: '/deep-search', icon: <Brain className="h-4 w-4" />, label: 'Deep Search' },
-    { to: '/fact-check', icon: <Shield className="h-4 w-4" />, label: '팩트체크' },
+    { to: '/', icon: <Search className="h-4 w-4" />, label: '검색' },
+    { to: '/ml-addons', icon: <Cpu className="h-4 w-4" />, label: 'ML Add-ons' },
     { to: '/ai-agent', icon: <Bot className="h-4 w-4" />, label: '브라우저 에이전트' },
-    { to: '/url-collections', icon: <FolderOpen className="h-4 w-4" />, label: 'URL 컬렉션' },
+    { to: '/url-collections', icon: <Database className="h-4 w-4" />, label: 'URL 원천 관리' },
+    { to: '/projects', icon: <FolderOpen className="h-4 w-4" />, label: '프로젝트' },
     { to: '/history', icon: <History className="h-4 w-4" />, label: '검색 기록' },
   ];
 
@@ -124,6 +124,15 @@ export function AppLayout({ children }: AppLayoutProps) {
             
             {/* Notification Bell */}
             <NotificationBell />
+            {/* Settings */}
+            <Link
+              to="/settings"
+              className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              aria-label="설정"
+              title="설정"
+            >
+              <Settings className="h-4 w-4" />
+            </Link>
             {/* Theme Toggle */}
             <ThemeToggle variant="dropdown" size="sm" />
             {/* Background Task Indicator */}

@@ -15,6 +15,8 @@ resources:
   - services/collector-service.yaml
   - services/browser-use-api.yaml
   - services/autonomous-crawler.yaml
+  - services/web-crawler.yaml
+  - services/ai-agent-worker.yaml
   - services/ml-addons.yaml
   - ingress.yaml
 
@@ -39,6 +41,9 @@ images:
     newTag: latest
   - name: autonomous-crawler
     newName: asia-northeast3-docker.pkg.dev/newsinsight-478812/newsinsight-repo/autonomous-crawler
+    newTag: latest
+  - name: ai-agent-worker
+    newName: asia-northeast3-docker.pkg.dev/newsinsight-478812/newsinsight-repo/ai-agent-worker
     newTag: latest
   - name: sentiment-addon
     newName: asia-northeast3-docker.pkg.dev/newsinsight-478812/newsinsight-repo/sentiment-addon

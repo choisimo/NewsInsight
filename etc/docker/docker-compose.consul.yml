@@ -47,6 +47,12 @@ services:
         condition: service_started
       browser-use-api:
         condition: service_started
+      sentiment-addon:
+        condition: service_started
+      factcheck-addon:
+        condition: service_started
+      bias-addon:
+        condition: service_started
     environment:
       # Consul access for config loading in the app
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -60,6 +66,10 @@ services:
       # Browser-Use API URLs (for routing)
       - BROWSER_USE_URL=http://browser-use-api:8500
       - BROWSER_USE_WS_URL=ws://browser-use-api:8500
+      # ML Add-ons URLs (for routing)
+      - ML_ADDON_SENTIMENT_URL=http://sentiment-addon:8100
+      - ML_ADDON_FACTCHECK_URL=http://factcheck-addon:8101
+      - ML_ADDON_BIAS_URL=http://bias-addon:8102
     ports:
       - "8112:8000"  # keep gateway reachable from host
     networks:
@@ -322,6 +332,66 @@ services:
     networks:
       - default
       - capstone-net
+
+  # ML Add-ons - 감정 분석 (Sentiment Analysis)
+  sentiment-addon:
+    build:
+      context: ../../backend/ml-addons/sentiment-addon
+      dockerfile: Dockerfile
+    image: newsinsight/sentiment-addon:local
+    restart: unless-stopped
+    expose:
+      - "8100"
+    ports:
+      - "8100:8100"  # Direct access for debugging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - default
+
+  # ML Add-ons - 팩트체크 (Fact Check)
+  factcheck-addon:
+    build:
+      context: ../../backend/ml-addons/factcheck-addon
+      dockerfile: Dockerfile
+    image: newsinsight/factcheck-addon:local
+    restart: unless-stopped
+    expose:
+      - "8101"
+    ports:
+      - "8101:8101"  # Direct access for debugging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - default
+
+  # ML Add-ons - 편향도 분석 (Bias Analysis)
+  bias-addon:
+    build:
+      context: ../../backend/ml-addons/bias-addon
+      dockerfile: Dockerfile
+    image: newsinsight/bias-addon:local
+    restart: unless-stopped
+    expose:
+      - "8102"
+    ports:
+      - "8102:8102"  # Direct access for debugging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8102/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - default
 
 volumes:
   postgres-data:

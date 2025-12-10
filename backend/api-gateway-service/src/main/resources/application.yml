@@ -96,10 +96,44 @@ spring:
             - Path=/api/v1/search-templates/**
 
         # Config API - 프론트엔드 설정
+        # NOTE: Gateway 자체 FrontendConfigController가 우선 처리됨
+        # 이 라우트는 fallback으로 유지 (collector-service에도 ConfigController가 있을 경우)
         - id: config-api
           uri: lb://collector-service
           predicates:
             - Path=/api/v1/config/**
+
+        # AI Orchestration - AI 분석 요청 (collector-service AiOrchestrationController)
+        - id: collector-ai
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/ai/**
+
+        # Dashboard Events - SSE 실시간 업데이트 (collector-service DashboardEventsController)
+        - id: collector-events
+          uri: lb://collector-service
+          predicates:
+            - Path=/api/v1/events/**
+          metadata:
+            # SSE 연결을 위한 긴 타임아웃
+            response-timeout: 300000
+
+        # Admin Dashboard API
+        # NOTE: Using direct URL fallback if not found in Consul, assuming port 8888 from main.py
+        - id: admin-dashboard-api
+          uri: ${ADMIN_DASHBOARD_URL:http://localhost:8888}
+          predicates:
+            - Path=/api/v1/admin/**
+          # No StripPrefix needed because the admin API uses /api/v1/admin prefix
+
+        # Autonomous Crawler - 크롤링 작업 관리
+        - id: autonomous-crawler-api
+          uri: ${AUTONOMOUS_CRAWLER_URL:http://autonomous-crawler:9090}
+          predicates:
+            - Path=/api/v1/crawler/**
+          filters:
+            # /api/v1/crawler/** -> /** 로 전달
+            - StripPrefix=2
 
         # Browser-Use API - AI 브라우저 자동화
         - id: browser-use-browse
@@ -135,6 +169,42 @@ spring:
             # /api/browser-use/ws/** -> /ws/** 로 전달
             - StripPrefix=2
 
+        # ML Add-ons - 감정 분석 (Sentiment Analysis)
+        - id: ml-addon-sentiment
+          uri: ${ML_ADDON_SENTIMENT_URL:http://sentiment-addon:8100}
+          predicates:
+            - Path=/api/ml-addons/sentiment/**
+          filters:
+            # /api/ml-addons/sentiment/** -> /** 로 전달
+            - StripPrefix=3
+
+        # ML Add-ons - 팩트체크 (Fact Check)
+        - id: ml-addon-factcheck
+          uri: ${ML_ADDON_FACTCHECK_URL:http://factcheck-addon:8101}
+          predicates:
+            - Path=/api/ml-addons/factcheck/**
+          filters:
+            # /api/ml-addons/factcheck/** -> /** 로 전달
+            - StripPrefix=3
+
+        # ML Add-ons - 편향도 분석 (Bias Analysis)
+        - id: ml-addon-bias
+          uri: ${ML_ADDON_BIAS_URL:http://bias-addon:8102}
+          predicates:
+            - Path=/api/ml-addons/bias/**
+          filters:
+            # /api/ml-addons/bias/** -> /** 로 전달
+            - StripPrefix=3
+
+        # Health Check Rewrite - 프론트엔드가 /api/actuator/health 호출 시 처리
+        - id: gateway-health
+          uri: http://localhost:${PORT:8000}
+          predicates:
+            - Path=/api/actuator/health,/api/actuator/health/**
+          filters:
+            # /api/actuator/health -> /actuator/health 로 재작성
+            - RewritePath=/api/actuator/(?<segment>.*), /actuator/${segment}
+
       # 전역 CORS 설정
       globalcors:
         cors-configurations:
@@ -160,6 +230,17 @@ spring:
 
 server:
   port: ${PORT:8000}
+  # Netty 설정 - SSE/WebSocket 연결을 위한 타임아웃 증가
+  netty:
+    # 연결 유지 시간 (5분)
+    idle-timeout: 300000
+
+# Spring Cloud Gateway HTTP Client 설정
+spring.cloud.gateway.httpclient:
+  connect-timeout: 10000
+  response-timeout: 300000
+  pool:
+    max-idle-time: 300000
 
 management:
   endpoints:

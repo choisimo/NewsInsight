@@ -58,7 +58,7 @@ const fetchConfiguredBaseUrl = async (initialBaseUrl: string): Promise<string> =
   }
 };
 
-const getApiClient = async () => {
+export const getApiClient = async () => {
   if (apiInstance) {
     return apiInstance;
   }
@@ -1438,6 +1438,267 @@ export const openSearchHistoryStream = async (): Promise<EventSource> => {
   const effectiveBaseURL = baseURL || (typeof globalThis.window !== 'undefined' ? globalThis.window.location.origin : '');
   const url = `${effectiveBaseURL}/api/v1/search-history/stream`;
   return new EventSource(url);
+};
+
+
+/**
+ * Check API Gateway health
+ */
+export const checkApiGatewayHealth = async (): Promise<{
+  status: string;
+  timestamp?: string;
+  services?: Record<string, { status: string; instances?: number }>;
+}> => {
+  const response = await fetch('/api/actuator/health', {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  
+  if (!response.ok) {
+    // Try alternative health endpoint
+    const altResponse = await fetch('/api/health', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!altResponse.ok) {
+      return { status: 'unhealthy' };
+    }
+    return altResponse.json();
+  }
+  
+  return response.json();
+};
+
+
+// ============================================
+// Browser-Use Session Management API
+// ============================================
+
+/**
+ * Summary of browser job for display
+ */
+export interface BrowserJobSummary {
+  job_id: string;
+  task: string;
+  status: BrowserJobStatus;
+  progress: number;
+  intervention_requested: boolean;
+  intervention_type?: InterventionType;
+  started_at?: string;
+  completed_at?: string;
+}
+
+/**
+ * Get all active (running or waiting) browser jobs
+ */
+export const getActiveBrowserJobs = async (): Promise<BrowserJobSummary[]> => {
+  const jobs = await listBrowserJobs(undefined, 100);
+  return jobs.filter(j => 
+    j.status === 'running' || 
+    j.status === 'waiting_human' || 
+    j.status === 'pending'
+  );
+};
+
+/**
+ * Get jobs waiting for human intervention
+ */
+export const getJobsWaitingIntervention = async (): Promise<BrowserJobSummary[]> => {
+  return listBrowserJobs('waiting_human', 50);
+};
+
+/**
+ * Get recent completed jobs (for history)
+ */
+export const getRecentCompletedJobs = async (limit: number = 20): Promise<BrowserJobSummary[]> => {
+  return listBrowserJobs('completed', limit);
+};
+
+/**
+ * Cancel all active browser jobs
+ */
+export const cancelAllBrowserJobs = async (): Promise<{ cancelled: number; errors: string[] }> => {
+  const activeJobs = await getActiveBrowserJobs();
+  let cancelled = 0;
+  const errors: string[] = [];
+  
+  for (const job of activeJobs) {
+    try {
+      await cancelBrowserJob(job.job_id);
+      cancelled++;
+    } catch (e) {
+      errors.push(`Failed to cancel ${job.job_id}: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+  }
+  
+  return { cancelled, errors };
+};
+
+/**
+ * Browser-Use service statistics
+ */
+export interface BrowserUseStats {
+  totalJobs: number;
+  activeJobs: number;
+  waitingIntervention: number;
+  completedJobs: number;
+  failedJobs: number;
+  recentJobs: BrowserJobSummary[];
+}
+
+/**
+ * Get Browser-Use service statistics
+ */
+export const getBrowserUseStats = async (): Promise<BrowserUseStats> => {
+  const allJobs = await listBrowserJobs(undefined, 200);
+  
+  return {
+    totalJobs: allJobs.length,
+    activeJobs: allJobs.filter(j => j.status === 'running' || j.status === 'pending').length,
+    waitingIntervention: allJobs.filter(j => j.status === 'waiting_human').length,
+    completedJobs: allJobs.filter(j => j.status === 'completed').length,
+    failedJobs: allJobs.filter(j => j.status === 'failed' || j.status === 'cancelled').length,
+    recentJobs: allJobs.slice(0, 10),
+  };
+};
+
+
+// ============================================
+// ML Add-ons API
+// ============================================
+
+export type MLAddonType = 'sentiment' | 'factcheck' | 'bias';
+
+export interface MLAddonHealth {
+  status: 'healthy' | 'unhealthy' | 'unknown';
+  service: string;
+}
+
+export interface MLAddonConfig {
+  id: MLAddonType;
+  name: string;
+  description: string;
+  port: number;
+  enabled: boolean;
+  endpoint: string;
+}
+
+// Default add-on configurations
+export const ML_ADDON_CONFIGS: MLAddonConfig[] = [
+  {
+    id: 'sentiment',
+    name: '감정 분석',
+    description: '뉴스 기사의 감정 톤(긍정/부정/중립)을 분석합니다.',
+    port: 8100,
+    enabled: true,
+    endpoint: '/api/ml-addons/sentiment',
+  },
+  {
+    id: 'factcheck',
+    name: '팩트체크',
+    description: '기사의 주장을 추출하고 신뢰도를 평가합니다.',
+    port: 8101,
+    enabled: true,
+    endpoint: '/api/ml-addons/factcheck',
+  },
+  {
+    id: 'bias',
+    name: '편향도 분석',
+    description: '기사의 정치적/이념적 편향성을 분석합니다.',
+    port: 8102,
+    enabled: true,
+    endpoint: '/api/ml-addons/bias',
+  },
+];
+
+/**
+ * Check ML Add-on service health
+ */
+export const checkMLAddonHealth = async (addonType: MLAddonType): Promise<MLAddonHealth> => {
+  const config = ML_ADDON_CONFIGS.find(c => c.id === addonType);
+  if (!config) {
+    return { status: 'unknown', service: addonType };
+  }
+  
+  try {
+    const response = await fetch(`${config.endpoint}/health`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      return { status: 'unhealthy', service: addonType };
+    }
+    
+    const data = await response.json();
+    return {
+      status: data.status === 'healthy' ? 'healthy' : 'unhealthy',
+      service: data.service || addonType,
+    };
+  } catch {
+    return { status: 'unhealthy', service: addonType };
+  }
+};
+
+/**
+ * Check health of all ML Add-ons
+ */
+export const checkAllMLAddonsHealth = async (): Promise<Record<MLAddonType, MLAddonHealth>> => {
+  const results = await Promise.all(
+    ML_ADDON_CONFIGS.map(async (config) => {
+      const health = await checkMLAddonHealth(config.id);
+      return [config.id, health] as [MLAddonType, MLAddonHealth];
+    })
+  );
+  
+  return Object.fromEntries(results) as Record<MLAddonType, MLAddonHealth>;
+};
+
+/**
+ * ML Add-on analysis request
+ */
+export interface MLAddonAnalysisRequest {
+  request_id: string;
+  addon_id: string;
+  task?: string;
+  article: {
+    id?: number;
+    title?: string;
+    content?: string;
+    url?: string;
+    source?: string;
+    published_at?: string;
+  };
+  context?: {
+    language?: string;
+    country?: string;
+  };
+}
+
+/**
+ * Analyze article with a specific ML Add-on
+ */
+export const analyzeWithMLAddon = async (
+  addonType: MLAddonType,
+  request: MLAddonAnalysisRequest
+): Promise<unknown> => {
+  const config = ML_ADDON_CONFIGS.find(c => c.id === addonType);
+  if (!config) {
+    throw new Error(`Unknown addon type: ${addonType}`);
+  }
+  
+  const response = await fetch(`${config.endpoint}/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`ML Addon analysis failed: ${response.statusText}`);
+  }
+  
+  return response.json();
 };
 
 

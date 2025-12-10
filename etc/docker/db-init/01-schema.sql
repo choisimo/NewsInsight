@@ -510,3 +510,32 @@ CREATE INDEX IF NOT EXISTS idx_search_history_external_id ON search_history (ext
 ALTER TABLE search_history
     ADD CONSTRAINT search_history_type_check
     CHECK (search_type IN ('UNIFIED', 'DEEP_SEARCH', 'FACT_CHECK', 'BROWSER_AGENT'));
+
+-- ============================================
+-- Search Template Tables (SmartSearch saved templates)
+-- ============================================
+
+-- Search templates table
+CREATE TABLE IF NOT EXISTS search_template (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(256) NOT NULL,
+    query VARCHAR(1024) NOT NULL,
+    mode VARCHAR(32) NOT NULL,
+    user_id VARCHAR(64),
+    items JSONB,
+    description TEXT,
+    favorite BOOLEAN DEFAULT FALSE,
+    tags JSONB,
+    metadata JSONB,
+    source_search_id BIGINT REFERENCES search_history(id) ON DELETE SET NULL,
+    use_count INTEGER DEFAULT 0,
+    last_used_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+-- Indexes for search templates
+CREATE INDEX IF NOT EXISTS idx_search_template_user_id ON search_template (user_id);
+CREATE INDEX IF NOT EXISTS idx_search_template_mode ON search_template (mode);
+CREATE INDEX IF NOT EXISTS idx_search_template_created_at ON search_template (created_at);
+CREATE INDEX IF NOT EXISTS idx_search_template_favorite ON search_template (favorite) WHERE favorite = TRUE;
