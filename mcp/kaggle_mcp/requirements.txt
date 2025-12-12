@@ -1,0 +1,6 @@
+mcp
+requests
+kaggle
+aiohttp
+aiofiles
+python-dotenv

@@ -539,3 +539,357 @@ CREATE INDEX IF NOT EXISTS idx_search_template_user_id ON search_template (user_
 CREATE INDEX IF NOT EXISTS idx_search_template_mode ON search_template (mode);
 CREATE INDEX IF NOT EXISTS idx_search_template_created_at ON search_template (created_at);
 CREATE INDEX IF NOT EXISTS idx_search_template_favorite ON search_template (favorite) WHERE favorite = TRUE;
+
+-- ============================================
+-- AI Provider Management Tables
+-- Multi-provider LLM 지원을 위한 Provider 등록/관리 시스템
+-- ============================================
+
+-- AI Providers table (LLM Provider 등록)
+CREATE TABLE IF NOT EXISTS ai_providers (
+    id BIGSERIAL PRIMARY KEY,
+    provider_key VARCHAR(100) NOT NULL UNIQUE,
+    name VARCHAR(200) NOT NULL,
+    description TEXT,
+    provider_type VARCHAR(50) NOT NULL,
+    -- Connection settings
+    base_url VARCHAR(500) NOT NULL,
+    api_version VARCHAR(20),
+    -- Authentication
+    auth_type VARCHAR(30) NOT NULL DEFAULT 'BEARER_TOKEN',
+    api_key_encrypted TEXT,
+    auth_header_name VARCHAR(100) DEFAULT 'Authorization',
+    auth_header_prefix VARCHAR(50) DEFAULT 'Bearer',
+    custom_headers JSONB,
+    -- Models
+    supported_models JSONB NOT NULL DEFAULT '[]',
+    default_model VARCHAR(100),
+    -- Rate limiting
+    max_requests_per_minute INTEGER DEFAULT 60,
+    max_tokens_per_minute INTEGER DEFAULT 100000,
+    max_concurrent_requests INTEGER DEFAULT 10,
+    -- Pricing (per 1K tokens, USD)
+    input_price_per_1k DECIMAL(10, 6) DEFAULT 0.0,
+    output_price_per_1k DECIMAL(10, 6) DEFAULT 0.0,
+    -- Priority & Load balancing
+    priority INTEGER DEFAULT 100,
+    weight INTEGER DEFAULT 1,
+    is_fallback BOOLEAN DEFAULT FALSE,
+    -- Status
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    health_status VARCHAR(20) DEFAULT 'UNKNOWN',
+    last_health_check TIMESTAMP,
+    health_check_url VARCHAR(500),
+    -- Statistics
+    total_requests BIGINT DEFAULT 0,
+    successful_requests BIGINT DEFAULT 0,
+    failed_requests BIGINT DEFAULT 0,
+    total_tokens_used BIGINT DEFAULT 0,
+    total_cost DECIMAL(12, 4) DEFAULT 0.0,
+    avg_latency_ms DOUBLE PRECISION,
+    p95_latency_ms DOUBLE PRECISION,
+    stats_updated_at TIMESTAMP,
+    -- Metadata
+    config JSONB,
+    tags JSONB,
+    owner VARCHAR(100),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_providers_type ON ai_providers (provider_type);
+CREATE INDEX IF NOT EXISTS idx_ai_providers_enabled ON ai_providers (enabled);
+CREATE INDEX IF NOT EXISTS idx_ai_providers_priority ON ai_providers (priority);
+CREATE INDEX IF NOT EXISTS idx_ai_providers_health ON ai_providers (health_status);
+
+-- Ensure provider type values
+ALTER TABLE ai_providers
+    ADD CONSTRAINT ai_providers_type_check
+    CHECK (provider_type IN ('OPENAI', 'ANTHROPIC', 'GOOGLE', 'AZURE', 'AWS_BEDROCK', 'GROQ', 'DEEPSEEK', 'OLLAMA', 'AIDOVE', 'CUSTOM'));
+
+-- Ensure auth type values
+ALTER TABLE ai_providers
+    ADD CONSTRAINT ai_providers_auth_type_check
+    CHECK (auth_type IN ('NONE', 'API_KEY', 'BEARER_TOKEN', 'BASIC', 'OAUTH2', 'AWS_SIGV4', 'CUSTOM'));
+
+-- Ensure health status values
+ALTER TABLE ai_providers
+    ADD CONSTRAINT ai_providers_health_status_check
+    CHECK (health_status IN ('HEALTHY', 'DEGRADED', 'UNHEALTHY', 'UNKNOWN', 'DISABLED'));
+
+-- AI Provider Models table (지원 모델 상세 정보)
+CREATE TABLE IF NOT EXISTS ai_provider_models (
+    id BIGSERIAL PRIMARY KEY,
+    provider_id BIGINT NOT NULL REFERENCES ai_providers (id) ON DELETE CASCADE,
+    model_id VARCHAR(100) NOT NULL,
+    model_name VARCHAR(200) NOT NULL,
+    description TEXT,
+    -- Capabilities
+    max_input_tokens INTEGER DEFAULT 4096,
+    max_output_tokens INTEGER DEFAULT 4096,
+    supports_vision BOOLEAN DEFAULT FALSE,
+    supports_function_calling BOOLEAN DEFAULT FALSE,
+    supports_streaming BOOLEAN DEFAULT TRUE,
+    -- Pricing (per 1K tokens, USD)
+    input_price_per_1k DECIMAL(10, 6) DEFAULT 0.0,
+    output_price_per_1k DECIMAL(10, 6) DEFAULT 0.0,
+    -- Status
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    deprecated BOOLEAN DEFAULT FALSE,
+    deprecated_at TIMESTAMP,
+    -- Metadata
+    config JSONB,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP,
+    UNIQUE (provider_id, model_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_provider_models_provider ON ai_provider_models (provider_id);
+CREATE INDEX IF NOT EXISTS idx_ai_provider_models_enabled ON ai_provider_models (enabled);
+
+-- AI Provider Usage Logs table (사용량 기록)
+CREATE TABLE IF NOT EXISTS ai_provider_usage_logs (
+    id BIGSERIAL PRIMARY KEY,
+    provider_id BIGINT NOT NULL REFERENCES ai_providers (id) ON DELETE CASCADE,
+    model_id VARCHAR(100),
+    request_id VARCHAR(64) NOT NULL,
+    -- Request info
+    user_id VARCHAR(64),
+    session_id VARCHAR(64),
+    request_type VARCHAR(50),
+    -- Tokens & Cost
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
+    estimated_cost DECIMAL(10, 6) DEFAULT 0.0,
+    -- Timing
+    started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    latency_ms BIGINT,
+    -- Status
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    error_code VARCHAR(50),
+    error_message TEXT,
+    -- Metadata
+    metadata JSONB,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_logs_provider ON ai_provider_usage_logs (provider_id);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_request_id ON ai_provider_usage_logs (request_id);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_user_id ON ai_provider_usage_logs (user_id);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_status ON ai_provider_usage_logs (status);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_created ON ai_provider_usage_logs (created_at);
+
+-- Ensure usage log status values
+ALTER TABLE ai_provider_usage_logs
+    ADD CONSTRAINT ai_provider_usage_logs_status_check
+    CHECK (status IN ('PENDING', 'SUCCESS', 'FAILED', 'TIMEOUT', 'RATE_LIMITED', 'CANCELLED'));
+
+-- AI Provider Health History table (헬스체크 이력)
+CREATE TABLE IF NOT EXISTS ai_provider_health_history (
+    id BIGSERIAL PRIMARY KEY,
+    provider_id BIGINT NOT NULL REFERENCES ai_providers (id) ON DELETE CASCADE,
+    check_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) NOT NULL,
+    latency_ms BIGINT,
+    error_message TEXT,
+    metadata JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_health_history_provider ON ai_provider_health_history (provider_id);
+CREATE INDEX IF NOT EXISTS idx_health_history_time ON ai_provider_health_history (check_time);
+
+-- AI Provider Rate Limit State table (Rate limit 상태 추적)
+CREATE TABLE IF NOT EXISTS ai_provider_rate_limits (
+    id BIGSERIAL PRIMARY KEY,
+    provider_id BIGINT NOT NULL REFERENCES ai_providers (id) ON DELETE CASCADE,
+    window_start TIMESTAMP NOT NULL,
+    window_type VARCHAR(20) NOT NULL DEFAULT 'MINUTE',
+    request_count INTEGER DEFAULT 0,
+    token_count INTEGER DEFAULT 0,
+    is_limited BOOLEAN DEFAULT FALSE,
+    reset_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP,
+    UNIQUE (provider_id, window_start, window_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_limits_provider ON ai_provider_rate_limits (provider_id);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON ai_provider_rate_limits (window_start);
+
+-- ============================================
+-- Seed default AI Providers
+-- ============================================
+
+INSERT INTO ai_providers (
+    provider_key, name, description, provider_type, base_url, api_version,
+    auth_type, supported_models, default_model, priority, enabled, config
+)
+VALUES 
+    -- OpenAI
+    ('openai-default',
+     'OpenAI',
+     'OpenAI GPT 모델 (GPT-4, GPT-4o, GPT-3.5-turbo)',
+     'OPENAI',
+     'https://api.openai.com/v1',
+     'v1',
+     'BEARER_TOKEN',
+     '["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]',
+     'gpt-4o',
+     100,
+     FALSE,
+     '{"note": "API key 설정 필요"}'),
+    
+    -- Anthropic
+    ('anthropic-default',
+     'Anthropic Claude',
+     'Anthropic Claude 모델 (Claude 3.5 Sonnet, Claude 3 Opus)',
+     'ANTHROPIC',
+     'https://api.anthropic.com',
+     '2024-01-01',
+     'API_KEY',
+     '["claude-3-5-sonnet-20241022", "claude-3-opus-20240229", "claude-3-haiku-20240307"]',
+     'claude-3-5-sonnet-20241022',
+     90,
+     FALSE,
+     '{"auth_header_name": "x-api-key", "note": "API key 설정 필요"}'),
+    
+    -- AiDove (NewsInsight 자체 AI)
+    ('aidove-default',
+     'AiDove',
+     'NewsInsight 전용 AI 어시스턴트 (workflow.nodove.com)',
+     'AIDOVE',
+     'https://workflow.nodove.com/webhook/aidove',
+     'v1',
+     'NONE',
+     '["aidove"]',
+     'aidove',
+     50,
+     TRUE,
+     '{"timeout": 120, "is_internal": true}'),
+    
+    -- Groq (Fast inference)
+    ('groq-default',
+     'Groq',
+     'Groq 고속 추론 (Llama, Mixtral)',
+     'GROQ',
+     'https://api.groq.com/openai/v1',
+     'v1',
+     'BEARER_TOKEN',
+     '["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]',
+     'llama-3.3-70b-versatile',
+     80,
+     FALSE,
+     '{"note": "API key 설정 필요, 빠른 추론 속도"}'),
+    
+    -- DeepSeek
+    ('deepseek-default',
+     'DeepSeek',
+     'DeepSeek AI (저비용 고성능)',
+     'DEEPSEEK',
+     'https://api.deepseek.com',
+     'v1',
+     'BEARER_TOKEN',
+     '["deepseek-chat", "deepseek-coder"]',
+     'deepseek-chat',
+     70,
+     FALSE,
+     '{"note": "API key 설정 필요, 저렴한 가격"}'),
+    
+    -- Ollama (Local)
+    ('ollama-local',
+     'Ollama (Local)',
+     'Ollama 로컬 모델 서버',
+     'OLLAMA',
+     'http://localhost:11434',
+     'v1',
+     'NONE',
+     '["llama3.2", "mistral", "codellama", "phi3"]',
+     'llama3.2',
+     30,
+     FALSE,
+     '{"is_local": true, "note": "로컬 Ollama 서버 필요"}')
+ON CONFLICT (provider_key) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    base_url = EXCLUDED.base_url,
+    supported_models = EXCLUDED.supported_models,
+    default_model = EXCLUDED.default_model,
+    config = EXCLUDED.config,
+    updated_at = CURRENT_TIMESTAMP;
+
+-- ============================================
+-- Vector Search (pgvector) for Hybrid Search
+-- ============================================
+-- Enables semantic/vector search using embeddings.
+-- Uses intfloat/multilingual-e5-large model (1024 dimensions).
+-- Requires PostgreSQL 15+ with pgvector extension.
+
+-- Install pgvector extension (if available)
+-- Note: This requires the pgvector extension to be installed in PostgreSQL
+-- Installation: CREATE EXTENSION vector;
+-- In Docker, use: ankane/pgvector or timescale/timescaledb-ha image
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') THEN
+        CREATE EXTENSION IF NOT EXISTS vector;
+        RAISE NOTICE 'pgvector extension created successfully';
+    ELSE
+        RAISE NOTICE 'pgvector extension not available - vector search will be disabled';
+    END IF;
+END $$;
+
+-- Add embedding column to collected_data table
+-- Only if vector extension is available
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+        -- Add embedding column (1024 dimensions for e5-large model)
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name = 'collected_data' AND column_name = 'embedding'
+        ) THEN
+            ALTER TABLE collected_data ADD COLUMN embedding vector(1024);
+            RAISE NOTICE 'Added embedding column to collected_data table';
+        END IF;
+        
+        -- Create IVFFlat index for approximate nearest neighbor search
+        -- lists = 100 is good for ~100K-1M documents
+        -- For smaller datasets, use exact search without index
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_indexes WHERE indexname = 'idx_collected_data_embedding'
+        ) THEN
+            -- Use IVFFlat index for larger datasets (>10K documents)
+            -- Alternative: HNSW index for better recall but more memory
+            CREATE INDEX IF NOT EXISTS idx_collected_data_embedding 
+                ON collected_data 
+                USING ivfflat (embedding vector_cosine_ops) 
+                WITH (lists = 100);
+            RAISE NOTICE 'Created IVFFlat index on embedding column';
+        END IF;
+    END IF;
+END $$;
+
+-- Create embedding batch job table for async embedding generation
+CREATE TABLE IF NOT EXISTS embedding_jobs (
+    id BIGSERIAL PRIMARY KEY,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    total_documents INTEGER DEFAULT 0,
+    processed_documents INTEGER DEFAULT 0,
+    failed_documents INTEGER DEFAULT 0,
+    last_processed_id BIGINT,
+    error_message TEXT,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status ON embedding_jobs (status);
+CREATE INDEX IF NOT EXISTS idx_embedding_jobs_created ON embedding_jobs (created_at);
+
+-- Ensure embedding job status values
+ALTER TABLE embedding_jobs
+    ADD CONSTRAINT embedding_jobs_status_check
+    CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED'));
+

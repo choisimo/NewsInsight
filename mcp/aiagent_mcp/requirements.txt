@@ -1,0 +1,6 @@
+mcp
+requests
+psycopg2-binary
+pymongo
+cryptography
+httpx

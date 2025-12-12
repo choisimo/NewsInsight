@@ -17,6 +17,8 @@ volumes:
   redis_prod_data:
   consul_prod_data:
   ai_agent_data:
+  ml_shared_data:
+  embedding_model_cache:
 
 services:
   # ============================================================================
@@ -47,7 +49,7 @@ services:
   # Infrastructure Services
   # ============================================================================
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: newsinsight-prod-postgres
     restart: unless-stopped
     environment:
@@ -183,21 +185,34 @@ services:
     restart: unless-stopped
     environment:
       SPRING_PROFILES_ACTIVE: production
+      # Database connections
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-newsinsight}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-newsinsight}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       SPRING_DATA_MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # Consul settings
       SPRING_CLOUD_CONSUL_HOST: consul
       SPRING_CLOUD_CONSUL_PORT: 8500
+      CONSUL_ENABLED: "true"
+      CONSUL_DISCOVERY_ENABLED: "true"
+      # Direct service URL (fallback when Consul is unavailable)
+      # Consul 사용 시: lb://collector-service, 직접 연결 시: http://collector-service:8081
+      COLLECTOR_SERVICE_URL: ${COLLECTOR_SERVICE_URL:-http://collector-service:8081}
+      # Kafka
       SPRING_KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      # External services
       BROWSER_USE_API_URL: http://browser-use-api:8500
       BROWSER_USE_URL: http://browser-use-api:8500
       BROWSER_USE_WS_URL: ws://browser-use-api:8500
       WEB_CRAWLER_URL: http://web-crawler:11235
       AUTONOMOUS_CRAWLER_URL: http://autonomous-crawler:9090
+      AUTONOMOUS_CRAWLER_API_URL: http://autonomous-crawler:8030
+      ADMIN_DASHBOARD_URL: http://admin-dashboard:8888
+      # Frontend config
       FRONTEND_API_BASE_URL: https://newsinsight.nodove.com
+      # JVM settings
       JAVA_OPTS: "-Xms256m -Xmx512m"
     networks:
       newsinsight-prod:
@@ -231,14 +246,33 @@ services:
     restart: unless-stopped
     environment:
       SPRING_PROFILES_ACTIVE: production
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-newsinsight}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-newsinsight}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-      SPRING_DATA_MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      # Database connections
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-newsinsight}
+      DB_USER: ${POSTGRES_USER:-newsinsight}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
-      SPRING_CLOUD_CONSUL_HOST: consul
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      # Consul settings
+      CONSUL_HOST: consul
+      CONSUL_PORT: "8500"
+      CONSUL_ENABLED: "true"
+      CONSUL_DISCOVERY_ENABLED: "true"
+      CONSUL_DISCOVERY_HOSTNAME: collector-service
+      # Kafka
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      # External services
+      COLLECTOR_BROWSER_USE_BASE_URL: http://browser-use-api:8500
+      COLLECTOR_SERVICE_CRAWLER_BASE_URL: http://web-crawler:11235
+      COLLECTOR_CALLBACK_BASE_URL: http://collector-service:8081
+      # Embedding server for hybrid search (enabled by default)
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-http://embedding-server:8011}
+      EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-true}
+      VECTOR_SEARCH_ENABLED: ${VECTOR_SEARCH_ENABLED:-true}
+      HYBRID_SEARCH_ENABLED: ${HYBRID_SEARCH_ENABLED:-true}
+      # JVM settings
       JAVA_OPTS: "-Xms256m -Xmx512m"
     networks:
       newsinsight-prod:
@@ -251,6 +285,8 @@ services:
       consul:
         condition: service_healthy
       redpanda:
+        condition: service_healthy
+      embedding-server:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8081/actuator/health"]
@@ -286,6 +322,45 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ============================================================================
+  # Admin Dashboard - 관리자 대시보드 API
+  # ============================================================================
+  admin-dashboard:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/admin-dashboard:${TAG:-latest}
+    container_name: newsinsight-prod-admin-dashboard
+    restart: unless-stopped
+    environment:
+      PORT: "8888"
+      PYTHONUNBUFFERED: "1"
+      PROJECT_ROOT: /workspace
+      ADMIN_CONFIG_DIR: /app/config
+      # Database connections
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsinsight}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-newsinsight}
+      MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      # JWT Authentication
+      JWT_SECRET: ${JWT_SECRET_KEY:-change-me-in-production}
+      # CORS (allow frontend origin)
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://newsinsight.nodove.com,http://localhost:8080}
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.26
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8888/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   web-crawler:
     image: unclecode/crawl4ai:latest
     container_name: newsinsight-prod-web-crawler
@@ -312,15 +387,36 @@ services:
     container_name: newsinsight-prod-autonomous-crawler
     restart: unless-stopped
     environment:
+      # Service mode: kafka, api, or hybrid
+      SERVICE_MODE: ${AUTONOMOUS_CRAWLER_MODE:-hybrid}
+      API_PORT: "8030"
+      # Database connections
       DATABASE_URL: postgresql://${POSTGRES_USER:-newsinsight}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-newsinsight}
       MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      # Kafka settings
       KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      KAFKA_CONSUMER_GROUP_ID: autonomous-crawler-group
+      KAFKA_BROWSER_TASK_TOPIC: newsinsight.crawl.browser.tasks
+      KAFKA_CRAWL_RESULT_TOPIC: newsinsight.crawl.results
+      # External services
       BROWSER_USE_API_URL: http://browser-use-api:8500
       WEB_CRAWLER_URL: http://web-crawler:11235
+      COLLECTOR_SERVICE_URL: http://collector-service:8081
+      # LLM settings
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      USE_DB_PROVIDERS: "true"
+      # AIdove/custom LLM
       AIDOVE_API_KEY: ${AIDOVE_API_KEY}
       AIDOVE_API_BASE_URL: ${AIDOVE_API_BASE_URL:-https://ai.nodove.com}
+      # Observability
       LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      METRICS_ENABLED: "true"
+      METRICS_PORT: "9090"
     networks:
       newsinsight-prod:
         ipv4_address: 172.20.0.24
@@ -331,12 +427,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redpanda:
+        condition: service_healthy
       browser-use-api:
         condition: service_healthy
       web-crawler:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9090/health"]
+      # Check both metrics (9090) and API (8030) endpoints
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:9090/ || wget --no-verbose --tries=1 --spider http://127.0.0.1:8030/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -473,6 +572,339 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # MCP Servers - AI Agent용 도구 서버
+  # ============================================================================
+  newsinsight-mcp:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/newsinsight-mcp:${TAG:-latest}
+    build:
+      context: ../../mcp/newsinsight_mcp
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-mcp
+    restart: unless-stopped
+    environment:
+      DB_BACKEND: postgres
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsinsight}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-newsinsight}
+      MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      AIDOVE_WEBHOOK_URL: ${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
+      PORT: "5000"
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.50
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bias-mcp:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/bias-mcp:${TAG:-latest}
+    build:
+      context: ../../mcp/bias_mcp
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-bias-mcp
+    restart: unless-stopped
+    environment:
+      DB_BACKEND: postgres
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsinsight}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-newsinsight}
+      MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      AIDOVE_WEBHOOK_URL: ${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
+      PORT: "5001"
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.51
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  factcheck-mcp:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/factcheck-mcp:${TAG:-latest}
+    build:
+      context: ../../mcp/factcheck_mcp
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-factcheck-mcp
+    restart: unless-stopped
+    environment:
+      DB_BACKEND: postgres
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsinsight}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-newsinsight}
+      MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      AIDOVE_WEBHOOK_URL: ${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
+      PORT: "5002"
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.52
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  topic-mcp:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/topic-mcp:${TAG:-latest}
+    build:
+      context: ../../mcp/topic_mcp
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-topic-mcp
+    restart: unless-stopped
+    environment:
+      DB_BACKEND: postgres
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsinsight}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-newsinsight}
+      MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      AIDOVE_WEBHOOK_URL: ${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
+      PORT: "5003"
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.53
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  aiagent-mcp:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/aiagent-mcp:${TAG:-latest}
+    build:
+      context: ../../mcp/aiagent_mcp
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-aiagent-mcp
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsinsight}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-newsinsight}
+      ENCRYPTION_KEY: ${AI_PROVIDER_ENCRYPTION_KEY:-}
+      AIDOVE_WEBHOOK_URL: ${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
+      PORT: "5004"
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.54
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # ML Training MCP Servers - Computer Vision & NLP
+  # ============================================================================
+
+  # ============================================================================
+  # Text Embedding Server (for Hybrid Search)
+  # HuggingFace Text Embeddings Inference with multilingual-e5-large
+  # ============================================================================
+  embedding-server:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    container_name: newsinsight-prod-embedding
+    restart: unless-stopped
+    command:
+      - --model-id
+      - intfloat/multilingual-e5-large
+      - --port
+      - "8011"
+      - --max-concurrent-requests
+      - "128"
+    volumes:
+      - embedding_model_cache:/data
+    environment:
+      HF_HOME: /data
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.70
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8011/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  roboflow-mcp:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/roboflow-mcp:${TAG:-latest}
+    build:
+      context: ../../mcp/roboflow_mcp
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-roboflow-mcp
+    restart: unless-stopped
+    profiles: ["ml-mcp"]
+    environment:
+      ROBOFLOW_API_KEY: ${ROBOFLOW_API_KEY:-}
+      DATA_DIR: /app/data
+      PORT: "5010"
+    volumes:
+      - ml_shared_data:/app/data
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.60
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  huggingface-mcp:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/huggingface-mcp:${TAG:-latest}
+    build:
+      context: ../../mcp/huggingface_mcp
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-huggingface-mcp
+    restart: unless-stopped
+    profiles: ["ml-mcp"]
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      DATA_DIR: /app/data
+      PORT: "5011"
+    volumes:
+      - ml_shared_data:/app/data
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.61
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5011/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  kaggle-mcp:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/kaggle-mcp:${TAG:-latest}
+    build:
+      context: ../../mcp/kaggle_mcp
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-kaggle-mcp
+    restart: unless-stopped
+    profiles: ["ml-mcp"]
+    environment:
+      KAGGLE_USERNAME: ${KAGGLE_USERNAME:-}
+      KAGGLE_KEY: ${KAGGLE_KEY:-}
+      DATA_DIR: /app/data
+      PORT: "5012"
+    volumes:
+      - ml_shared_data:/app/data
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.62
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5012/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mltraining-mcp:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/mltraining-mcp:${TAG:-latest}
+    build:
+      context: ../../mcp/mltraining_mcp
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-mltraining-mcp
+    restart: unless-stopped
+    profiles: ["ml-mcp"]
+    environment:
+      ROBOFLOW_MCP_URL: http://roboflow-mcp:5010
+      HUGGINGFACE_MCP_URL: http://huggingface-mcp:5011
+      KAGGLE_MCP_URL: http://kaggle-mcp:5012
+      DATA_DIR: /app/data
+      PORT: "5020"
+    volumes:
+      - ml_shared_data:/app/data
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.63
+    depends_on:
+      - roboflow-mcp
+      - huggingface-mcp
+      - kaggle-mcp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5020/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     logging:
       driver: "json-file"
       options:

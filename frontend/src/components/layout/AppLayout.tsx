@@ -1,42 +1,11 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Search, FolderOpen, Bot, History, Command, Settings, Database, Cpu } from 'lucide-react';
+import { Command } from 'lucide-react';
 import { BackgroundTaskIndicator } from '@/components/BackgroundTaskIndicator';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileNavDrawer } from '@/components/MobileNavDrawer';
 import { NotificationBell } from '@/contexts/NotificationContext';
+import { NewNavigation, MobileBottomNav } from './NewNavigation';
 import { cn } from '@/lib/utils';
-
-interface NavItemProps {
-  to: string;
-  icon: React.ReactNode;
-  label: string;
-  isActive: boolean;
-  badge?: string;
-}
-
-const NavItem = ({ to, icon, label, isActive, badge }: NavItemProps) => (
-  <Link
-    to={to}
-    className={cn(
-      "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors relative",
-      isActive
-        ? "bg-primary text-primary-foreground"
-        : "text-muted-foreground hover:text-foreground hover:bg-muted"
-    )}
-    aria-current={isActive ? "page" : undefined}
-  >
-    {icon}
-    <span className="hidden lg:inline">{label}</span>
-    {badge && (
-      <span className={cn(
-        "absolute -top-1 -right-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full",
-        isActive ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground"
-      )}>
-        {badge}
-      </span>
-    )}
-  </Link>
-);
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -44,20 +13,9 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const location = useLocation();
-  const pathname = location.pathname;
-
-  // Consolidated navigation: Search hub absorbs unified/deep/factcheck modes
-  const navItems = [
-    { to: '/', icon: <Search className="h-4 w-4" />, label: '검색' },
-    { to: '/ml-addons', icon: <Cpu className="h-4 w-4" />, label: 'ML Add-ons' },
-    { to: '/ai-agent', icon: <Bot className="h-4 w-4" />, label: '브라우저 에이전트' },
-    { to: '/url-collections', icon: <Database className="h-4 w-4" />, label: 'URL 원천 관리' },
-    { to: '/projects', icon: <FolderOpen className="h-4 w-4" />, label: '프로젝트' },
-    { to: '/history', icon: <History className="h-4 w-4" />, label: '검색 기록' },
-  ];
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col pb-16 md:pb-0">
       {/* Header */}
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container flex h-14 items-center justify-between px-4">
@@ -83,23 +41,10 @@ export function AppLayout({ children }: AppLayoutProps) {
             </Link>
           </div>
 
-          {/* Navigation - Hidden on mobile */}
-          <nav className="hidden md:flex items-center gap-1 flex-1 overflow-x-auto ml-6" role="navigation" aria-label="주요 내비게이션">
-            {navItems.map((item) => (
-              <NavItem
-                key={item.to}
-                to={item.to}
-                icon={item.icon}
-                label={item.label}
-                badge={item.badge}
-                isActive={
-                  item.to === '/'
-                    ? pathname === '/'
-                    : pathname.startsWith(item.to)
-                }
-              />
-            ))}
-          </nav>
+          {/* New Navigation - Desktop */}
+          <div className="hidden md:flex items-center flex-1 justify-center ml-6">
+            <NewNavigation />
+          </div>
 
           {/* Right side actions */}
           <div className="flex items-center gap-2">
@@ -124,15 +69,6 @@ export function AppLayout({ children }: AppLayoutProps) {
             
             {/* Notification Bell */}
             <NotificationBell />
-            {/* Settings */}
-            <Link
-              to="/settings"
-              className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              aria-label="설정"
-              title="설정"
-            >
-              <Settings className="h-4 w-4" />
-            </Link>
             {/* Theme Toggle */}
             <ThemeToggle variant="dropdown" size="sm" />
             {/* Background Task Indicator */}
@@ -146,8 +82,11 @@ export function AppLayout({ children }: AppLayoutProps) {
         {children}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t py-4 mt-auto" role="contentinfo">
+      {/* Mobile Bottom Navigation */}
+      <MobileBottomNav />
+
+      {/* Footer - Hidden on mobile due to bottom nav */}
+      <footer className="border-t py-4 mt-auto hidden md:block" role="contentinfo">
         <div className="container px-4 text-center text-sm text-muted-foreground">
           <p>NewsInsight - AI 기반 뉴스 분석 플랫폼</p>
           <p className="text-xs mt-1">

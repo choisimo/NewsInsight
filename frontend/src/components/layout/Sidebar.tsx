@@ -15,13 +15,16 @@ import {
   Terminal,
   FileText,
   Activity,
-  ChevronDown
+  ChevronDown,
+  Brain,
+  Database,
+  Gauge,
 } from "lucide-react";
 import { useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 
-interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {}
+type SidebarProps = React.HTMLAttributes<HTMLDivElement>;
 
 export function Sidebar({ className }: SidebarProps) {
   const location = useLocation();
@@ -38,6 +41,12 @@ export function Sidebar({ className }: SidebarProps) {
       title: "Live Dashboard",
       href: "/dashboard",
       icon: Activity,
+      variant: "ghost",
+    },
+    {
+      title: "Operations",
+      href: "/operations",
+      icon: Gauge,
       variant: "ghost",
     },
     {
@@ -68,6 +77,18 @@ export function Sidebar({ className }: SidebarProps) {
       title: "ML Add-ons",
       href: "/ml-addons",
       icon: Layers,
+      variant: "ghost",
+    },
+    {
+      title: "AI Jobs",
+      href: "/ai-jobs",
+      icon: Brain,
+      variant: "ghost",
+    },
+    {
+      title: "Collected Data",
+      href: "/collected-data",
+      icon: Database,
       variant: "ghost",
     },
   ];

@@ -16,6 +16,7 @@ import {
   Loader2,
   FileText,
   Trash2,
+  XCircle,
 } from 'lucide-react';
 import { SourceCard, type SourceInfo } from '@/components/admin/SourceCard';
 import { JobStatusBadge } from '@/components/admin/JobStatusBadge';
@@ -26,6 +27,7 @@ import {
   listCollectionJobs,
   getCollectionStats,
   startCollectionForAllSources,
+  cancelCollectionJob,
   cleanupOldJobs,
   type CollectionJobDTO,
   type CollectionStatsDTO,
@@ -127,6 +129,22 @@ export default function Operations() {
       queryClient.invalidateQueries({ queryKey: ['collectionJobs'] });
     },
   });
+
+  // 작업 취소
+  const cancelJobMutation = useMutation({
+    mutationFn: cancelCollectionJob,
+    onSuccess: () => {
+      toast.success('작업이 취소되었습니다');
+      queryClient.invalidateQueries({ queryKey: ['collectionJobs'] });
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : '작업 취소 실패');
+    },
+  });
+
+  const handleCancelJob = useCallback((jobId: number) => {
+    cancelJobMutation.mutate(jobId);
+  }, [cancelJobMutation]);
 
   const handleToggleSource = useCallback(async (id: number, active: boolean) => {
     await toggleSourceMutation.mutateAsync({ id, active });
@@ -287,7 +305,13 @@ export default function Operations() {
                 ) : (
                   <div className="space-y-2">
                     {jobsData?.content.map((job) => (
-                      <JobRow key={job.id} job={job} sources={sources} />
+                      <JobRow 
+                        key={job.id} 
+                        job={job} 
+                        sources={sources} 
+                        onCancel={handleCancelJob}
+                        isCancelling={cancelJobMutation.isPending}
+                      />
                     ))}
                   </div>
                 )}
@@ -339,8 +363,19 @@ export default function Operations() {
 }
 
 // Job Row Component
-function JobRow({ job, sources }: { job: CollectionJobDTO; sources: SourceInfo[] }) {
+function JobRow({ 
+  job, 
+  sources,
+  onCancel,
+  isCancelling,
+}: { 
+  job: CollectionJobDTO; 
+  sources: SourceInfo[];
+  onCancel: (id: number) => void;
+  isCancelling: boolean;
+}) {
   const source = sources.find((s) => s.id === job.sourceId);
+  const canCancel = job.status === 'RUNNING' || job.status === 'PENDING';
   
   return (
     <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
@@ -354,14 +389,31 @@ function JobRow({ job, sources }: { job: CollectionJobDTO; sources: SourceInfo[]
           </p>
         </div>
       </div>
-      <div className="text-right">
-        {job.itemsCollected > 0 && (
-          <p className="text-sm font-medium">{job.itemsCollected}건</p>
-        )}
-        {job.errorMessage && (
-          <p className="text-xs text-red-600 max-w-[200px] truncate" title={job.errorMessage}>
-            {job.errorMessage}
-          </p>
+      <div className="flex items-center gap-2">
+        <div className="text-right">
+          {job.itemsCollected > 0 && (
+            <p className="text-sm font-medium">{job.itemsCollected}건</p>
+          )}
+          {job.errorMessage && (
+            <p className="text-xs text-red-600 max-w-[200px] truncate" title={job.errorMessage}>
+              {job.errorMessage}
+            </p>
+          )}
+        </div>
+        {canCancel && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onCancel(job.id)}
+            disabled={isCancelling}
+            className="text-red-500 hover:text-red-700 hover:bg-red-50"
+          >
+            {isCancelling ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <XCircle className="h-4 w-4" />
+            )}
+          </Button>
         )}
       </div>
     </div>

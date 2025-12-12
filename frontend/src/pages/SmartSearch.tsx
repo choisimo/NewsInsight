@@ -82,6 +82,10 @@ import {
   deleteSearchTemplate,
   recordTemplateUsage,
   toggleTemplateFavorite,
+  getFavoriteTemplates,
+  getMostUsedTemplates,
+  getRecentlyUsedTemplates,
+  searchTemplatesByName,
   extractClaimsFromUrl,
   type UnifiedSearchResult,
   type Evidence,
@@ -539,6 +543,8 @@ export default function SmartSearch() {
   const [templates, setTemplates] = useState<SearchTemplate[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templateFilter, setTemplateFilter] = useState<"all" | "favorites" | "recent" | "mostUsed">("all");
+  const [templateSearchQuery, setTemplateSearchQuery] = useState("");
 
   // Unified Search State
   const [unifiedResults, setUnifiedResults] = useState<UnifiedSearchResult[]>([]);
@@ -598,12 +604,33 @@ export default function SmartSearch() {
     },
   });
 
-  // Load templates from server
+  // Load templates from server based on filter and search query
   useEffect(() => {
     const loadTemplates = async () => {
       setTemplatesLoading(true);
       try {
-        const serverTemplates = await getAllTemplatesByUser(DEFAULT_USER_ID);
+        let serverTemplates: ApiSearchTemplate[];
+        
+        // If there's a search query, use search API regardless of filter
+        if (templateSearchQuery.trim()) {
+          const searchResult = await searchTemplatesByName(templateSearchQuery.trim(), DEFAULT_USER_ID);
+          serverTemplates = searchResult.content;
+        } else {
+          switch (templateFilter) {
+            case "favorites":
+              serverTemplates = await getFavoriteTemplates(DEFAULT_USER_ID);
+              break;
+            case "recent":
+              serverTemplates = await getRecentlyUsedTemplates(DEFAULT_USER_ID, 20);
+              break;
+            case "mostUsed":
+              serverTemplates = await getMostUsedTemplates(DEFAULT_USER_ID, 20);
+              break;
+            default:
+              serverTemplates = await getAllTemplatesByUser(DEFAULT_USER_ID);
+          }
+        }
+        
         // Transform API response to local format
         const transformedTemplates: SearchTemplate[] = serverTemplates.map((t) => ({
           id: t.id,
@@ -621,49 +648,51 @@ export default function SmartSearch() {
         setTemplates(transformedTemplates);
       } catch (e) {
         console.error("Failed to load templates from server:", e);
-        // Fallback: try localStorage for migration
-        try {
-          const saved = localStorage.getItem("smartSearch_templates");
-          if (saved) {
-            const localTemplates = JSON.parse(saved);
-            // Migrate old localStorage templates to server
-            for (const t of localTemplates) {
-              try {
-                await createSearchTemplate({
-                  name: t.name,
-                  query: t.query,
-                  mode: t.mode,
-                  items: t.items,
-                  userId: DEFAULT_USER_ID,
-                });
-              } catch (migrationError) {
-                console.error("Failed to migrate template:", migrationError);
+        // Fallback: try localStorage for migration (only for 'all' filter without search)
+        if (templateFilter === "all" && !templateSearchQuery.trim()) {
+          try {
+            const saved = localStorage.getItem("smartSearch_templates");
+            if (saved) {
+              const localTemplates = JSON.parse(saved);
+              // Migrate old localStorage templates to server
+              for (const t of localTemplates) {
+                try {
+                  await createSearchTemplate({
+                    name: t.name,
+                    query: t.query,
+                    mode: t.mode,
+                    items: t.items,
+                    userId: DEFAULT_USER_ID,
+                  });
+                } catch (migrationError) {
+                  console.error("Failed to migrate template:", migrationError);
+                }
               }
+              // Clear localStorage after migration
+              localStorage.removeItem("smartSearch_templates");
+              // Reload from server
+              const migrated = await getAllTemplatesByUser(DEFAULT_USER_ID);
+              setTemplates(migrated.map((t) => ({
+                id: t.id,
+                name: t.name,
+                query: t.query,
+                mode: t.mode as SearchMode,
+                items: t.items as SelectedItem[],
+                favorite: t.favorite,
+                useCount: t.useCount,
+                createdAt: t.createdAt,
+              })));
             }
-            // Clear localStorage after migration
-            localStorage.removeItem("smartSearch_templates");
-            // Reload from server
-            const migrated = await getAllTemplatesByUser(DEFAULT_USER_ID);
-            setTemplates(migrated.map((t) => ({
-              id: t.id,
-              name: t.name,
-              query: t.query,
-              mode: t.mode as SearchMode,
-              items: t.items as SelectedItem[],
-              favorite: t.favorite,
-              useCount: t.useCount,
-              createdAt: t.createdAt,
-            })));
+          } catch (localError) {
+            console.error("Failed to migrate local templates:", localError);
           }
-        } catch (localError) {
-          console.error("Failed to migrate local templates:", localError);
         }
       } finally {
         setTemplatesLoading(false);
       }
     };
     loadTemplates();
-  }, []);
+  }, [templateFilter, templateSearchQuery]);
 
   // Save template to server
   const saveAsTemplate = useCallback(async (name: string) => {
@@ -1032,7 +1061,77 @@ export default function SmartSearch() {
               <SheetTitle>저장된 검색 템플릿</SheetTitle>
               <SheetDescription>자주 사용하는 검색 조합을 저장하고 불러올 수 있습니다.</SheetDescription>
             </SheetHeader>
-            <ScrollArea className="h-[calc(100vh-150px)] mt-4">
+            
+            {/* Template Search Input */}
+            <div className="mt-4 relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="템플릿 검색..."
+                value={templateSearchQuery}
+                onChange={(e) => setTemplateSearchQuery(e.target.value)}
+                className="pl-9 pr-8"
+              />
+              {templateSearchQuery && (
+                <button
+                  onClick={() => setTemplateSearchQuery("")}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            
+            {/* Template Filter Tabs */}
+            <div className={`flex gap-1 mt-3 mb-3 p-1 bg-muted rounded-lg ${templateSearchQuery ? "opacity-50" : ""}`}>
+              <Button
+                variant={templateFilter === "all" ? "secondary" : "ghost"}
+                size="sm"
+                className="flex-1 text-xs"
+                onClick={() => setTemplateFilter("all")}
+                disabled={!!templateSearchQuery}
+              >
+                전체
+              </Button>
+              <Button
+                variant={templateFilter === "favorites" ? "secondary" : "ghost"}
+                size="sm"
+                className="flex-1 text-xs"
+                onClick={() => setTemplateFilter("favorites")}
+                disabled={!!templateSearchQuery}
+              >
+                <Star className="h-3 w-3 mr-1" />
+                즐겨찾기
+              </Button>
+              <Button
+                variant={templateFilter === "recent" ? "secondary" : "ghost"}
+                size="sm"
+                className="flex-1 text-xs"
+                onClick={() => setTemplateFilter("recent")}
+                disabled={!!templateSearchQuery}
+              >
+                <Clock className="h-3 w-3 mr-1" />
+                최근
+              </Button>
+              <Button
+                variant={templateFilter === "mostUsed" ? "secondary" : "ghost"}
+                size="sm"
+                className="flex-1 text-xs"
+                onClick={() => setTemplateFilter("mostUsed")}
+                disabled={!!templateSearchQuery}
+              >
+                <Zap className="h-3 w-3 mr-1" />
+                자주 사용
+              </Button>
+            </div>
+            
+            {/* Search result indicator */}
+            {templateSearchQuery && (
+              <div className="text-xs text-muted-foreground mb-2">
+                "{templateSearchQuery}" 검색 결과: {templates.length}건
+              </div>
+            )}
+            
+            <ScrollArea className="h-[calc(100vh-280px)]">
               <div className="space-y-2 pr-4">
                 {templatesLoading ? (
                   <div className="flex items-center justify-center py-8">
@@ -1040,7 +1139,10 @@ export default function SmartSearch() {
                   </div>
                 ) : templates.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-8">
-                    저장된 템플릿이 없습니다.
+                    {templateSearchQuery 
+                      ? `"${templateSearchQuery}"에 대한 검색 결과가 없습니다.`
+                      : "저장된 템플릿이 없습니다."
+                    }
                   </p>
                 ) : (
                   templates.map((template) => (

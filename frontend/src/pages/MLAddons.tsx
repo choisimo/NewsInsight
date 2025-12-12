@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -14,6 +14,9 @@ import {
   Scale,
   Zap,
   Settings,
+  TrendingUp,
+  Clock,
+  BarChart3,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -22,147 +25,164 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Progress } from '@/components/ui/progress';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
-import {
-  checkMLAddonHealth,
-  checkAllMLAddonsHealth,
-  ML_ADDON_CONFIGS,
-  type MLAddonType,
-  type MLAddonHealth,
-  type MLAddonConfig,
-} from '@/lib/api';
+import { useMlAddons, useMlAddonStatus, useMlExecutions } from '@/hooks/useMlAddons';
+import { getCategoryLabel, getExecutionStatusLabel, getExecutionStatusColor } from '@/lib/api/ml';
+import type { MlAddon, AddonCategory, MlAddonExecution } from '@/types/api';
+
+// ============================================
+// Category Icon Helper
+// ============================================
+
+const getCategoryIcon = (category: AddonCategory) => {
+  switch (category) {
+    case 'SENTIMENT':
+      return <MessageSquare className="h-5 w-5" />;
+    case 'FACTCHECK':
+      return <Shield className="h-5 w-5" />;
+    case 'CONTEXT':
+      return <Scale className="h-5 w-5" />;
+    case 'TOXICITY':
+    case 'MISINFORMATION':
+      return <AlertCircle className="h-5 w-5" />;
+    case 'SUMMARIZATION':
+      return <BarChart3 className="h-5 w-5" />;
+    default:
+      return <Cpu className="h-5 w-5" />;
+  }
+};
+
+const getCategoryColor = (category: AddonCategory) => {
+  switch (category) {
+    case 'SENTIMENT':
+      return 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300';
+    case 'FACTCHECK':
+      return 'bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-300';
+    case 'CONTEXT':
+      return 'bg-purple-100 text-purple-600 dark:bg-purple-900 dark:text-purple-300';
+    case 'TOXICITY':
+    case 'MISINFORMATION':
+      return 'bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-300';
+    case 'SUMMARIZATION':
+      return 'bg-amber-100 text-amber-600 dark:bg-amber-900 dark:text-amber-300';
+    default:
+      return 'bg-gray-100 text-gray-600 dark:bg-gray-900 dark:text-gray-300';
+  }
+};
 
 // ============================================
 // ML Add-on Card Component
 // ============================================
 
 interface MLAddonCardProps {
-  config: MLAddonConfig;
-  health: MLAddonHealth | null;
-  isLoading: boolean;
-  enabled: boolean;
-  onToggle: (id: MLAddonType, enabled: boolean) => void;
-  onRefresh: (id: MLAddonType) => void;
+  addon: MlAddon;
+  isToggling: boolean;
+  onToggle: (addonKey: string) => void;
 }
 
 const MLAddonCard: React.FC<MLAddonCardProps> = ({
-  config,
-  health,
-  isLoading,
-  enabled,
+  addon,
+  isToggling,
   onToggle,
-  onRefresh,
 }) => {
-  const getIcon = () => {
-    switch (config.id) {
-      case 'sentiment':
-        return <MessageSquare className="h-5 w-5" />;
-      case 'factcheck':
-        return <Shield className="h-5 w-5" />;
-      case 'bias':
-        return <Scale className="h-5 w-5" />;
-      default:
-        return <Cpu className="h-5 w-5" />;
-    }
-  };
-
-  const getStatusIcon = () => {
-    if (isLoading) {
-      return <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />;
-    }
-    if (!health) {
-      return <AlertCircle className="h-4 w-4 text-muted-foreground" />;
-    }
-    switch (health.status) {
-      case 'healthy':
+  const getHealthStatusIcon = () => {
+    switch (addon.healthStatus) {
+      case 'HEALTHY':
         return <CheckCircle2 className="h-4 w-4 text-green-500" />;
-      case 'unhealthy':
+      case 'UNHEALTHY':
         return <XCircle className="h-4 w-4 text-red-500" />;
-      default:
+      case 'DEGRADED':
         return <AlertCircle className="h-4 w-4 text-yellow-500" />;
+      default:
+        return <AlertCircle className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
-  const getStatusBadge = () => {
-    if (isLoading) {
-      return <Badge variant="secondary">확인 중...</Badge>;
-    }
-    if (!health) {
-      return <Badge variant="outline">미확인</Badge>;
-    }
-    switch (health.status) {
-      case 'healthy':
+  const getHealthStatusBadge = () => {
+    switch (addon.healthStatus) {
+      case 'HEALTHY':
         return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100">정상</Badge>;
-      case 'unhealthy':
+      case 'UNHEALTHY':
         return <Badge variant="destructive">오프라인</Badge>;
+      case 'DEGRADED':
+        return <Badge className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100">저하</Badge>;
       default:
-        return <Badge variant="outline">알 수 없음</Badge>;
+        return <Badge variant="outline">미확인</Badge>;
     }
   };
 
   return (
-    <Card className={!enabled ? 'opacity-60' : ''}>
+    <Card className={!addon.enabled ? 'opacity-60' : ''}>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-lg ${
-              config.id === 'sentiment' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300' :
-              config.id === 'factcheck' ? 'bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-300' :
-              'bg-purple-100 text-purple-600 dark:bg-purple-900 dark:text-purple-300'
-            }`}>
-              {getIcon()}
+            <div className={`p-2 rounded-lg ${getCategoryColor(addon.category)}`}>
+              {getCategoryIcon(addon.category)}
             </div>
             <div>
-              <CardTitle className="text-base">{config.name}</CardTitle>
+              <CardTitle className="text-base">{addon.name}</CardTitle>
               <CardDescription className="text-xs mt-0.5">
-                Port: {config.port}
+                {getCategoryLabel(addon.category)}
               </CardDescription>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {getStatusIcon()}
-            {getStatusBadge()}
+            {getHealthStatusIcon()}
+            {getHealthStatusBadge()}
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          {config.description}
+          {addon.description || '설명 없음'}
         </p>
+        
+        {/* Metrics */}
+        {addon.successRate !== undefined && (
+          <div className="space-y-2">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>성공률</span>
+              <span>{(addon.successRate * 100).toFixed(1)}%</span>
+            </div>
+            <Progress value={addon.successRate * 100} className="h-1" />
+          </div>
+        )}
+
+        {addon.avgLatencyMs !== undefined && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            <span>평균 응답: {addon.avgLatencyMs.toFixed(0)}ms</span>
+          </div>
+        )}
         
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Switch
-              id={`addon-${config.id}`}
-              checked={enabled}
-              onCheckedChange={(checked) => onToggle(config.id, checked)}
+              id={`addon-${addon.addonKey}`}
+              checked={addon.enabled}
+              onCheckedChange={() => onToggle(addon.addonKey)}
+              disabled={isToggling}
             />
-            <Label htmlFor={`addon-${config.id}`} className="text-sm">
-              {enabled ? '활성화됨' : '비활성화됨'}
+            <Label htmlFor={`addon-${addon.addonKey}`} className="text-sm">
+              {addon.enabled ? '활성화됨' : '비활성화됨'}
             </Label>
           </div>
           
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onRefresh(config.id)}
-                disabled={isLoading}
-              >
-                <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>상태 새로고침</TooltipContent>
-          </Tooltip>
+          {addon.priority !== undefined && (
+            <Badge variant="outline" className="text-xs">
+              우선순위: {addon.priority}
+            </Badge>
+          )}
         </div>
 
-        {health?.status === 'unhealthy' && (
+        {addon.healthStatus === 'UNHEALTHY' && (
           <Alert variant="destructive" className="py-2">
             <AlertCircle className="h-4 w-4" />
             <AlertDescription className="text-xs">
@@ -176,98 +196,129 @@ const MLAddonCard: React.FC<MLAddonCardProps> = ({
 };
 
 // ============================================
+// Execution History Item
+// ============================================
+
+interface ExecutionItemProps {
+  execution: MlAddonExecution;
+}
+
+const ExecutionItem: React.FC<ExecutionItemProps> = ({ execution }) => {
+  const statusColor = getExecutionStatusColor(execution.status);
+  
+  return (
+    <div className="flex items-center justify-between p-2 rounded border bg-card">
+      <div className="flex items-center gap-2">
+        <Badge 
+          variant="outline" 
+          className={`bg-${statusColor}-100 text-${statusColor}-800 dark:bg-${statusColor}-900 dark:text-${statusColor}-100 text-xs`}
+        >
+          {getExecutionStatusLabel(execution.status)}
+        </Badge>
+        <span className="text-sm font-medium">{execution.addonKey}</span>
+      </div>
+      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+        {execution.executionTimeMs && (
+          <span>{execution.executionTimeMs}ms</span>
+        )}
+        <span>{new Date(execution.createdAt).toLocaleTimeString('ko-KR')}</span>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
 // ML Add-ons Page Component
 // ============================================
 
 const MLAddons = () => {
   const { toast } = useToast();
   
-  // ML Add-ons state
-  const [addonHealth, setAddonHealth] = useState<Record<MLAddonType, MLAddonHealth | null>>({
-    sentiment: null,
-    factcheck: null,
-    bias: null,
-  });
-  const [addonEnabled, setAddonEnabled] = useState<Record<MLAddonType, boolean>>(() => {
-    // Load from localStorage
-    const saved = localStorage.getItem('newsinsight-ml-addons-enabled');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        // ignore
-      }
-    }
-    return {
-      sentiment: true,
-      factcheck: true,
-      bias: true,
-    };
-  });
-  const [loadingAddons, setLoadingAddons] = useState<Set<MLAddonType>>(new Set());
-  const [isRefreshingAll, setIsRefreshingAll] = useState(false);
+  // ML Add-ons hooks
+  const {
+    addons,
+    loading: addonsLoading,
+    error: addonsError,
+    refresh: refreshAddons,
+    toggle,
+    groupedByCategory,
+  } = useMlAddons({ autoRefresh: true, refreshInterval: 30000 });
 
-  // Save addon enabled state to localStorage
-  useEffect(() => {
-    localStorage.setItem('newsinsight-ml-addons-enabled', JSON.stringify(addonEnabled));
-  }, [addonEnabled]);
+  const {
+    status,
+    loading: statusLoading,
+    refresh: refreshStatus,
+    runHealthCheck,
+  } = useMlAddonStatus();
 
-  // Check all addon health on mount
-  useEffect(() => {
-    refreshAllAddons();
-  }, []);
+  const {
+    executions,
+    loading: executionsLoading,
+    refresh: refreshExecutions,
+  } = useMlExecutions({ size: 10, autoRefresh: true, refreshInterval: 10000 });
 
-  const refreshAllAddons = useCallback(async () => {
-    setIsRefreshingAll(true);
-    setLoadingAddons(new Set(['sentiment', 'factcheck', 'bias']));
-    
+  const [isToggling, setIsToggling] = React.useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const [isHealthChecking, setIsHealthChecking] = React.useState(false);
+
+  const handleToggle = async (addonKey: string) => {
+    setIsToggling(addonKey);
     try {
-      const results = await checkAllMLAddonsHealth();
-      setAddonHealth(results);
-    } catch (e) {
-      console.error('Failed to check addon health:', e);
+      await toggle(addonKey);
+      const addon = addons.find(a => a.addonKey === addonKey);
       toast({
-        title: '상태 확인 실패',
-        description: 'ML Add-on 상태를 확인할 수 없습니다.',
+        title: addon?.enabled ? 'Add-on 비활성화됨' : 'Add-on 활성화됨',
+        description: `${addon?.name} Add-on이 ${addon?.enabled ? '비활성화' : '활성화'}되었습니다.`,
+      });
+    } catch (e) {
+      toast({
+        title: '상태 변경 실패',
+        description: e instanceof Error ? e.message : '알 수 없는 오류',
         variant: 'destructive',
       });
     } finally {
-      setLoadingAddons(new Set());
-      setIsRefreshingAll(false);
+      setIsToggling(null);
     }
-  }, [toast]);
+  };
 
-  const refreshAddon = useCallback(async (id: MLAddonType) => {
-    setLoadingAddons(prev => new Set(prev).add(id));
-    
+  const handleRefreshAll = async () => {
+    setIsRefreshing(true);
     try {
-      const health = await checkMLAddonHealth(id);
-      setAddonHealth(prev => ({ ...prev, [id]: health }));
+      await Promise.all([refreshAddons(), refreshStatus(), refreshExecutions()]);
+      toast({ title: '새로고침 완료' });
     } catch (e) {
-      console.error(`Failed to check ${id} addon health:`, e);
-    } finally {
-      setLoadingAddons(prev => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
+      toast({
+        title: '새로고침 실패',
+        variant: 'destructive',
       });
+    } finally {
+      setIsRefreshing(false);
     }
-  }, []);
+  };
 
-  const toggleAddon = useCallback((id: MLAddonType, enabled: boolean) => {
-    setAddonEnabled(prev => ({ ...prev, [id]: enabled }));
-    toast({
-      title: enabled ? 'Add-on 활성화됨' : 'Add-on 비활성화됨',
-      description: `${ML_ADDON_CONFIGS.find(c => c.id === id)?.name} Add-on이 ${enabled ? '활성화' : '비활성화'}되었습니다.`,
-    });
-  }, [toast]);
+  const handleHealthCheck = async () => {
+    setIsHealthChecking(true);
+    try {
+      await runHealthCheck();
+      toast({ title: '헬스체크 완료', description: '모든 Add-on 상태가 업데이트되었습니다.' });
+    } catch (e) {
+      toast({
+        title: '헬스체크 실패',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsHealthChecking(false);
+    }
+  };
 
-  const healthyCount = Object.values(addonHealth).filter(h => h?.status === 'healthy').length;
-  const totalCount = ML_ADDON_CONFIGS.length;
+  // Calculate stats
+  const healthyCount = addons.filter(a => a.healthStatus === 'HEALTHY').length;
+  const enabledCount = addons.filter(a => a.enabled).length;
+  const totalCount = addons.length;
 
   return (
     <div className="min-h-screen py-8">
-      <div className="container mx-auto px-4 max-w-5xl">
+      <div className="container mx-auto px-4 max-w-6xl">
         {/* Header */}
         <header className="mb-8">
           <Link
@@ -290,6 +341,19 @@ const MLAddons = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleHealthCheck}
+                disabled={isHealthChecking}
+              >
+                {isHealthChecking ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Activity className="h-4 w-4 mr-2" />
+                )}
+                헬스체크
+              </Button>
               <Link to="/settings">
                 <Button variant="outline" size="sm">
                   <Settings className="h-4 w-4 mr-2" />
@@ -315,16 +379,16 @@ const MLAddons = () => {
               </div>
               <Button
                 variant="outline"
-                onClick={refreshAllAddons}
-                disabled={isRefreshingAll}
+                onClick={handleRefreshAll}
+                disabled={isRefreshing}
               >
-                <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshingAll ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
                 전체 새로고침
               </Button>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center gap-4">
+            <div className="grid gap-4 md:grid-cols-4">
               <div className="flex items-center gap-2">
                 <div className={`h-3 w-3 rounded-full ${
                   healthyCount === totalCount ? 'bg-green-500' :
@@ -334,31 +398,94 @@ const MLAddons = () => {
                   {healthyCount}/{totalCount} 서비스 정상
                 </span>
               </div>
-              <Separator orientation="vertical" className="h-4" />
-              <span className="text-sm text-muted-foreground">
-                활성화된 Add-on: {Object.values(addonEnabled).filter(Boolean).length}개
-              </span>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Zap className="h-4 w-4" />
+                활성화된 Add-on: {enabledCount}개
+              </div>
+              {status && (
+                <>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <TrendingUp className="h-4 w-4" />
+                    오늘 실행: {status.totalExecutionsToday.toLocaleString()}회
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <BarChart3 className="h-4 w-4" />
+                    성공률: {(status.successRate * 100).toFixed(1)}%
+                  </div>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
 
-        {/* Add-on Cards */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 mb-6">
-          {ML_ADDON_CONFIGS.map((config) => (
-            <MLAddonCard
-              key={config.id}
-              config={config}
-              health={addonHealth[config.id]}
-              isLoading={loadingAddons.has(config.id)}
-              enabled={addonEnabled[config.id]}
-              onToggle={toggleAddon}
-              onRefresh={refreshAddon}
-            />
-          ))}
-        </div>
+        {/* Error Alert */}
+        {addonsError && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              Add-on 목록을 불러오는데 실패했습니다: {addonsError.message}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Loading State */}
+        {addonsLoading && addons.length === 0 ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="grid gap-6 lg:grid-cols-3">
+            {/* Add-on Cards - 2 columns */}
+            <div className="lg:col-span-2">
+              <h2 className="text-lg font-semibold mb-4">등록된 Add-on</h2>
+              {addons.length === 0 ? (
+                <Card className="p-8 text-center text-muted-foreground">
+                  등록된 ML Add-on이 없습니다.
+                </Card>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {addons.map((addon) => (
+                    <MLAddonCard
+                      key={addon.addonKey}
+                      addon={addon}
+                      isToggling={isToggling === addon.addonKey}
+                      onToggle={handleToggle}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Recent Executions - 1 column */}
+            <div className="lg:col-span-1">
+              <h2 className="text-lg font-semibold mb-4">최근 실행 내역</h2>
+              <Card>
+                <CardContent className="p-4">
+                  <ScrollArea className="h-[400px]">
+                    {executionsLoading && executions.length === 0 ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : executions.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-8">
+                        실행 내역이 없습니다.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {executions.map((execution) => (
+                          <ExecutionItem key={execution.id} execution={execution} />
+                        ))}
+                      </div>
+                    )}
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        )}
 
         {/* Help */}
-        <Alert>
+        <Alert className="mt-6">
           <Zap className="h-4 w-4" />
           <AlertDescription>
             <strong>ML Add-on 실행 방법:</strong> <code className="px-1 py-0.5 bg-muted rounded text-xs">cd backend/ml-addons && docker-compose up -d</code>

@@ -7,6 +7,9 @@ import type {
   SourceType,
 } from '@/types/api';
 
+// Storage key for access token (shared with AuthContext)
+const ACCESS_TOKEN_KEY = 'access_token';
+
 let apiInstance: ReturnType<typeof axios.create> | null = null;
 
 /**
@@ -58,6 +61,16 @@ const fetchConfiguredBaseUrl = async (initialBaseUrl: string): Promise<string> =
   }
 };
 
+/**
+ * Get access token from localStorage
+ */
+const getAccessToken = (): string | null => {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem(ACCESS_TOKEN_KEY);
+  }
+  return null;
+};
+
 export const getApiClient = async () => {
   if (apiInstance) {
     return apiInstance;
@@ -72,9 +85,49 @@ export const getApiClient = async () => {
     headers: {
       'Content-Type': 'application/json',
     },
+    withCredentials: true, // Include cookies in requests
   });
 
+  // Request interceptor to add Authorization header
+  apiInstance.interceptors.request.use(
+    (config) => {
+      const token = getAccessToken();
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    },
+    (error) => {
+      return Promise.reject(error);
+    }
+  );
+
+  // Response interceptor to handle 401 errors
+  apiInstance.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error.response?.status === 401) {
+        // Token might be expired, clear storage
+        // The AuthContext will handle re-authentication
+        console.warn('Received 401 Unauthorized, token might be expired');
+        
+        // Optionally trigger a custom event for auth context to handle
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+        }
+      }
+      return Promise.reject(error);
+    }
+  );
+
   return apiInstance;
+};
+
+/**
+ * Reset API client (useful after logout to clear any cached state)
+ */
+export const resetApiClient = () => {
+  apiInstance = null;
 };
 
 export const getAnalysis = async (query: string, window: string = '7d'): Promise<AnalysisResponse> => {
@@ -153,6 +206,61 @@ export const setSourceActive = async (id: number, active: boolean): Promise<Data
   const path = active ? `/api/v1/sources/${id}/activate` : `/api/v1/sources/${id}/deactivate`;
   const response = await client.post<DataSource>(path);
   return response.data;
+};
+
+/**
+ * Get a single data source by ID
+ * GET /api/v1/sources/{id}
+ */
+export const getSource = async (id: number): Promise<DataSource> => {
+  const client = await getApiClient();
+  const response = await client.get<DataSource>(`/api/v1/sources/${id}`);
+  return response.data;
+};
+
+/**
+ * Get all active data sources
+ * GET /api/v1/sources/active
+ */
+export const listActiveSources = async (
+  page: number = 0,
+  size: number = 100,
+): Promise<PageResponse<DataSource>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<DataSource>>('/api/v1/sources/active', {
+    params: { page, size },
+  });
+  return response.data;
+};
+
+/**
+ * Update data source request payload
+ */
+export interface UpdateDataSourcePayload {
+  name?: string;
+  url?: string;
+  sourceType?: SourceType;
+  collectionFrequency?: number;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Update a data source
+ * PUT /api/v1/sources/{id}
+ */
+export const updateSource = async (id: number, payload: UpdateDataSourcePayload): Promise<DataSource> => {
+  const client = await getApiClient();
+  const response = await client.put<DataSource>(`/api/v1/sources/${id}`, payload);
+  return response.data;
+};
+
+/**
+ * Delete a data source
+ * DELETE /api/v1/sources/{id}
+ */
+export const deleteSource = async (id: number): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete(`/api/v1/sources/${id}`);
 };
 
 // ============================================

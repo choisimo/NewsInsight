@@ -10,3 +10,9 @@ export * from './ai';
 
 // Data API
 export * from './data';
+
+// ML Add-on API
+export * from './ml';
+
+// Dashboard Events API
+export * from './events';

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useToast } from '@/hooks/use-toast';
 import {
   saveSearchHistory,
   listSearchHistory,
@@ -61,6 +62,7 @@ interface UseSearchHistoryReturn {
  */
 export function useSearchHistory(options: UseSearchHistoryOptions = {}): UseSearchHistoryReturn {
   const { pageSize = 20, userId } = options;
+  const { toast } = useToast();
   
   const [history, setHistory] = useState<SearchHistoryRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -112,9 +114,14 @@ export function useSearchHistory(options: UseSearchHistoryOptions = {}): UseSear
       });
     } catch (err) {
       console.error('Failed to save search history:', err);
-      // Don't throw - search history save failure shouldn't block the UI
+      // 사용자에게 저장 실패 알림
+      toast({
+        title: '검색 기록 저장 실패',
+        description: err instanceof Error ? err.message : '잠시 후 다시 시도해주세요.',
+        variant: 'destructive',
+      });
     }
-  }, [sessionId, userId, extractUrlsFromResults]);
+  }, [sessionId, userId, extractUrlsFromResults, toast]);
 
   /**
    * Load search history with pagination

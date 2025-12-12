@@ -1,0 +1,7 @@
+mcp
+requests
+huggingface-hub
+aiohttp
+aiofiles
+python-dotenv
+transformers

@@ -9,9 +9,41 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { RefreshCw, AlertCircle } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { RefreshCw, AlertCircle, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { listSources, createSource, setSourceActive, type CreateDataSourcePayload } from "@/lib/api";
+import { 
+  listSources, 
+  createSource, 
+  updateSource,
+  deleteSource,
+  setSourceActive, 
+  type CreateDataSourcePayload,
+  type UpdateDataSourcePayload 
+} from "@/lib/api";
 import type { DataSource, SourceType } from "@/types/api";
 
 const DEFAULT_FREQUENCY = 3600;
@@ -20,7 +52,7 @@ const AdminSources = () => {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  // Form states
+  // Form states for creating new source
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [sourceType, setSourceType] = useState<SourceType>("RSS");
@@ -28,6 +60,21 @@ const AdminSources = () => {
   const [category, setCategory] = useState("");
   const [country, setCountry] = useState("KR");
   const [language, setLanguage] = useState("ko");
+
+  // Edit dialog states
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingSource, setEditingSource] = useState<DataSource | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editUrl, setEditUrl] = useState("");
+  const [editSourceType, setEditSourceType] = useState<SourceType>("RSS");
+  const [editFrequency, setEditFrequency] = useState<string>(String(DEFAULT_FREQUENCY));
+  const [editCategory, setEditCategory] = useState("");
+  const [editCountry, setEditCountry] = useState("KR");
+  const [editLanguage, setEditLanguage] = useState("ko");
+
+  // Delete dialog states
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingSource, setDeletingSource] = useState<DataSource | null>(null);
 
   // React Query: 소스 목록 조회
   const {
@@ -126,6 +173,68 @@ const AdminSources = () => {
     },
   });
 
+  // React Query: 소스 수정 Mutation
+  const updateMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: UpdateDataSourcePayload }) => 
+      updateSource(id, payload),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['sources'], (old: typeof sourcesPage) => {
+        if (!old) return old;
+        return {
+          ...old,
+          content: old.content.map((s: DataSource) => 
+            s.id === updated.id ? updated : s
+          ),
+        };
+      });
+      
+      setEditDialogOpen(false);
+      setEditingSource(null);
+      
+      toast({
+        title: "수정 완료",
+        description: `'${updated.name}' 소스가 수정되었습니다.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "수정 실패",
+        description: error?.response?.data?.message || error?.message || "소스 수정 중 오류가 발생했습니다.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // React Query: 소스 삭제 Mutation
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => deleteSource(id),
+    onSuccess: (_, deletedId) => {
+      queryClient.setQueryData(['sources'], (old: typeof sourcesPage) => {
+        if (!old) return old;
+        return {
+          ...old,
+          content: old.content.filter((s: DataSource) => s.id !== deletedId),
+          totalElements: old.totalElements - 1,
+        };
+      });
+      
+      setDeleteDialogOpen(false);
+      setDeletingSource(null);
+      
+      toast({
+        title: "삭제 완료",
+        description: "소스가 삭제되었습니다.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "삭제 실패",
+        description: error?.response?.data?.message || error?.message || "소스 삭제 중 오류가 발생했습니다.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !url.trim()) {
@@ -158,6 +267,62 @@ const AdminSources = () => {
 
   const handleToggleActive = (source: DataSource, active: boolean) => {
     toggleActiveMutation.mutate({ id: source.id, active });
+  };
+
+  // 편집 다이얼로그 열기
+  const handleOpenEdit = (source: DataSource) => {
+    setEditingSource(source);
+    setEditName(source.name);
+    setEditUrl(source.url);
+    setEditSourceType(source.sourceType);
+    setEditFrequency(String(source.collectionFrequency || DEFAULT_FREQUENCY));
+    setEditCategory((source.metadata?.category as string) || "");
+    setEditCountry((source.metadata?.country as string) || "KR");
+    setEditLanguage((source.metadata?.language as string) || "ko");
+    setEditDialogOpen(true);
+  };
+
+  // 편집 저장
+  const handleSaveEdit = () => {
+    if (!editingSource || !editName.trim() || !editUrl.trim()) {
+      toast({
+        title: "입력 오류",
+        description: "이름과 URL을 모두 입력해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const freq = Number.parseInt(editFrequency, 10);
+    const safeFreq = Number.isFinite(freq) && freq >= 60 ? freq : DEFAULT_FREQUENCY;
+
+    const metadata: Record<string, unknown> = {};
+    if (editCategory.trim()) metadata.category = editCategory.trim();
+    if (editCountry.trim()) metadata.country = editCountry.trim();
+    if (editLanguage.trim()) metadata.language = editLanguage.trim();
+
+    const payload: UpdateDataSourcePayload = {
+      name: editName.trim(),
+      url: editUrl.trim(),
+      sourceType: editSourceType,
+      collectionFrequency: safeFreq,
+      metadata,
+    };
+
+    updateMutation.mutate({ id: editingSource.id, payload });
+  };
+
+  // 삭제 다이얼로그 열기
+  const handleOpenDelete = (source: DataSource) => {
+    setDeletingSource(source);
+    setDeleteDialogOpen(true);
+  };
+
+  // 삭제 확인
+  const handleConfirmDelete = () => {
+    if (deletingSource) {
+      deleteMutation.mutate(deletingSource.id);
+    }
   };
 
   return (
@@ -331,6 +496,7 @@ const AdminSources = () => {
                         <TableHead>타입</TableHead>
                         <TableHead>URL</TableHead>
                         <TableHead className="w-[80px] text-center">활성</TableHead>
+                        <TableHead className="w-[60px] text-center">작업</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -358,6 +524,28 @@ const AdminSources = () => {
                               disabled={toggleActiveMutation.isPending}
                             />
                           </TableCell>
+                          <TableCell className="text-center">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleOpenEdit(source)}>
+                                  <Pencil className="mr-2 h-4 w-4" />
+                                  편집
+                                </DropdownMenuItem>
+                                <DropdownMenuItem 
+                                  onClick={() => handleOpenDelete(source)}
+                                  className="text-destructive focus:text-destructive"
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  삭제
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -367,6 +555,141 @@ const AdminSources = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* 편집 다이얼로그 */}
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>소스 편집</DialogTitle>
+              <DialogDescription>
+                소스 정보를 수정합니다. 변경사항은 즉시 적용됩니다.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-name">이름</Label>
+                <Input
+                  id="edit-name"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="예: 연합뉴스 - 전체"
+                  disabled={updateMutation.isPending}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-url">URL</Label>
+                <Input
+                  id="edit-url"
+                  value={editUrl}
+                  onChange={(e) => setEditUrl(e.target.value)}
+                  placeholder="예: https://www.yna.co.kr/rss/allheadline.xml"
+                  disabled={updateMutation.isPending}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-sourceType">타입</Label>
+                  <Select
+                    value={editSourceType}
+                    onValueChange={(value) => setEditSourceType(value as SourceType)}
+                    disabled={updateMutation.isPending}
+                  >
+                    <SelectTrigger id="edit-sourceType">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="RSS">RSS</SelectItem>
+                      <SelectItem value="WEB">WEB</SelectItem>
+                      <SelectItem value="API">API</SelectItem>
+                      <SelectItem value="WEBHOOK">WEBHOOK</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-frequency">수집 주기(초)</Label>
+                  <Input
+                    id="edit-frequency"
+                    type="number"
+                    min={60}
+                    value={editFrequency}
+                    onChange={(e) => setEditFrequency(e.target.value)}
+                    disabled={updateMutation.isPending}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-category">카테고리</Label>
+                  <Input
+                    id="edit-category"
+                    value={editCategory}
+                    onChange={(e) => setEditCategory(e.target.value)}
+                    placeholder="예: 종합, 경제"
+                    disabled={updateMutation.isPending}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-country">국가</Label>
+                  <Input
+                    id="edit-country"
+                    value={editCountry}
+                    onChange={(e) => setEditCountry(e.target.value)}
+                    placeholder="KR"
+                    disabled={updateMutation.isPending}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-language">언어</Label>
+                  <Input
+                    id="edit-language"
+                    value={editLanguage}
+                    onChange={(e) => setEditLanguage(e.target.value)}
+                    placeholder="ko"
+                    disabled={updateMutation.isPending}
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setEditDialogOpen(false)}
+                disabled={updateMutation.isPending}
+              >
+                취소
+              </Button>
+              <Button onClick={handleSaveEdit} disabled={updateMutation.isPending}>
+                {updateMutation.isPending ? "저장 중..." : "저장"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* 삭제 확인 다이얼로그 */}
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>소스 삭제</AlertDialogTitle>
+              <AlertDialogDescription>
+                정말로 '{deletingSource?.name}' 소스를 삭제하시겠습니까?
+                <br />
+                이 작업은 되돌릴 수 없으며, 관련된 수집 데이터에 영향을 줄 수 있습니다.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteMutation.isPending}>
+                취소
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleConfirmDelete}
+                disabled={deleteMutation.isPending}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deleteMutation.isPending ? "삭제 중..." : "삭제"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );

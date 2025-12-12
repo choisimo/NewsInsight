@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchHistory, useSearchHistorySSE } from '@/hooks/useSearchHistory';
 import type { SearchHistoryRecord, SearchHistoryType } from '@/lib/api';
+import { updateSearchNotes } from '@/lib/api';
 import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
 
@@ -52,6 +53,11 @@ export function SearchHistoryPanel({
   const [derivedSearches, setDerivedSearches] = useState<Record<number, SearchHistoryRecord[]>>({});
   const [localHistory, setLocalHistory] = useState<SearchHistoryRecord[]>([]);
   const [newItemIds, setNewItemIds] = useState<Set<number>>(new Set());
+  
+  // Notes editing state
+  const [editingNotesId, setEditingNotesId] = useState<number | null>(null);
+  const [notesValue, setNotesValue] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
 
   // Sync local history with server history
   useEffect(() => {
@@ -169,6 +175,37 @@ export function SearchHistoryPanel({
     }
   }, [deleteSearch]);
 
+  // Handle notes editing
+  const handleStartEditNotes = useCallback((item: SearchHistoryRecord, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingNotesId(item.id);
+    setNotesValue(item.notes || '');
+  }, []);
+
+  const handleSaveNotes = useCallback(async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSavingNotes(true);
+    try {
+      const updated = await updateSearchNotes(id, notesValue);
+      setLocalHistory(prev => prev.map(item => 
+        item.id === id ? { ...item, notes: updated.notes } : item
+      ));
+      setEditingNotesId(null);
+      setNotesValue('');
+    } catch (err) {
+      console.error('Failed to save notes:', err);
+      alert('노트 저장에 실패했습니다.');
+    } finally {
+      setSavingNotes(false);
+    }
+  }, [notesValue]);
+
+  const handleCancelEditNotes = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingNotesId(null);
+    setNotesValue('');
+  }, []);
+
   // Render a single history item
   const renderHistoryItem = (item: SearchHistoryRecord, isChild = false) => {
     const isNew = newItemIds.has(item.id);
@@ -238,6 +275,19 @@ export function SearchHistoryPanel({
             </svg>
           </button>
           
+          {/* Notes button */}
+          <button
+            onClick={(e) => handleStartEditNotes(item, e)}
+            className={`p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${
+              item.notes ? 'text-amber-500' : 'text-gray-400'
+            }`}
+            title={item.notes ? '노트 편집' : '노트 추가'}
+          >
+            <svg className="w-4 h-4" fill={item.notes ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+          </button>
+          
           {onDeriveSearch && (
             <button
               onClick={(e) => {
@@ -274,6 +324,52 @@ export function SearchHistoryPanel({
           </button>
         </div>
       </div>
+      
+      {/* Notes display/edit section */}
+      {(item.notes || editingNotesId === item.id) && (
+        <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700" onClick={(e) => e.stopPropagation()}>
+          {editingNotesId === item.id ? (
+            <div className="space-y-2">
+              <textarea
+                value={notesValue}
+                onChange={(e) => setNotesValue(e.target.value)}
+                placeholder="검색에 대한 메모를 입력하세요..."
+                className="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 resize-none"
+                rows={3}
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={handleCancelEditNotes}
+                  className="px-2 py-1 text-xs rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={(e) => handleSaveNotes(item.id, e)}
+                  disabled={savingNotes}
+                  className="px-2 py-1 text-xs rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
+                >
+                  {savingNotes ? '저장 중...' : '저장'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div 
+              className="text-xs text-gray-600 dark:text-gray-400 bg-amber-50 dark:bg-amber-900/20 p-2 rounded cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/30"
+              onClick={(e) => handleStartEditNotes(item, e)}
+              title="클릭하여 편집"
+            >
+              <div className="flex items-start gap-1">
+                <svg className="w-3 h-3 mt-0.5 flex-shrink-0 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                <span className="whitespace-pre-wrap">{item.notes}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       
       {/* Expanded: Show derived searches */}
       {expandedId === item.id && derivedSearches[item.id] && derivedSearches[item.id].length > 0 && (

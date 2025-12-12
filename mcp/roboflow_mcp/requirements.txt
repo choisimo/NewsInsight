@@ -1,0 +1,8 @@
+mcp
+requests
+roboflow
+inference-sdk
+Pillow
+python-dotenv
+aiohttp
+aiofiles
