@@ -1,11 +1,20 @@
 # Core dependencies
 browser-use>=0.1.40
 playwright>=1.49.0
+
+# LLM Providers
 langchain-openai>=0.2.14
 langchain-anthropic>=0.3.0
+langchain-google-genai>=2.0.0
+langchain-ollama>=0.2.0
+langchain-core>=0.3.0
 
 # Kafka
 aiokafka>=0.12.0
+
+# REST API (browser-agent integration)
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
 
 # Configuration & Validation
 pydantic>=2.10.0
@@ -14,6 +23,9 @@ pydantic-settings>=2.6.0
 # HTTP Client
 aiohttp>=3.11.0
 httpx>=0.28.0
+
+# State Persistence
+redis>=5.0.0
 
 # Observability
 prometheus-client>=0.21.0

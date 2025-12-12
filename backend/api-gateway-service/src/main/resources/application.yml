@@ -3,36 +3,46 @@ spring:
     name: api-gateway
   
   config:
-    # Consul에서 설정 가져오기
-    import: "consul:"
+    # Consul에서 설정 가져오기 (optional - Consul 없어도 시작 가능)
+    import: ${SPRING_CONFIG_IMPORT:optional:consul:}
   
   cloud:
     consul:
+      enabled: ${CONSUL_ENABLED:true}
       host: ${CONSUL_HOST:localhost}
       port: ${CONSUL_PORT:8500}
       config:
-        enabled: true
+        enabled: ${CONSUL_CONFIG_ENABLED:true}
         # 기존 Consul KV 구조와 일치
         prefix: config
         default-context: ${spring.application.name}
         format: PROPERTIES
-        # Fail-Fast: Consul 연결 실패 시 즉시 종료
-        fail-fast: true
+        # Fail-Fast 비활성화: Consul 연결 실패해도 시작
+        fail-fast: ${CONSUL_FAIL_FAST:false}
       discovery:
-        enabled: true
+        enabled: ${CONSUL_DISCOVERY_ENABLED:true}
         health-check-path: /actuator/health
         health-check-interval: 10s
         instance-id: ${spring.application.name}:${random.value}
         prefer-ip-address: true
+        # 서비스 등록 실패해도 시작
+        fail-fast: false
     inetutils:
       preferred-networks:
         - 172.20
 
     gateway:
       routes:
+        # ===========================================
+        # Collector Service Routes
+        # COLLECTOR_SERVICE_URL 환경변수로 직접 URL 지정 가능
+        # Consul 사용 시: lb://collector-service (기본값)
+        # Consul 미사용 시: http://collector-service:8081
+        # ===========================================
+        
         # Collector 서비스 - 데이터 API (DataController)
         - id: collector-data
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/data/**
           # NOTE: Redis RateLimiter 비활성화 - Redis 없이도 동작하도록 설정
@@ -45,53 +55,56 @@ spring:
 
         # Collector 서비스 - 소스 관리 (SourceController)
         - id: collector-sources
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/sources/**
 
         # Collector 서비스 - 수집 작업 (CollectionController)
         - id: collector-collections
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/collections/**
 
         # Articles & Analysis - 프론트엔드 API
         - id: articles-root
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/articles
 
         - id: articles-alias
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/articles/**
 
         - id: analysis-root
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/analysis
 
         - id: analysis-alias
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/analysis/**
 
         # Search API - 통합 검색 (SSE 스트리밍)
         # NOTE: SSE 스트리밍은 RateLimiter와 호환성 문제가 있어 비활성화
         - id: search-api
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/search/**
 
         # Search History API - 검색 기록 관리
         - id: search-history
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/search-history/**
+          metadata:
+            # SSE 스트림 연결을 위한 긴 타임아웃 (5분)
+            response-timeout: 300000
 
         # Search Template API - SmartSearch 검색 템플릿 관리
         - id: search-templates
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/search-templates/**
 
@@ -99,19 +112,19 @@ spring:
         # NOTE: Gateway 자체 FrontendConfigController가 우선 처리됨
         # 이 라우트는 fallback으로 유지 (collector-service에도 ConfigController가 있을 경우)
         - id: config-api
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/config/**
 
         # AI Orchestration - AI 분석 요청 (collector-service AiOrchestrationController)
         - id: collector-ai
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/ai/**
 
         # Dashboard Events - SSE 실시간 업데이트 (collector-service DashboardEventsController)
         - id: collector-events
-          uri: lb://collector-service
+          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
           predicates:
             - Path=/api/v1/events/**
           metadata:

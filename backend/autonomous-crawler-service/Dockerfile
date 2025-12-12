@@ -83,14 +83,24 @@ ENV KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
     METRICS_ENABLED=true \
     METRICS_PORT=9090 \
     LOG_LEVEL=INFO \
-    LOG_FORMAT=json
+    LOG_FORMAT=json \
+    # New environment variables for hybrid mode
+    SERVICE_MODE=kafka \
+    API_PORT=8030 \
+    USE_DB_PROVIDERS=true \
+    COLLECTOR_SERVICE_URL=http://collector:8002
 
-# Expose metrics port
-EXPOSE 9090
+# Expose ports: metrics (9090) + REST API (8030)
+EXPOSE 9090 8030
 
-# Health check
+# Health check - check both metrics and API based on mode
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import socket; s=socket.socket(); s.connect(('localhost', 9090)); s.close()" || exit 1
+    CMD python -c "import socket; s=socket.socket(); s.connect(('localhost', 9090)); s.close()" || \
+        python -c "import socket; s=socket.socket(); s.connect(('localhost', 8030)); s.close()" || exit 1
 
-# Run the service
+# Run the service (mode controlled by SERVICE_MODE env var)
+# Use --mode argument or SERVICE_MODE env var:
+#   kafka  - Kafka consumer only (default)
+#   api    - REST API only  
+#   hybrid - Both Kafka + REST API
 CMD ["python", "-m", "src.main"]

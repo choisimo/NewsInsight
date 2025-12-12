@@ -12,6 +12,8 @@ import lombok.NoArgsConstructor;
 /**
  * Configuration for browser-based AI agent exploration.
  * Embedded in DataSource for BROWSER_AGENT source type.
+ * 
+ * autonomous-crawler-service의 BrowserTaskMessage와 매핑됩니다.
  */
 @Embeddable
 @Data
@@ -84,8 +86,13 @@ public class BrowserAgentConfig {
     @Column(name = "agent_excluded_domains", columnDefinition = "TEXT")
     private String excludedDomains;
 
+    // ========================================
+    // 기본 프리셋 팩토리 메서드
+    // ========================================
+
     /**
      * Create default config for news exploration.
+     * 일반적인 뉴스 기사 수집에 적합한 설정.
      */
     public static BrowserAgentConfig forNewsExploration() {
         return BrowserAgentConfig.builder()
@@ -100,6 +107,7 @@ public class BrowserAgentConfig {
 
     /**
      * Create config for deep single-page extraction.
+     * 단일 페이지에서 상세 정보 추출에 적합한 설정.
      */
     public static BrowserAgentConfig forSinglePageExtraction() {
         return BrowserAgentConfig.builder()
@@ -110,5 +118,135 @@ public class BrowserAgentConfig {
                 .extractStructured(true)
                 .captureScreenshots(false)
                 .build();
+    }
+
+    // ========================================
+    // 뉴스 특화 프리셋 팩토리 메서드 (신규)
+    // ========================================
+
+    /**
+     * Create config for breaking news monitoring.
+     * 속보/긴급 뉴스 우선 수집에 적합한 설정.
+     */
+    public static BrowserAgentConfig forBreakingNews() {
+        return BrowserAgentConfig.builder()
+                .maxDepth(1)
+                .maxPages(20)
+                .budgetSeconds(120)
+                .policy(BrowserAgentPolicy.NEWS_BREAKING)
+                .extractStructured(true)
+                .captureScreenshots(false)
+                .build();
+    }
+
+    /**
+     * Create config for news archive exploration.
+     * 과거 기사 아카이브 수집에 적합한 설정.
+     */
+    public static BrowserAgentConfig forNewsArchive() {
+        return BrowserAgentConfig.builder()
+                .maxDepth(3)
+                .maxPages(100)
+                .budgetSeconds(600) // 10분
+                .policy(BrowserAgentPolicy.NEWS_ARCHIVE)
+                .extractStructured(true)
+                .captureScreenshots(false)
+                .build();
+    }
+
+    /**
+     * Create config for opinion/editorial collection.
+     * 오피니언/칼럼/사설 수집에 적합한 설정.
+     */
+    public static BrowserAgentConfig forOpinionContent() {
+        return BrowserAgentConfig.builder()
+                .maxDepth(2)
+                .maxPages(30)
+                .budgetSeconds(180)
+                .policy(BrowserAgentPolicy.NEWS_OPINION)
+                .extractStructured(true)
+                .captureScreenshots(false)
+                .build();
+    }
+
+    /**
+     * Create config for local news collection.
+     * 지역 뉴스 수집에 적합한 설정.
+     */
+    public static BrowserAgentConfig forLocalNews() {
+        return BrowserAgentConfig.builder()
+                .maxDepth(2)
+                .maxPages(40)
+                .budgetSeconds(240)
+                .policy(BrowserAgentPolicy.NEWS_LOCAL)
+                .extractStructured(true)
+                .captureScreenshots(false)
+                .build();
+    }
+
+    /**
+     * Create config for topic-focused news collection.
+     * 특정 키워드/토픽 중심 수집에 적합한 설정.
+     * 
+     * @param keywords Comma-separated focus keywords
+     */
+    public static BrowserAgentConfig forFocusedTopic(String keywords) {
+        return BrowserAgentConfig.builder()
+                .maxDepth(2)
+                .maxPages(50)
+                .budgetSeconds(300)
+                .policy(BrowserAgentPolicy.FOCUSED_TOPIC)
+                .focusKeywords(keywords)
+                .extractStructured(true)
+                .captureScreenshots(false)
+                .build();
+    }
+
+    /**
+     * Create config for domain-wide exploration.
+     * 전체 도메인 탐색에 적합한 설정.
+     */
+    public static BrowserAgentConfig forDomainExploration() {
+        return BrowserAgentConfig.builder()
+                .maxDepth(3)
+                .maxPages(100)
+                .budgetSeconds(600)
+                .policy(BrowserAgentPolicy.DOMAIN_WIDE)
+                .extractStructured(true)
+                .captureScreenshots(false)
+                .build();
+    }
+
+    // ========================================
+    // 유틸리티 메서드
+    // ========================================
+
+    /**
+     * Create a copy of this config with a different policy.
+     * 
+     * @param newPolicy The new policy to use
+     * @return A new BrowserAgentConfig with the updated policy
+     */
+    public BrowserAgentConfig withPolicy(BrowserAgentPolicy newPolicy) {
+        return BrowserAgentConfig.builder()
+                .maxDepth(this.maxDepth)
+                .maxPages(this.maxPages)
+                .budgetSeconds(this.budgetSeconds)
+                .policy(newPolicy)
+                .focusKeywords(this.focusKeywords)
+                .customPrompt(this.customPrompt)
+                .captureScreenshots(this.captureScreenshots)
+                .extractStructured(this.extractStructured)
+                .excludedDomains(this.excludedDomains)
+                .build();
+    }
+
+    /**
+     * Check if this config uses a news-focused policy.
+     * 
+     * @return true if the policy is news-focused
+     */
+    public boolean isNewsFocused() {
+        return policy != null && policy.isNewsFocused();
     }
 }

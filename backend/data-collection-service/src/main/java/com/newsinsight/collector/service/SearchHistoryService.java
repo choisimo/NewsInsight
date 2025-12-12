@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Service for managing search history.
@@ -38,6 +39,7 @@ public class SearchHistoryService {
     /**
      * Send search result to Kafka for async persistence.
      * This is the primary method to save search results asynchronously.
+     * Throws IllegalStateException if Kafka send fails.
      */
     public void sendToKafka(SearchHistoryMessage message) {
         if (message.getTimestamp() == null) {
@@ -46,17 +48,15 @@ public class SearchHistoryService {
         
         String key = message.getExternalId() != null ? message.getExternalId() : String.valueOf(message.getTimestamp());
         
-        searchHistoryKafkaTemplate.send(SEARCH_HISTORY_TOPIC, key, message)
-                .whenComplete((result, ex) -> {
-                    if (ex != null) {
-                        log.error("Failed to send search history to Kafka: {}", ex.getMessage());
-                    } else {
-                        log.debug("Search history sent to Kafka: key={}, topic={}, partition={}, offset={}",
-                                key, result.getRecordMetadata().topic(),
-                                result.getRecordMetadata().partition(),
-                                result.getRecordMetadata().offset());
-                    }
-                });
+        try {
+            searchHistoryKafkaTemplate.send(SEARCH_HISTORY_TOPIC, key, message)
+                    .get(5, TimeUnit.SECONDS);  // 동기 대기 + 5초 타임아웃
+            
+            log.debug("Search history sent to Kafka: key={}, topic={}", key, SEARCH_HISTORY_TOPIC);
+        } catch (Exception ex) {
+            log.error("Failed to send search history to Kafka: key={}, error={}", key, ex.getMessage(), ex);
+            throw new IllegalStateException("Failed to queue search history for saving", ex);
+        }
     }
 
     /**

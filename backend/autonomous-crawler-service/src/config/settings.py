@@ -143,7 +143,7 @@ class SearchSettings(BaseSettings):
         default="",
         description="Perplexity API key",
     )
-    
+
     # Configuration
     timeout: float = Field(
         default=30.0,
@@ -277,6 +277,45 @@ class CaptchaSettings(BaseSettings):
     )
 
 
+class RedisSettings(BaseSettings):
+    """Redis connection settings for task state persistence."""
+
+    model_config = SettingsConfigDict(env_prefix="REDIS_")
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable Redis for task state persistence",
+    )
+    url: str = Field(
+        default="redis://localhost:6379/4",
+        description="Redis connection URL",
+    )
+    prefix: str = Field(
+        default="autonomous_crawler",
+        description="Key prefix for Redis entries",
+    )
+    result_ttl_hours: int = Field(
+        default=48,
+        description="Task result TTL in hours",
+    )
+    socket_timeout: float = Field(
+        default=5.0,
+        description="Socket timeout in seconds",
+    )
+    connection_timeout: float = Field(
+        default=5.0,
+        description="Connection timeout in seconds",
+    )
+    max_connections: int = Field(
+        default=10,
+        description="Maximum Redis connections in pool",
+    )
+    retry_on_timeout: bool = Field(
+        default=True,
+        description="Retry operations on timeout",
+    )
+
+
 class MetricsSettings(BaseSettings):
     """Prometheus metrics settings."""
 
@@ -327,6 +366,7 @@ class Settings(BaseSettings):
     stealth: StealthSettings = Field(default_factory=StealthSettings)
     captcha: CaptchaSettings = Field(default_factory=CaptchaSettings)
     camoufox: CamoufoxSettings = Field(default_factory=CamoufoxSettings)
+    redis: RedisSettings = Field(default_factory=RedisSettings)
     metrics: MetricsSettings = Field(default_factory=MetricsSettings)
 
 

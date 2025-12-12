@@ -12,6 +12,8 @@ import com.newsinsight.collector.repository.ArticleAnalysisRepository;
 import com.newsinsight.collector.repository.ArticleDiscussionRepository;
 import com.newsinsight.collector.repository.CollectedDataRepository;
 import com.newsinsight.collector.repository.DataSourceRepository;
+import com.newsinsight.collector.service.search.HybridSearchService;
+import com.newsinsight.collector.service.search.HybridRankingService.RankedResult;
 import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -58,6 +60,7 @@ public class UnifiedSearchService {
     private final Crawl4aiClient crawl4aiClient;
     private final CrawlSearchService crawlSearchService;
     private final UnifiedSearchEventService unifiedSearchEventService;
+    private final HybridSearchService hybridSearchService;
 
     private static final int SNIPPET_MAX_LENGTH = 200;
     private static final int MAX_DB_RESULTS = 20;
@@ -170,10 +173,114 @@ public class UnifiedSearchService {
     }
 
     // ============================================
-    // Database Search
+    // Database Search (with Hybrid Search integration)
     // ============================================
 
     private Flux<SearchEvent> searchDatabase(String query, String window) {
+        // Use hybrid search if available, otherwise fall back to keyword-only search
+        if (hybridSearchService.isEnabled() && hybridSearchService.isSemanticSearchAvailable()) {
+            return searchDatabaseHybrid(query, window);
+        }
+        return searchDatabaseKeywordOnly(query, window);
+    }
+
+    /**
+     * Hybrid search: combines keyword + semantic search with RRF ranking
+     */
+    private Flux<SearchEvent> searchDatabaseHybrid(String query, String window) {
+        return Flux.create(sink -> {
+            try {
+                sink.next(SearchEvent.builder()
+                        .eventType("status")
+                        .source("database")
+                        .message("하이브리드 검색 중 (키워드 + 시맨틱)...")
+                        .build());
+
+                hybridSearchService.search(query, window)
+                        .subscribe(
+                                hybridResult -> {
+                                    log.info("Hybrid search completed: keyword={}, semantic={}, total={}",
+                                            hybridResult.getKeywordResultCount(),
+                                            hybridResult.getSemanticResultCount(),
+                                            hybridResult.getTotalResultCount());
+
+                                    // Batch load analysis data for hybrid results
+                                    List<Long> articleIds = hybridResult.getResults().stream()
+                                            .map(r -> {
+                                                try {
+                                                    return Long.parseLong(r.getId());
+                                                } catch (NumberFormatException e) {
+                                                    return null;
+                                                }
+                                            })
+                                            .filter(id -> id != null)
+                                            .toList();
+
+                                    Map<Long, ArticleAnalysis> analysisMap = articleIds.isEmpty()
+                                            ? Map.of()
+                                            : articleAnalysisRepository.findByArticleIdIn(articleIds).stream()
+                                                    .collect(Collectors.toMap(ArticleAnalysis::getArticleId, Function.identity()));
+
+                                    Map<Long, ArticleDiscussion> discussionMap = articleIds.isEmpty()
+                                            ? Map.of()
+                                            : articleDiscussionRepository.findByArticleIdIn(articleIds).stream()
+                                                    .collect(Collectors.toMap(ArticleDiscussion::getArticleId, Function.identity()));
+
+                                    int count = 0;
+                                    for (RankedResult rankedResult : hybridResult.getResults()) {
+                                        Long articleId = null;
+                                        try {
+                                            articleId = Long.parseLong(rankedResult.getId());
+                                        } catch (NumberFormatException ignored) {}
+
+                                        ArticleAnalysis analysis = articleId != null ? analysisMap.get(articleId) : null;
+                                        ArticleDiscussion discussion = articleId != null ? discussionMap.get(articleId) : null;
+
+                                        SearchResult result = convertRankedResultToSearchResult(rankedResult, analysis, discussion);
+                                        sink.next(SearchEvent.builder()
+                                                .eventType("result")
+                                                .source("database")
+                                                .result(result)
+                                                .build());
+                                        count++;
+                                    }
+
+                                    // Include search metadata in complete message
+                                    String message = String.format("하이브리드 검색 완료 (키워드: %d, 시맨틱: %d, RRF 융합: %d, %dms)",
+                                            hybridResult.getKeywordResultCount(),
+                                            hybridResult.getSemanticResultCount(),
+                                            hybridResult.getTotalResultCount(),
+                                            hybridResult.getSearchTimeMs());
+
+                                    sink.next(SearchEvent.builder()
+                                            .eventType("complete")
+                                            .source("database")
+                                            .message(message)
+                                            .totalCount(count)
+                                            .build());
+
+                                    sink.complete();
+                                },
+                                error -> {
+                                    log.error("Hybrid search failed, falling back to keyword search: {}", error.getMessage());
+                                    // Fall back to keyword-only search on error
+                                    searchDatabaseKeywordOnly(query, window)
+                                            .subscribe(sink::next, sink::error, sink::complete);
+                                }
+                        );
+            } catch (Exception e) {
+                log.error("Hybrid search initialization failed: {}", e.getMessage());
+                // Fall back to keyword-only search
+                searchDatabaseKeywordOnly(query, window)
+                        .subscribe(sink::next, sink::error, sink::complete);
+            }
+        });
+    }
+
+    /**
+     * Keyword-only search (original implementation)
+     */
+    private Flux<SearchEvent> searchDatabaseKeywordOnly(String query, String window) {
         return Flux.create(sink -> {
             try {
                 sink.next(SearchEvent.builder()
@@ -291,6 +398,66 @@ public class UnifiedSearchService {
             builder.hasDiscussion(false);
         }
         
+        return builder.build();
+    }
+
+    /**
+     * Convert RankedResult from hybrid search to SearchResult
+     */
+    private SearchResult convertRankedResultToSearchResult(RankedResult rankedResult, ArticleAnalysis analysis, ArticleDiscussion discussion) {
+        // Determine source label based on the sources that found this result
+        String sourceLabel = "뉴스";
+        if (rankedResult.getSources() != null && !rankedResult.getSources().isEmpty()) {
+            if (rankedResult.getSources().contains("semantic") && rankedResult.getSources().contains("keyword")) {
+                sourceLabel = "하이브리드 검색";
+            } else if (rankedResult.getSources().contains("semantic")) {
+                sourceLabel = "시맨틱 검색";
+            } else if (rankedResult.getSources().contains("keyword")) {
+                sourceLabel = "키워드 검색";
+            }
+        }
+
+        SearchResult.SearchResultBuilder builder = SearchResult.builder()
+                .id(rankedResult.getId())
+                .source("database")
+                .sourceLabel(sourceLabel)
+                .title(rankedResult.getTitle())
+                .snippet(rankedResult.getSnippet())
+                .content(rankedResult.getContent())
+                .url(rankedResult.getUrl())
+                .publishedAt(rankedResult.getPublishedAt())
+                .relevanceScore(rankedResult.getRrfScore());  // Use RRF score as relevance
+
+        // 분석 결과 추가
+        if (analysis != null) {
+            builder.analyzed(true)
+                    .analysisStatus(analysis.getFullyAnalyzed() != null && analysis.getFullyAnalyzed()
+                            ? "complete" : "partial")
+                    .reliabilityScore(analysis.getReliabilityScore())
+                    .reliabilityGrade(analysis.getReliabilityGrade())
+                    .reliabilityColor(analysis.getReliabilityColor())
+                    .sentimentLabel(analysis.getSentimentLabel())
+                    .sentimentScore(analysis.getSentimentScore())
+                    .biasLabel(analysis.getBiasLabel())
+                    .biasScore(analysis.getBiasScore())
+                    .factcheckStatus(analysis.getFactcheckStatus())
+                    .misinfoRisk(analysis.getMisinfoRisk())
+                    .riskTags(analysis.getRiskTags())
+                    .topics(analysis.getTopics());
+        } else {
+            builder.analyzed(false)
+                    .analysisStatus("pending");
+        }
+
+        // 여론 분석 결과 추가
+        if (discussion != null) {
+            builder.hasDiscussion(true)
+                    .totalCommentCount(discussion.getTotalCommentCount())
+                    .discussionSentiment(discussion.getOverallSentiment());
+        } else {
+            builder.hasDiscussion(false);
+        }
+
         return builder.build();
     }
 
@@ -622,6 +789,84 @@ public class UnifiedSearchService {
     }
 
     private void executeDbSearch(String jobId, String query, String window, AtomicInteger totalResults) {
+        // Use hybrid search if available
+        if (hybridSearchService.isEnabled() && hybridSearchService.isSemanticSearchAvailable()) {
+            executeDbSearchHybrid(jobId, query, window, totalResults);
+        } else {
+            executeDbSearchKeywordOnly(jobId, query, window, totalResults);
+        }
+    }
+
+    private void executeDbSearchHybrid(String jobId, String query, String window, AtomicInteger totalResults) {
+        try {
+            unifiedSearchEventService.publishStatusUpdate(jobId, "database", "하이브리드 검색 중 (키워드 + 시맨틱)...");
+
+            HybridSearchService.HybridSearchResult hybridResult = hybridSearchService.search(query, window).block();
+            
+            if (hybridResult == null || hybridResult.getResults().isEmpty()) {
+                log.info("Hybrid search returned no results for job: {}, falling back to keyword search", jobId);
+                executeDbSearchKeywordOnly(jobId, query, window, totalResults);
+                return;
+            }
+
+            log.info("Hybrid search completed for job {}: keyword={}, semantic={}, fused={}",
+                    jobId, hybridResult.getKeywordResultCount(),
+                    hybridResult.getSemanticResultCount(),
+                    hybridResult.getTotalResultCount());
+
+            // Batch load analysis data for hybrid results
+            List<Long> articleIds = hybridResult.getResults().stream()
+                    .map(r -> {
+                        try {
+                            return Long.parseLong(r.getId());
+                        } catch (NumberFormatException e) {
+                            return null;
+                        }
+                    })
+                    .filter(id -> id != null)
+                    .toList();
+
+            Map<Long, ArticleAnalysis> analysisMap = articleIds.isEmpty()
+                    ? Map.of()
+                    : articleAnalysisRepository.findByArticleIdIn(articleIds).stream()
+                            .collect(Collectors.toMap(ArticleAnalysis::getArticleId, Function.identity()));
+
+            Map<Long, ArticleDiscussion> discussionMap = articleIds.isEmpty()
+                    ? Map.of()
+                    : articleDiscussionRepository.findByArticleIdIn(articleIds).stream()
+                            .collect(Collectors.toMap(ArticleDiscussion::getArticleId, Function.identity()));
+
+            int count = 0;
+            for (RankedResult rankedResult : hybridResult.getResults()) {
+                Long articleId = null;
+                try {
+                    articleId = Long.parseLong(rankedResult.getId());
+                } catch (NumberFormatException ignored) {}
+
+                ArticleAnalysis analysis = articleId != null ? analysisMap.get(articleId) : null;
+                ArticleDiscussion discussion = articleId != null ? discussionMap.get(articleId) : null;
+
+                SearchResult result = convertRankedResultToSearchResult(rankedResult, analysis, discussion);
+                unifiedSearchEventService.publishResult(jobId, "database", result);
+                count++;
+                totalResults.incrementAndGet();
+            }
+
+            String message = String.format("하이브리드 검색 완료 (키워드: %d, 시맨틱: %d, RRF 융합: %d, %dms)",
+                    hybridResult.getKeywordResultCount(),
+                    hybridResult.getSemanticResultCount(),
+                    hybridResult.getTotalResultCount(),
+                    hybridResult.getSearchTimeMs());
+
+            unifiedSearchEventService.publishSourceComplete(jobId, "database", message, count);
+
+        } catch (Exception e) {
+            log.error("Hybrid search failed for job: {}, falling back to keyword search: {}", jobId, e.getMessage());
+            executeDbSearchKeywordOnly(jobId, query, window, totalResults);
+        }
+    }
+
+    private void executeDbSearchKeywordOnly(String jobId, String query, String window, AtomicInteger totalResults) {
         try {
             unifiedSearchEventService.publishStatusUpdate(jobId, "database", "저장된 뉴스에서 검색 중...");
             

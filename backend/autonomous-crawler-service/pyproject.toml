@@ -21,19 +21,39 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
+    # Core browser automation
     "browser-use>=0.1.40",
     "playwright>=1.49.0",
+    
+    # LLM providers
     "langchain-openai>=0.2.14",
     "langchain-anthropic>=0.3.0",
+    "langchain-google-genai>=2.0.0",
+    "langchain-ollama>=0.2.0",
+    "langchain-core>=0.3.0",
+    
+    # Kafka messaging
     "aiokafka>=0.12.0",
+    
+    # REST API (browser-agent integration)
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    
+    # Data validation & config
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
+    
+    # HTTP clients
     "aiohttp>=3.11.0",
+    "httpx>=0.28.0",
+    
+    # Observability
     "prometheus-client>=0.21.0",
     "structlog>=24.4.0",
     "python-json-logger>=2.0.7",
+    
+    # Utilities
     "tenacity>=9.0.0",
-    "httpx>=0.28.0",
 ]
 
 [project.optional-dependencies]

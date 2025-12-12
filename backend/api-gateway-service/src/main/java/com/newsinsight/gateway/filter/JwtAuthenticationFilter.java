@@ -8,9 +8,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
+import org.springframework.http.HttpCookie;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
@@ -23,6 +25,8 @@ import java.util.List;
  * 
  * Python FastAPI의 auth_middleware와 동일한 기능 구현
  * - Authorization 헤더에서 Bearer 토큰 추출
+ * - Cookie에서 access_token 추출 (SSE/EventSource 지원)
+ * - 쿼리 파라미터에서 token 추출 (fallback)
  * - JWT 토큰 검증 (서명, 만료 시간 등)
  * - 사용자 정보를 헤더에 추가하여 다운스트림 서비스로 전달
  */
@@ -43,11 +47,15 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         "/api/v1/collections",
         "/api/v1/data",
         "/api/v1/search",
-        "/api/browser-use",  // Browser-Use API (gateway path)
-        "/api/ml-addons",    // ML Add-ons API (sentiment, factcheck, bias)
-        "/browse",           // Browser-Use API (direct path - legacy)
-        "/jobs",             // Browser-Use Jobs (direct path - legacy)
-        "/ws"                // WebSocket (direct path - legacy)
+        "/api/v1/events",        // SSE 이벤트 스트림 (EventSource는 헤더 전송 불가)
+        "/api/v1/search-history",
+        "/api/v1/search-templates",
+        "/api/v1/admin",         // Admin Dashboard (자체 인증 처리)
+        "/api/browser-use",      // Browser-Use API (gateway path)
+        "/api/ml-addons",        // ML Add-ons API (sentiment, factcheck, bias)
+        "/browse",               // Browser-Use API (direct path - legacy)
+        "/jobs",                 // Browser-Use Jobs (direct path - legacy)
+        "/ws"                    // WebSocket (direct path - legacy)
     );
     
     @Value("${JWT_SECRET_KEY:default-secret-key-please-change-in-consul}")
@@ -66,15 +74,14 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
         
-        String authHeader = exchange.getRequest().getHeaders().getFirst("Authorization");
+        // 토큰 추출 (우선순위: Authorization 헤더 > Cookie > Query Parameter)
+        String token = extractToken(exchange);
         
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            log.warn("Missing or invalid Authorization header for path: {}", path);
+        if (token == null) {
+            log.warn("No valid token found for path: {}", path);
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
         }
-        
-        String token = authHeader.substring(7);
         
         try {
             // JWT 토큰 파싱 및 검증
@@ -103,6 +110,39 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
         }
+    }
+    
+    /**
+     * 여러 소스에서 JWT 토큰 추출
+     * 우선순위:
+     * 1. Authorization 헤더 (Bearer token)
+     * 2. Cookie (access_token)
+     * 3. Query Parameter (token)
+     */
+    private String extractToken(ServerWebExchange exchange) {
+        // 1. Authorization 헤더에서 추출
+        String authHeader = exchange.getRequest().getHeaders().getFirst("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            log.debug("Token extracted from Authorization header");
+            return authHeader.substring(7);
+        }
+        
+        // 2. Cookie에서 추출 (SSE/EventSource 지원)
+        MultiValueMap<String, HttpCookie> cookies = exchange.getRequest().getCookies();
+        HttpCookie accessTokenCookie = cookies.getFirst("access_token");
+        if (accessTokenCookie != null && !accessTokenCookie.getValue().isEmpty()) {
+            log.debug("Token extracted from access_token cookie");
+            return accessTokenCookie.getValue();
+        }
+        
+        // 3. Query Parameter에서 추출 (fallback)
+        String queryToken = exchange.getRequest().getQueryParams().getFirst("token");
+        if (queryToken != null && !queryToken.isEmpty()) {
+            log.debug("Token extracted from query parameter");
+            return queryToken;
+        }
+        
+        return null;
     }
     
     @Override

@@ -6,11 +6,18 @@ from enum import Enum
 class CrawlPolicy(Enum):
     """Exploration policies for autonomous crawling."""
 
+    # 기본 정책
     FOCUSED_TOPIC = "focused_topic"
     DOMAIN_WIDE = "domain_wide"
     NEWS_ONLY = "news_only"
     CROSS_DOMAIN = "cross_domain"
     SINGLE_PAGE = "single_page"
+
+    # 뉴스 특화 정책 (신규)
+    NEWS_BREAKING = "news_breaking"  # 속보/긴급 뉴스 우선
+    NEWS_ARCHIVE = "news_archive"  # 과거 기사 아카이브 수집
+    NEWS_OPINION = "news_opinion"  # 오피니언/칼럼 수집
+    NEWS_LOCAL = "news_local"  # 지역 뉴스 특화
 
 
 # Base system prompt for all policies
@@ -36,6 +43,17 @@ Your goal is to navigate websites, identify valuable content, and extract struct
 - Avoid external links unless specifically allowed by the policy
 - Skip links to media files (images, PDFs, videos)
 - Skip pagination if you've already seen the content pattern
+
+## Output Format:
+For each article extracted, use this format:
+---ARTICLE_START---
+URL: [article URL]
+TITLE: [headline]
+AUTHOR: [author name if found]
+PUBLISHED_AT: [publication date in ISO format if found]
+CATEGORY: [category/section if identified]
+CONTENT: [full article text]
+---ARTICLE_END---
 """
 
 POLICY_PROMPTS = {
@@ -96,6 +114,70 @@ Extract content only from the seed URL without following any links.
 - Identify any embedded content or data on the page
 - This is a single-page extraction task only
 """,
+    CrawlPolicy.NEWS_BREAKING: """
+## Policy: NEWS_BREAKING
+Priority collection of breaking news and urgent updates.
+
+### Specific Instructions:
+- Look for visual indicators of breaking news:
+  - Labels: "속보", "Breaking", "긴급", "단독", "Flash", "Urgent"
+  - Red or highlighted text, special formatting
+  - Pinned or featured articles at the top
+- Prioritize articles published in the last few hours
+- Extract the FULL content of breaking news articles
+- Note the exact publication time if available
+- Skip older news and evergreen content
+- Look for live update sections or real-time feeds
+- Mark each article as breaking: true in metadata
+""",
+    CrawlPolicy.NEWS_ARCHIVE: """
+## Policy: NEWS_ARCHIVE
+Historical article collection from archives.
+
+### Specific Instructions:
+- Navigate through pagination and archive pages
+- Look for "이전 기사", "더보기", "Load More" buttons
+- Accept older publication dates (weeks, months, or years old)
+- Follow links to category archives and date-based listings
+- Collect articles systematically by date or category
+- Note the original publication date accurately
+- Skip duplicate or redirected articles
+- Be patient with slower-loading archive pages
+""",
+    CrawlPolicy.NEWS_OPINION: """
+## Policy: NEWS_OPINION
+Focus on opinion pieces, editorials, and columns.
+
+### Specific Instructions:
+- Look for opinion/editorial sections:
+  - "오피니언", "칼럼", "사설", "Opinion", "Editorial", "Column"
+  - Author-focused pages with byline photos
+- Identify opinion content markers:
+  - Personal pronouns and subjective language
+  - Author bio sections
+  - Regular column series
+- Extract author information prominently
+- Mark content as opinion: true in metadata
+- Note if the author is a regular columnist
+- Skip straight news reporting
+""",
+    CrawlPolicy.NEWS_LOCAL: """
+## Policy: NEWS_LOCAL
+Local and regional news collection.
+
+### Specific Instructions:
+- Focus on local news sections:
+  - "지역", "Local", geographic region names
+  - City or province-specific categories
+- Look for location markers in articles:
+  - City names, district names
+  - Local government references
+  - Regional business news
+- Prioritize community-focused stories
+- Note the geographic focus of each article
+- Skip national or international news
+- Include local events and announcements
+""",
 }
 
 
@@ -143,7 +225,7 @@ def get_policy_prompt(
         prompt_parts.append(f"""
 ## Excluded Domains:
 Do NOT visit or follow links to these domains:
-{chr(10).join(f'- {d}' for d in excluded_domains)}
+{chr(10).join(f"- {d}" for d in excluded_domains)}
 """)
 
     # Add custom instructions if provided
@@ -177,4 +259,75 @@ Return the extracted content in the following format:
 5. SUMMARY: A brief 2-3 sentence summary of the article
 
 If this is not an article page, indicate what type of page it is.
+"""
+
+
+def get_news_list_extraction_prompt(url: str, max_articles: int = 20) -> str:
+    """
+    Generate prompt for extracting article list from a news section page.
+
+    Args:
+        url: The news section/category URL
+        max_articles: Maximum number of articles to extract
+
+    Returns:
+        Task prompt for list extraction
+    """
+    return f"""
+Extract the list of news articles from this page: {url}
+
+Find up to {max_articles} news articles and return each in this format:
+---ARTICLE_LINK---
+TITLE: [article headline]
+URL: [full article URL]
+SUMMARY: [brief description or lead text if visible]
+PUBLISHED_AT: [date if shown]
+THUMBNAIL: [image URL if present]
+---END_LINK---
+
+Focus on:
+- Main content area article links
+- Skip navigation, ads, and sidebar widgets
+- Include only actual news article links
+- Preserve the order as shown on the page
+"""
+
+
+def get_rss_discovery_prompt(url: str) -> str:
+    """
+    Generate prompt for discovering RSS/Atom feeds.
+
+    Args:
+        url: The website URL to search for feeds
+
+    Returns:
+        Task prompt for RSS discovery
+    """
+    return f"""
+Find all RSS and Atom feeds available on this website: {url}
+
+Search in these locations:
+1. HTML head section:
+   - <link rel="alternate" type="application/rss+xml" ...>
+   - <link rel="alternate" type="application/atom+xml" ...>
+2. Common feed paths:
+   - /feed, /rss, /atom, /feeds
+   - /rss.xml, /feed.xml, /atom.xml
+   - /news/rss, /blog/feed
+3. Page footer or sidebar RSS icons/links
+4. sitemap.xml references
+
+Return found feeds in JSON format:
+{{
+    "feeds": [
+        {{
+            "url": "feed URL",
+            "type": "rss|atom",
+            "title": "feed title if known",
+            "category": "category if specified"
+        }}
+    ],
+    "sitemap_url": "sitemap URL if found",
+    "robots_txt_checked": true|false
+}}
 """

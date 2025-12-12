@@ -2,6 +2,7 @@ spring:
   application:
     name: collector-service
   config:
+    # Consul config import (optional - Consul 없어도 시작 가능)
     import: ${SPRING_CONFIG_IMPORT:optional:consul:}
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -54,19 +55,23 @@ spring:
       host: ${CONSUL_HOST:localhost}
       port: ${CONSUL_PORT:8500}
       discovery:
-        enabled: true
+        enabled: ${CONSUL_DISCOVERY_ENABLED:true}
         instance-id: ${spring.application.name}:${random.value}
         service-name: ${spring.application.name}
         prefer-ip-address: false
         hostname: ${CONSUL_DISCOVERY_HOSTNAME:collector-service}
         health-check-path: /actuator/health
         health-check-interval: 10s
+        # Consul 연결 실패해도 시작 가능
+        fail-fast: false
       config:
-        enabled: true
+        enabled: ${CONSUL_CONFIG_ENABLED:true}
         prefix: config
         default-context: ${spring.application.name}
         profile-separator: '::'
         format: PROPERTIES
+        # Consul config 없어도 시작 가능
+        fail-fast: false
   
   task:
     execution:
@@ -127,6 +132,8 @@ collector:
     enabled: ${SCHEDULING_ENABLED:true}
     # Cron expression: run every hour
     cron: ${COLLECTION_CRON:0 0 * * * ?}
+    # Skip scheduled collection if there are already running jobs
+    skip-if-running: ${SCHEDULING_SKIP_IF_RUNNING:true}
   
   http:
     user-agent: ${HTTP_USER_AGENT:NewsInsight-Collector/1.0}
@@ -260,6 +267,37 @@ collector:
     google:
       enabled: ${COLLECTOR_GOOGLE_FACTCHECK_ENABLED:false}
       api-key: ${COLLECTOR_GOOGLE_FACTCHECK_API_KEY:}
+
+  # ============================================
+  # Hybrid Search Configuration (Keyword + Semantic + RRF)
+  # ============================================
+  
+  # Embedding Service (HuggingFace Text Embeddings Inference)
+  embedding:
+    enabled: ${EMBEDDING_ENABLED:true}
+    base-url: ${EMBEDDING_BASE_URL:http://localhost:8011}
+    model: ${EMBEDDING_MODEL:intfloat/multilingual-e5-large}
+    dimension: ${EMBEDDING_DIMENSION:1024}
+    timeout-seconds: ${EMBEDDING_TIMEOUT_SECONDS:30}
+  
+  # Vector Search (PostgreSQL pgvector)
+  vector-search:
+    enabled: ${VECTOR_SEARCH_ENABLED:true}
+    top-k: ${VECTOR_SEARCH_TOP_K:20}
+    min-similarity: ${VECTOR_SEARCH_MIN_SIMILARITY:0.5}
+  
+  # Hybrid Search Orchestration
+  hybrid-search:
+    enabled: ${HYBRID_SEARCH_ENABLED:true}
+    # Number of results from keyword search
+    keyword-top-k: ${HYBRID_SEARCH_KEYWORD_TOP_K:30}
+    # Number of results from semantic search
+    semantic-top-k: ${HYBRID_SEARCH_SEMANTIC_TOP_K:20}
+    # Final number of results after RRF fusion
+    final-top-k: ${HYBRID_SEARCH_FINAL_TOP_K:20}
+    # Source weights for RRF (adjustable)
+    keyword-weight: ${HYBRID_SEARCH_KEYWORD_WEIGHT:1.0}
+    semantic-weight: ${HYBRID_SEARCH_SEMANTIC_WEIGHT:1.0}
 
   # Trust Score Configuration
   # Externalized trust scores for fact-check sources and data quality assessment.
