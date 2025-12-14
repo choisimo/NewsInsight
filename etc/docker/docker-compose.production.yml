@@ -19,6 +19,8 @@ volumes:
   ai_agent_data:
   ml_shared_data:
   embedding_model_cache:
+  ip_rotation_data:
+  maigret_reports:
 
 services:
   # ============================================================================
@@ -417,6 +419,9 @@ services:
       LOG_FORMAT: json
       METRICS_ENABLED: "true"
       METRICS_PORT: "9090"
+    ports:
+      - "8030:8030"  # REST API
+      - "9090:9090"  # Prometheus metrics
     networks:
       newsinsight-prod:
         ipv4_address: 172.20.0.24
@@ -782,6 +787,119 @@ services:
           memory: 4G
         reservations:
           memory: 2G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # IP Rotation Service - Proxy Pool Management for Crawlers
+  # Provides rotating proxies with health checks and adaptive load balancing
+  # ============================================================================
+  ip-rotation:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/ip-rotation:${TAG:-latest}
+    build:
+      context: ../../backend/subs/ip-rotation
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-ip-rotation
+    restart: unless-stopped
+    environment:
+      # Rotation strategy: round_robin, random, least_used, weighted, geographic
+      STRATEGY: ${IP_ROTATION_STRATEGY:-weighted}
+      # Max failures before proxy is disabled
+      MAX_FAILURES: ${IP_ROTATION_MAX_FAILURES:-5}
+      # Cooldown in minutes before re-enabling failed proxy
+      COOLDOWN_MINUTES: ${IP_ROTATION_COOLDOWN:-30}
+      # Health check interval in seconds
+      HEALTH_CHECK_INTERVAL: ${IP_ROTATION_HEALTH_CHECK:-300}
+      # Persistence file path
+      PERSISTENCE_PATH: /data/ip_pool_state.json
+      # Server port
+      PORT: "8050"
+    volumes:
+      - ip_rotation_data:/data
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.71
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8050/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # Crawl Worker - Web Crawling Service with Proxy Rotation
+  # ============================================================================
+  crawl-worker:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/crawl-worker:${TAG:-latest}
+    build:
+      context: ../../backend/subs
+      dockerfile: crawl-worker/Dockerfile
+    container_name: newsinsight-prod-crawl-worker
+    restart: unless-stopped
+    environment:
+      PORT: "8040"
+      MAX_CONCURRENT_CRAWLS: ${CRAWL_WORKER_MAX_CONCURRENT:-5}
+      # Proxy rotation configuration
+      USE_PROXY_ROTATION: ${USE_PROXY_ROTATION:-true}
+      PROXY_ROTATION_URL: http://ip-rotation:8050
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.72
+    depends_on:
+      ip-rotation:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8040/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # Maigret Worker - Username OSINT Scanner with Proxy Rotation
+  # ============================================================================
+  maigret-worker:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/maigret-worker:${TAG:-latest}
+    build:
+      context: ../../backend/subs
+      dockerfile: maigret-worker/Dockerfile
+    container_name: newsinsight-prod-maigret-worker
+    restart: unless-stopped
+    environment:
+      PORT: "8020"
+      MAX_CONCURRENT_SCANS: ${MAIGRET_MAX_CONCURRENT:-3}
+      SCAN_TIMEOUT_SEC: ${MAIGRET_TIMEOUT:-300}
+      REPORTS_DIR: /app/reports
+      # Proxy rotation configuration
+      USE_PROXY_ROTATION: ${USE_PROXY_ROTATION:-true}
+      PROXY_ROTATION_URL: http://ip-rotation:8050
+    volumes:
+      - maigret_reports:/app/reports
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.73
+    depends_on:
+      ip-rotation:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8020/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     logging:
       driver: "json-file"
       options:

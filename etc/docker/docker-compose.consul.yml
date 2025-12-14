@@ -301,6 +301,7 @@ services:
       - "9090"
     ports:
       - "9190:9090"  # Prometheus metrics
+      - "8030:8030"  # REST API
     shm_size: 2g  # Shared memory for browser
     networks:
       - default
@@ -393,11 +394,109 @@ services:
     networks:
       - default
 
+  # ============================================================================
+  # IP Rotation Service - Proxy Pool Management for Crawlers
+  # ============================================================================
+  ip-rotation:
+    build:
+      context: ../../backend/subs/ip-rotation
+      dockerfile: Dockerfile
+    image: newsinsight/ip-rotation:local
+    restart: unless-stopped
+    environment:
+      # Rotation strategy: round_robin, random, least_used, weighted, geographic
+      - STRATEGY=${IP_ROTATION_STRATEGY:-weighted}
+      # Max failures before proxy is disabled
+      - MAX_FAILURES=${IP_ROTATION_MAX_FAILURES:-5}
+      # Cooldown in minutes before re-enabling failed proxy
+      - COOLDOWN_MINUTES=${IP_ROTATION_COOLDOWN:-30}
+      # Health check interval in seconds
+      - HEALTH_CHECK_INTERVAL=${IP_ROTATION_HEALTH_CHECK:-300}
+      # Persistence file path
+      - PERSISTENCE_PATH=/data/ip_pool_state.json
+      - PORT=8050
+    volumes:
+      - ip-rotation-data:/data
+    ports:
+      - "8050:8050"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8050/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - default
+
+  # ============================================================================
+  # Crawl Worker - Web Crawling Service with Proxy Rotation
+  # ============================================================================
+  crawl-worker:
+    build:
+      context: ../../backend/subs
+      dockerfile: crawl-worker/Dockerfile
+    image: newsinsight/crawl-worker:local
+    restart: unless-stopped
+    environment:
+      - PORT=8040
+      - MAX_CONCURRENT_CRAWLS=${CRAWL_WORKER_MAX_CONCURRENT:-5}
+      # Proxy rotation configuration
+      - USE_PROXY_ROTATION=${USE_PROXY_ROTATION:-true}
+      - PROXY_ROTATION_URL=http://ip-rotation:8050
+    ports:
+      - "8040:8040"
+    depends_on:
+      ip-rotation:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  # ============================================================================
+  # Maigret Worker - Username OSINT Scanner with Proxy Rotation
+  # ============================================================================
+  maigret-worker:
+    build:
+      context: ../../backend/subs
+      dockerfile: maigret-worker/Dockerfile
+    image: newsinsight/maigret-worker:local
+    restart: unless-stopped
+    environment:
+      - PORT=8020
+      - MAX_CONCURRENT_SCANS=${MAIGRET_MAX_CONCURRENT:-3}
+      - SCAN_TIMEOUT_SEC=${MAIGRET_TIMEOUT:-300}
+      - REPORTS_DIR=/app/reports
+      # Proxy rotation configuration
+      - USE_PROXY_ROTATION=${USE_PROXY_ROTATION:-true}
+      - PROXY_ROTATION_URL=http://ip-rotation:8050
+    volumes:
+      - maigret-reports:/app/reports
+    ports:
+      - "8020:8020"
+    depends_on:
+      ip-rotation:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8020/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
 volumes:
   postgres-data:
   redis-data:
   frontend-node-modules:
   mongo-data:
+  ip-rotation-data:
+  maigret-reports:
 
 networks:
   default:

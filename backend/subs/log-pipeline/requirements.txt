@@ -1,0 +1,15 @@
+# Log Pipeline Service Dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+
+# Kafka
+aiokafka>=0.10.0
+
+# Database clients
+asyncpg>=0.29.0
+motor>=3.3.0
+redis>=5.0.0
+
+# HTTP client
+httpx>=0.25.0

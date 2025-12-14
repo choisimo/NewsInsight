@@ -141,7 +141,7 @@ spring:
 
         # Autonomous Crawler - 크롤링 작업 관리
         - id: autonomous-crawler-api
-          uri: ${AUTONOMOUS_CRAWLER_URL:http://autonomous-crawler:9090}
+          uri: ${AUTONOMOUS_CRAWLER_URL:http://autonomous-crawler:8030}
           predicates:
             - Path=/api/v1/crawler/**
           filters:

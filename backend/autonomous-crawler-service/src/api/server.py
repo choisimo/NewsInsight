@@ -68,6 +68,10 @@ class APIConfig:
     # DB 기반 LLM Provider 사용 여부
     USE_DB_PROVIDERS: bool = os.getenv("USE_DB_PROVIDERS", "true").lower() == "true"
     COLLECTOR_SERVICE_URL: str = os.getenv("COLLECTOR_SERVICE_URL", "http://collector:8002")
+    WEB_CRAWLER_URL: str = os.getenv("WEB_CRAWLER_URL", "http://web-crawler:11235")
+    WEB_CRAWLER_API_TOKEN: str = os.getenv(
+        "WEB_CRAWLER_API_TOKEN", os.getenv("CRAWL4AI_API_TOKEN", "")
+    )
 
 
 api_config = APIConfig()
@@ -1144,15 +1148,63 @@ def register_routes(app: FastAPI):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 # 1차: crawl4ai 서비스 시도
                 try:
+                    def extract_content(payload: Any) -> Optional[str]:
+                        if isinstance(payload, dict):
+                            results = payload.get("results")
+                            if isinstance(results, list) and results:
+                                return extract_content(results[0])
+                            result = payload.get("result")
+                            if result is not None:
+                                return extract_content(result)
+                            for key in ("markdown", "text", "content"):
+                                value = payload.get(key)
+                                if isinstance(value, str) and value.strip():
+                                    return value
+                            return None
+                        if isinstance(payload, str) and payload.strip():
+                            return payload
+                        return None
+
+                    headers: dict[str, str] = {}
+                    if api_config.WEB_CRAWLER_API_TOKEN:
+                        headers["Authorization"] = f"Bearer {api_config.WEB_CRAWLER_API_TOKEN}"
+
+                    base_url = api_config.WEB_CRAWLER_URL.rstrip("/")
+                    endpoint = f"{base_url}/crawl"
+
+                    crawl_response = await client.get(endpoint, params={"url": url}, headers=headers)
+                    if crawl_response.status_code == 200:
+                        try:
+                            crawl_data = crawl_response.json()
+                        except Exception:
+                            crawl_data = crawl_response.text
+                        content = extract_content(crawl_data)
+                        if content:
+                            return content[:max_chars]
+
                     crawl_response = await client.post(
-                        "http://crawl4ai:8001/crawl",
-                        json={"url": url, "js_render": False},
+                        endpoint,
+                        json={"urls": [url], "priority": 10},
+                        headers=headers,
                     )
                     if crawl_response.status_code == 200:
                         crawl_data = crawl_response.json()
-                        content = crawl_data.get("markdown", "") or crawl_data.get("text", "")
+                        content = extract_content(crawl_data)
                         if content:
                             return content[:max_chars]
+
+                        task_id = crawl_data.get("task_id")
+                        if task_id:
+                            for status_path in (f"{base_url}/task/{task_id}", f"{base_url}/job/{task_id}"):
+                                try:
+                                    status_response = await client.get(status_path, headers=headers)
+                                    if status_response.status_code == 200:
+                                        status_data = status_response.json()
+                                        status_content = extract_content(status_data)
+                                        if status_content:
+                                            return status_content[:max_chars]
+                                except Exception:
+                                    continue
                 except Exception:
                     pass
 
