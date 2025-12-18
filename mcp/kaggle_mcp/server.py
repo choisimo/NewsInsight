@@ -20,13 +20,35 @@ from pathlib import Path
 
 import aiohttp
 import aiofiles
-from mcp.server import Server
+from mcp.server import FastMCP
+from starlette.responses import JSONResponse
+from starlette.requests import Request
 
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-server = Server("kaggle-ml-mcp", version="1.0.0")
+# 포트 설정 (환경변수에서 읽음)
+PORT = int(os.environ.get("PORT", "5012"))
+
+server = FastMCP(
+    "kaggle-ml-mcp",
+    host="0.0.0.0",
+    port=PORT,
+)
+
+
+# Health check endpoint
+@server.custom_route("/health", methods=["GET"])
+async def health_endpoint(request: Request) -> JSONResponse:
+    return JSONResponse(
+        {
+            "status": "healthy",
+            "server": "kaggle-ml-mcp",
+            "version": "1.0.0",
+        }
+    )
+
 
 # Kaggle API 설정
 KAGGLE_USERNAME = os.environ.get("KAGGLE_USERNAME", "")
@@ -852,9 +874,8 @@ if __name__ == "__main__":
     # Kaggle 자격 증명 설정
     setup_kaggle_credentials()
 
-    port = int(os.environ.get("PORT", "5012"))
-    print(f"Starting Kaggle ML MCP Server v1.0.0 on port {port}")
+    print(f"Starting Kaggle ML MCP Server v1.0.0 on port {PORT}")
     print(f"Kaggle credentials configured: {bool(KAGGLE_USERNAME and KAGGLE_KEY)}")
     print(f"Data directory: {DATA_DIR}")
 
-    server.run_http(host="0.0.0.0", port=port, path="/mcp")
+    server.run(transport="streamable-http")

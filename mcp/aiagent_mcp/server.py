@@ -22,13 +22,35 @@ from base64 import b64encode, b64decode
 
 import httpx
 import requests
-from mcp.server import Server
+from mcp.server import FastMCP
+from starlette.responses import JSONResponse
+from starlette.requests import Request
 
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-server = Server("ai-agent-mcp", version="1.0.0")
+# 포트 설정 (환경변수에서 읽음)
+PORT = int(os.environ.get("PORT", "5010"))
+
+server = FastMCP(
+    "ai-agent-mcp",
+    host="0.0.0.0",
+    port=PORT,
+)
+
+
+# Health check endpoint
+@server.custom_route("/health", methods=["GET"])
+async def health_endpoint(request: Request) -> JSONResponse:
+    return JSONResponse(
+        {
+            "status": "healthy",
+            "server": "ai-agent-mcp",
+            "version": "1.0.0",
+        }
+    )
+
 
 # DB 백엔드
 DB_BACKEND = os.environ.get("DB_BACKEND", "postgres")
@@ -1198,7 +1220,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "5010"))
-    print(f"Starting AI Agent MCP Server v1.0.0 on port {port}")
+    print(f"Starting AI Agent MCP Server v1.0.0 on port {PORT}")
     print(f"DB Backend: {DB_BACKEND}")
-    server.run_http(host="0.0.0.0", port=port, path="/mcp")
+    server.run(transport="streamable-http")
