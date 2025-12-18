@@ -1,0 +1,94 @@
+# ============================================================================
+# KEDA ScaledObject - Autonomous Crawler Service
+# ============================================================================
+# 
+# Kafka 토픽의 메시지 lag을 기반으로 autonomous-crawler 파드를 자동 스케일링합니다.
+# 
+# 동작 방식:
+#   - newsinsight.crawl.browser.tasks 토픽의 consumer lag을 모니터링
+#   - lag이 lagThreshold(10)를 초과하면 파드 수를 증가
+#   - lag이 0이면 minReplicaCount(1)로 스케일 다운
+#   - 최대 maxReplicaCount(5)까지 스케일 업
+#
+# 적용:
+#   kubectl apply -f autonomous-crawler-scaledobject.yaml
+#
+# 확인:
+#   kubectl get scaledobject autonomous-crawler-scaler -n newsinsight
+#   kubectl describe scaledobject autonomous-crawler-scaler -n newsinsight
+#   kubectl get hpa -n newsinsight
+# ============================================================================
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: autonomous-crawler-scaler
+  namespace: newsinsight
+  labels:
+    app: autonomous-crawler
+    component: scaler
+spec:
+  # 스케일 대상 Deployment
+  scaleTargetRef:
+    name: autonomous-crawler
+    kind: Deployment
+  
+  # 스케일링 범위
+  minReplicaCount: 1    # 최소 1개 파드 유지 (0으로 설정하면 scale-to-zero 가능)
+  maxReplicaCount: 5    # 최대 5개 파드
+  
+  # 스케일 다운 안정화 (급격한 스케일 다운 방지)
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300  # 5분간 안정화 후 스케일 다운
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60  # 1분에 1개씩만 감소
+        scaleUp:
+          stabilizationWindowSeconds: 0    # 즉시 스케일 업
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 60  # 1분에 2개씩 증가 가능
+  
+  # 쿨다운 기간 (deprecated, behavior 사용 권장)
+  cooldownPeriod: 60
+  
+  # 폴링 간격 (Kafka lag 확인 주기)
+  pollingInterval: 15
+  
+  # 트리거 정의
+  triggers:
+    # Kafka Consumer Lag 기반 트리거
+    - type: kafka
+      metadata:
+        # Kafka/Redpanda 부트스트랩 서버
+        bootstrapServers: redpanda.newsinsight.svc.cluster.local:9092
+        # Consumer Group ID (autonomous-crawler-service에서 사용하는 그룹)
+        consumerGroup: autonomous-crawler-group
+        # 모니터링할 토픽
+        topic: newsinsight.crawl.browser.tasks
+        # 스케일링 임계값 (파드당 처리해야 할 메시지 수)
+        lagThreshold: "10"
+        # offset reset policy
+        offsetResetPolicy: earliest
+        # 인증 (필요시)
+        # sasl: plaintext
+        # username: 
+        # passwordFromEnv: KAFKA_PASSWORD
+        
+---
+# TriggerAuthentication - Kafka 인증이 필요한 경우 사용
+# apiVersion: keda.sh/v1alpha1
+# kind: TriggerAuthentication
+# metadata:
+#   name: kafka-auth
+#   namespace: newsinsight
+# spec:
+#   secretTargetRef:
+#     - parameter: password
+#       name: kafka-credentials
+#       key: password

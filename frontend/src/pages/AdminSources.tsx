@@ -332,7 +332,7 @@ const AdminSources = () => {
           <div>
             <h1 className="text-3xl font-bold mb-2">데이터 소스 관리</h1>
             <p className="text-muted-foreground text-sm">
-              RSS / WEB / API / WEBHOOK 소스를 등록하고 활성화 상태를 관리하는 관리자 화면입니다.
+              RSS / WEB / API / WEBHOOK / AI Agent 소스를 등록하고 활성화 상태를 관리하는 관리자 화면입니다.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -393,6 +393,7 @@ const AdminSources = () => {
                         <SelectItem value="WEB">WEB</SelectItem>
                         <SelectItem value="API">API</SelectItem>
                         <SelectItem value="WEBHOOK">WEBHOOK</SelectItem>
+                        <SelectItem value="BROWSER_AGENT">AI Agent</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -602,6 +603,7 @@ const AdminSources = () => {
                       <SelectItem value="WEB">WEB</SelectItem>
                       <SelectItem value="API">API</SelectItem>
                       <SelectItem value="WEBHOOK">WEBHOOK</SelectItem>
+                      <SelectItem value="BROWSER_AGENT">AI Agent</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

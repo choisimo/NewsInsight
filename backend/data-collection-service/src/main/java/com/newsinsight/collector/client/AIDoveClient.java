@@ -2,17 +2,24 @@ package com.newsinsight.collector.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.netty.channel.ChannelOption;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Client for AI Dove Agent API.
@@ -34,7 +41,6 @@ import java.util.Map;
 @Slf4j
 public class AIDoveClient {
 
-    private final WebClient webClient;
     private final ObjectMapper objectMapper;
 
     @Value("${collector.ai-dove.base-url:${collector.aidove.base-url:${COLLECTOR_AIDOVE_BASE_URL:https://workflow.nodove.com/webhook/aidove}}}")
@@ -45,6 +51,28 @@ public class AIDoveClient {
 
     @Value("${collector.ai-dove.enabled:${collector.aidove.enabled:true}}")
     private boolean enabled;
+
+    private WebClient aiDoveWebClient;
+
+    @PostConstruct
+    public void init() {
+        // Create dedicated WebClient with extended timeout for AI operations
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 30000) // 30s connect timeout
+                .responseTimeout(Duration.ofSeconds(timeoutSeconds))
+                .doOnConnected(conn -> 
+                    conn.addHandlerLast(new ReadTimeoutHandler(timeoutSeconds, TimeUnit.SECONDS))
+                        .addHandlerLast(new WriteTimeoutHandler(timeoutSeconds, TimeUnit.SECONDS))
+                )
+                .followRedirect(true);
+
+        this.aiDoveWebClient = WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .defaultHeader("User-Agent", "NewsInsight-AIDove/1.0")
+                .build();
+        
+        log.info("AIDoveClient initialized with timeout: {}s, baseUrl: {}", timeoutSeconds, baseUrl);
+    }
 
     /**
      * Check if AI Dove client is enabled
@@ -69,7 +97,7 @@ public class AIDoveClient {
                 ? Map.of("chatInput", prompt, "sessionId", sessionId)
                 : Map.of("chatInput", prompt);
 
-        return webClient.post()
+        return aiDoveWebClient.post()
                 .uri(baseUrl)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(payload)

@@ -148,6 +148,54 @@ public class MlAddonController {
     // ========== 분석 실행 ==========
 
     /**
+     * 특정 Add-on으로 직접 분석 실행 (커스텀 입력)
+     * POST /api/v1/ml/addons/{addonKey}/analyze
+     * 
+     * 프론트엔드에서 직접 특정 Add-on을 호출하여 분석을 실행할 때 사용.
+     * 기사 ID 없이 커스텀 데이터로 분석 가능.
+     */
+    @PostMapping("/addons/{addonKey}/analyze")
+    public ResponseEntity<?> analyzeWithAddon(
+            @PathVariable String addonKey,
+            @RequestBody Map<String, Object> request
+    ) {
+        return addonRepository.findByAddonKey(addonKey)
+                .map(addon -> {
+                    if (!addon.getEnabled()) {
+                        return ResponseEntity.badRequest()
+                                .body(Map.of("error", "Addon is disabled: " + addonKey));
+                    }
+                    
+                    try {
+                        // 요청에서 article 정보 추출
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> articleData = (Map<String, Object>) request.getOrDefault("article", Map.of());
+                        
+                        String requestId = java.util.UUID.randomUUID().toString();
+                        String importance = (String) request.getOrDefault("importance", "batch");
+                        
+                        // Add-on 직접 호출
+                        AddonResponse response = orchestratorService.executeAddonDirect(addon, articleData, requestId, importance);
+                        
+                        if (response == null) {
+                            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                                    .body(Map.of("error", "Addon did not return a response"));
+                        }
+                        
+                        return ResponseEntity.ok(response);
+                    } catch (Exception e) {
+                        log.error("Failed to execute addon {}: {}", addonKey, e.getMessage(), e);
+                        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                                .body(Map.of(
+                                        "error", "Addon execution failed",
+                                        "message", e.getMessage()
+                                ));
+                    }
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
      * 단일 기사 분석 실행
      */
     @PostMapping("/analyze/{articleId}")
@@ -238,6 +286,7 @@ public class MlAddonController {
 
     /**
      * Add-on 상태 요약
+     * 프론트엔드 MlAddonStatusSummary 형식에 맞춰 반환
      */
     @GetMapping("/status")
     public ResponseEntity<?> getStatus() {
@@ -246,23 +295,44 @@ public class MlAddonController {
         long healthy = allAddons.stream()
                 .filter(a -> a.getHealthStatus() == AddonHealthStatus.HEALTHY)
                 .count();
+        long unhealthy = allAddons.stream()
+                .filter(a -> a.getHealthStatus() != AddonHealthStatus.HEALTHY && a.getHealthStatus() != AddonHealthStatus.UNKNOWN)
+                .count();
 
-        LocalDateTime since = LocalDateTime.now().minusHours(24);
+        // 오늘의 실행 통계 계산
+        LocalDateTime todayStart = LocalDateTime.now().toLocalDate().atStartOfDay();
+        List<MlAddonExecution> todayExecutions = executionRepository.findByCreatedAtAfter(todayStart);
+        long totalExecutionsToday = todayExecutions.size();
+        long successCount = todayExecutions.stream()
+                .filter(e -> e.getStatus() == ExecutionStatus.SUCCESS)
+                .count();
+        double successRate = totalExecutionsToday > 0 
+                ? (double) successCount / totalExecutionsToday * 100 
+                : 0.0;
+        
+        // 평균 지연시간 계산
+        double avgLatencyMs = todayExecutions.stream()
+                .filter(e -> e.getLatencyMs() != null)
+                .mapToLong(MlAddonExecution::getLatencyMs)
+                .average()
+                .orElse(0.0);
+        
+        // 카테고리별 addon 수
+        Map<String, Long> byCategory = allAddons.stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        a -> a.getCategory().name(),
+                        java.util.stream.Collectors.counting()
+                ));
         
         return ResponseEntity.ok(Map.of(
                 "totalAddons", allAddons.size(),
                 "enabledAddons", enabled,
                 "healthyAddons", healthy,
-                "addons", allAddons.stream()
-                        .map(a -> Map.of(
-                                "key", a.getAddonKey(),
-                                "category", a.getCategory(),
-                                "enabled", a.getEnabled(),
-                                "health", a.getHealthStatus(),
-                                "avgLatency", a.getAvgLatencyMs() != null ? a.getAvgLatencyMs() : 0,
-                                "successRate", a.getSuccessRate()
-                        ))
-                        .toList()
+                "unhealthyAddons", unhealthy,
+                "totalExecutionsToday", totalExecutionsToday,
+                "successRate", Math.round(successRate * 100.0) / 100.0,
+                "avgLatencyMs", Math.round(avgLatencyMs * 100.0) / 100.0,
+                "byCategory", byCategory
         ));
     }
 

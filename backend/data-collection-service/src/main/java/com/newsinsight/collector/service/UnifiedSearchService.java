@@ -1,5 +1,6 @@
 package com.newsinsight.collector.service;
 
+import com.newsinsight.collector.dto.SearchHistoryMessage;
 import com.newsinsight.collector.client.Crawl4aiClient;
 import com.newsinsight.collector.client.PerplexityClient;
 import com.newsinsight.collector.dto.ArticleDto;
@@ -8,10 +9,15 @@ import com.newsinsight.collector.entity.CollectedData;
 import com.newsinsight.collector.entity.DataSource;
 import com.newsinsight.collector.entity.analysis.ArticleAnalysis;
 import com.newsinsight.collector.entity.analysis.ArticleDiscussion;
+import com.newsinsight.collector.entity.search.SearchType;
 import com.newsinsight.collector.repository.ArticleAnalysisRepository;
 import com.newsinsight.collector.repository.ArticleDiscussionRepository;
 import com.newsinsight.collector.repository.CollectedDataRepository;
 import com.newsinsight.collector.repository.DataSourceRepository;
+import com.newsinsight.collector.service.autocrawl.AutoCrawlIntegrationService;
+import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer;
+import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.AnalyzedQuery;
+import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.FallbackStrategy;
 import com.newsinsight.collector.service.search.HybridSearchService;
 import com.newsinsight.collector.service.search.HybridRankingService.RankedResult;
 import lombok.Builder;
@@ -19,6 +25,7 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -33,6 +40,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -46,6 +54,8 @@ import java.util.stream.Collectors;
  * 
  * DB, 웹 크롤링, AI 검색을 병렬로 실행하고 결과가 나오는 대로 스트리밍합니다.
  * 특정 기술/API 이름을 노출하지 않고 통합된 검색 경험을 제공합니다.
+ * 
+ * AutoCrawl Integration: 검색 결과에서 발견된 URL을 자동 크롤링 큐에 추가합니다.
  */
 @Service
 @RequiredArgsConstructor
@@ -61,9 +71,22 @@ public class UnifiedSearchService {
     private final CrawlSearchService crawlSearchService;
     private final UnifiedSearchEventService unifiedSearchEventService;
     private final HybridSearchService hybridSearchService;
+    private final AutoCrawlIntegrationService autoCrawlIntegrationService;
+    private final SearchHistoryService searchHistoryService;
+    private final AdvancedIntentAnalyzer advancedIntentAnalyzer;
+
+    @Value("${autocrawl.enabled:true}")
+    private boolean autoCrawlEnabled;
+
+    @Value("${search.fallback.max-attempts:3}")
+    private int maxFallbackAttempts;
 
     private static final int SNIPPET_MAX_LENGTH = 200;
     private static final int MAX_DB_RESULTS = 20;
+
+    private static final String AI_SUMMARY_KEY_CONTENT = "content";
+    private static final String AI_SUMMARY_KEY_SUMMARY = "summary";
+    private static final String AI_SUMMARY_KEY_GENERATED_AT = "generatedAt";
 
     // ============================================
     // DTO Classes
@@ -155,6 +178,18 @@ public class UnifiedSearchService {
 
         log.info("Starting parallel search for query: '{}', window: {}", query, window);
 
+        // Advanced Intent Analysis
+        AnalyzedQuery analyzedQuery = advancedIntentAnalyzer.analyzeQuery(query);
+        log.info("Query analyzed: keywords={}, primary='{}', intent={}, confidence={}, strategies={}",
+                analyzedQuery.getKeywords().size(),
+                analyzedQuery.getPrimaryKeyword(),
+                analyzedQuery.getIntentType(),
+                analyzedQuery.getConfidence(),
+                analyzedQuery.getFallbackStrategies().size());
+
+        // Collect discovered URLs for AutoCrawl integration
+        List<String> discoveredUrls = new ArrayList<>();
+
         return Flux.merge(
                 // 1. 데이터베이스 검색 (가장 빠름)
                 searchDatabase(query, window)
@@ -168,8 +203,182 @@ public class UnifiedSearchService {
                 searchAI(query, window)
                         .subscribeOn(Schedulers.boundedElastic())
         )
-        .doOnComplete(() -> log.info("Parallel search completed for query: '{}'", query))
+        .doOnNext(event -> {
+            // Collect URLs from search results for AutoCrawl
+            if ("result".equals(event.getEventType()) && event.getResult() != null 
+                    && event.getResult().getUrl() != null) {
+                synchronized (discoveredUrls) {
+                    discoveredUrls.add(event.getResult().getUrl());
+                }
+            }
+        })
+        .doOnComplete(() -> {
+            log.info("Parallel search completed for query: '{}', discovered {} URLs", query, discoveredUrls.size());
+            
+            // Notify AutoCrawl of discovered URLs
+            if (autoCrawlEnabled && !discoveredUrls.isEmpty()) {
+                autoCrawlIntegrationService.onSearchCompleted(query, discoveredUrls);
+            }
+        })
         .doOnError(e -> log.error("Parallel search error for query '{}': {}", query, e.getMessage()));
+    }
+
+    /**
+     * 결과 보장 검색 - 폴백 전략을 사용하여 최소 결과 보장
+     * Intent analysis를 사용하여 더 높은 확률로 의도에 맞는 결과 반환
+     *
+     * @param query 검색 쿼리
+     * @param window 시간 범위
+     * @return 검색 이벤트 스트림 (결과 보장)
+     */
+    public Flux<SearchEvent> searchWithGuaranteedResults(String query, String window) {
+        if (query == null || query.isBlank()) {
+            return Flux.just(SearchEvent.builder()
+                    .eventType("error")
+                    .message("검색어를 입력해주세요.")
+                    .build());
+        }
+
+        // Advanced Intent Analysis
+        AnalyzedQuery analyzedQuery = advancedIntentAnalyzer.analyzeQuery(query);
+        
+        return searchWithFallback(analyzedQuery, window, 0, new ArrayList<>());
+    }
+
+    /**
+     * 폴백 전략을 사용한 검색 (재귀적)
+     */
+    private Flux<SearchEvent> searchWithFallback(
+            AnalyzedQuery analyzedQuery, 
+            String window, 
+            int attemptIndex,
+            List<SearchResult> accumulatedResults) {
+
+        String currentQuery = attemptIndex == 0 
+                ? analyzedQuery.getOriginalQuery()
+                : analyzedQuery.getFallbackStrategies().size() > attemptIndex - 1
+                        ? analyzedQuery.getFallbackStrategies().get(attemptIndex - 1).getQuery()
+                        : analyzedQuery.getPrimaryKeyword();
+
+        String strategyDescription = attemptIndex == 0 
+                ? "원본 쿼리"
+                : attemptIndex <= analyzedQuery.getFallbackStrategies().size()
+                        ? analyzedQuery.getFallbackStrategies().get(attemptIndex - 1).getDescription()
+                        : "주요 키워드";
+
+        log.info("Search attempt {}/{}: query='{}', strategy='{}'", 
+                attemptIndex + 1, maxFallbackAttempts, currentQuery, strategyDescription);
+
+        return Flux.create(sink -> {
+            // 현재 시도에 대한 상태 이벤트
+            sink.next(SearchEvent.builder()
+                    .eventType("status")
+                    .source("system")
+                    .message("검색 전략 " + (attemptIndex + 1) + ": " + strategyDescription)
+                    .build());
+
+            // DB 검색 실행
+            List<SearchResult> currentResults = new ArrayList<>();
+            
+            searchDatabaseSync(currentQuery, window).forEach(result -> {
+                currentResults.add(result);
+                sink.next(SearchEvent.builder()
+                        .eventType("result")
+                        .source("database")
+                        .result(result)
+                        .build());
+            });
+
+            // 결과 누적
+            accumulatedResults.addAll(currentResults);
+
+            // 충분한 결과가 있거나 최대 시도 횟수에 도달한 경우
+            if (accumulatedResults.size() >= 5 || attemptIndex >= maxFallbackAttempts - 1) {
+                // 검색 완료
+                if (accumulatedResults.isEmpty()) {
+                    // 결과가 없을 때 도움말 메시지 생성
+                    String noResultMessage = advancedIntentAnalyzer.buildNoResultMessage(analyzedQuery);
+                    sink.next(SearchEvent.builder()
+                            .eventType("no_result_help")
+                            .source("system")
+                            .message(noResultMessage)
+                            .build());
+                }
+
+                sink.next(SearchEvent.builder()
+                        .eventType("complete")
+                        .source("system")
+                        .message("검색 완료 (시도: " + (attemptIndex + 1) + ", 결과: " + accumulatedResults.size() + ")")
+                        .totalCount(accumulatedResults.size())
+                        .build());
+
+                sink.complete();
+            } else if (currentResults.isEmpty() || currentResults.size() < 3) {
+                // 결과가 부족하면 다음 폴백 전략 시도
+                sink.next(SearchEvent.builder()
+                        .eventType("status")
+                        .source("system")
+                        .message("결과가 부족합니다. 다음 전략을 시도합니다...")
+                        .build());
+
+                // 재귀적으로 다음 폴백 시도
+                searchWithFallback(analyzedQuery, window, attemptIndex + 1, accumulatedResults)
+                        .subscribe(
+                                sink::next,
+                                sink::error,
+                                sink::complete
+                        );
+            } else {
+                sink.next(SearchEvent.builder()
+                        .eventType("complete")
+                        .source("system")
+                        .message("검색 완료")
+                        .totalCount(accumulatedResults.size())
+                        .build());
+                sink.complete();
+            }
+        });
+    }
+
+    /**
+     * 동기식 데이터베이스 검색 (폴백용)
+     */
+    private List<SearchResult> searchDatabaseSync(String query, String window) {
+        List<SearchResult> results = new ArrayList<>();
+        
+        try {
+            LocalDateTime since = calculateSinceDate(window);
+            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
+                    Sort.by(Sort.Direction.DESC, "publishedDate")
+                            .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+
+            Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(query, since, pageRequest);
+
+            List<Long> articleIds = page.getContent().stream()
+                    .map(CollectedData::getId)
+                    .filter(id -> id != null)
+                    .toList();
+
+            Map<Long, ArticleAnalysis> analysisMap = articleIds.isEmpty()
+                    ? Map.of()
+                    : articleAnalysisRepository.findByArticleIdIn(articleIds).stream()
+                            .collect(Collectors.toMap(ArticleAnalysis::getArticleId, Function.identity()));
+
+            Map<Long, ArticleDiscussion> discussionMap = articleIds.isEmpty()
+                    ? Map.of()
+                    : articleDiscussionRepository.findByArticleIdIn(articleIds).stream()
+                            .collect(Collectors.toMap(ArticleDiscussion::getArticleId, Function.identity()));
+
+            for (CollectedData data : page.getContent()) {
+                ArticleAnalysis analysis = data.getId() != null ? analysisMap.get(data.getId()) : null;
+                ArticleDiscussion discussion = data.getId() != null ? discussionMap.get(data.getId()) : null;
+                results.add(convertToSearchResult(data, analysis, discussion));
+            }
+        } catch (Exception e) {
+            log.error("Database sync search failed: {}", e.getMessage());
+        }
+
+        return results;
     }
 
     // ============================================
@@ -641,25 +850,51 @@ public class UnifiedSearchService {
         };
 
         return """
-                '%s'에 대해 %s 동안의 주요 뉴스와 정보를 분석해주세요.
+                당신은 뉴스 분석 전문가입니다. '%s'에 대해 %s 동안의 정보를 철저히 조사하고 분석해주세요.
                 
-                다음 형식으로 답변해주세요:
+                ## 분석 원칙
+                - **확실한 정보만 보고**: 불확실하거나 추측성 내용은 포함하지 마세요
+                - **출처 명시**: 모든 주요 주장에는 반드시 출처를 표기하세요
+                - **교차 검증**: 가능한 경우 여러 출처에서 확인된 정보만 포함하세요
+                - **객관적 분석**: 특정 입장에 치우치지 않고 균형 있게 분석하세요
                 
-                ## 핵심 요약
-                3-4문장으로 현재 상황을 요약
+                ## 보고서 형식
                 
-                ## 주요 사실
-                - 확인된 사실 1
-                - 확인된 사실 2
-                - 확인된 사실 3
+                ### [요약] 핵심 요약
+                현재 상황을 4-5문장으로 명확하게 요약해주세요. 핵심 사실만 포함하세요.
                 
-                ## 다양한 관점
-                서로 다른 입장이나 시각이 있다면 균형있게 제시
+                ### [검증] 검증된 사실
+                여러 출처에서 확인된 사실들을 나열하세요. 각 사실에 출처를 명시하세요.
                 
-                ## 결론
-                객관적인 종합 의견
+                | 사실 | 출처 | 검증 수준 |
+                |------|------|----------|
+                | [사실 내용] | [출처명/기관] | 높음/중간/낮음 |
                 
-                한국어로 답변해주세요.
+                ### [데이터] 주요 수치 및 데이터
+                관련된 구체적인 수치, 통계, 날짜 등을 정리하세요.
+                - 수치1: [내용] (출처: [출처명])
+                - 수치2: [내용] (출처: [출처명])
+                
+                ### [관점] 다양한 관점
+                이 주제에 대한 서로 다른 입장이나 시각을 균형있게 제시하세요.
+                
+                **입장 A**: [내용] - 출처: [기관/매체명]
+                **입장 B**: [내용] - 출처: [기관/매체명]
+                
+                ### [주의] 주의사항 및 한계
+                - 정보의 한계나 불확실한 부분
+                - 추가 확인이 필요한 사항
+                - 잠재적인 편향이나 이해관계
+                
+                ### [결론] 결론
+                수집된 정보를 바탕으로 한 객관적인 종합 분석을 제공하세요.
+                확실하지 않은 내용은 "추가 확인 필요"로 명시하세요.
+                
+                ---
+                * 이 분석은 수집된 자료를 기반으로 작성되었으며, 모든 주장은 출처와 함께 제공됩니다.
+                * 최종 판단은 독자의 몫입니다.
+                
+                한국어로 답변해주세요. 마크다운 형식을 사용하세요.
                 """.formatted(query, timeFrame);
     }
 
@@ -742,6 +977,8 @@ public class UnifiedSearchService {
      * Execute search asynchronously for a job.
      * Results are published to UnifiedSearchEventService.
      * This allows SSE reconnection with the same jobId.
+     * 
+     * Uses AdvancedIntentAnalyzer for better query understanding and fallback strategies.
      *
      * @param jobId The job ID
      * @param query Search query
@@ -753,18 +990,29 @@ public class UnifiedSearchService {
         log.info("Starting async search for job: {}, query: '{}', window: {}, priorityUrls: {}", 
                 jobId, query, window, priorityUrls != null ? priorityUrls.size() : 0);
         
+        // Advanced Intent Analysis
+        AnalyzedQuery analyzedQuery = advancedIntentAnalyzer.analyzeQuery(query);
+        log.info("Async search - Query analyzed: keywords={}, primary='{}', intent={}, strategies={}",
+                analyzedQuery.getKeywords().size(),
+                analyzedQuery.getPrimaryKeyword(),
+                analyzedQuery.getIntentType(),
+                analyzedQuery.getFallbackStrategies().size());
+        
         unifiedSearchEventService.updateJobStatus(jobId, "IN_PROGRESS");
         
         AtomicInteger totalResults = new AtomicInteger(0);
         AtomicInteger completedSources = new AtomicInteger(0);
         
+        // Collect discovered URLs for AutoCrawl integration
+        List<String> discoveredUrls = new ArrayList<>();
+        
         try {
             // Execute all three searches in parallel
             CompletableFuture<Void> dbFuture = CompletableFuture.runAsync(() -> 
-                    executeDbSearch(jobId, query, window, totalResults));
+                    executeDbSearchWithFallback(jobId, analyzedQuery, window, totalResults, discoveredUrls));
             
             CompletableFuture<Void> webFuture = CompletableFuture.runAsync(() -> 
-                    executeWebSearch(jobId, query, window, totalResults, priorityUrls));
+                    executeWebSearch(jobId, query, window, totalResults, priorityUrls, discoveredUrls));
             
             CompletableFuture<Void> aiFuture = CompletableFuture.runAsync(() -> 
                     executeAiSearch(jobId, query, window, totalResults));
@@ -772,9 +1020,21 @@ public class UnifiedSearchService {
             // Wait for all to complete
             CompletableFuture.allOf(dbFuture, webFuture, aiFuture)
                     .thenRun(() -> {
-                        log.info("All sources completed for job: {}, total results: {}", 
-                                jobId, totalResults.get());
+                        log.info("All sources completed for job: {}, total results: {}, discovered URLs: {}", 
+                                jobId, totalResults.get(), discoveredUrls.size());
+                        
+                        // If no results, provide helpful message
+                        if (totalResults.get() == 0) {
+                            String noResultMessage = advancedIntentAnalyzer.buildNoResultMessage(analyzedQuery);
+                            unifiedSearchEventService.publishStatusUpdate(jobId, "system", noResultMessage);
+                        }
+                        
                         unifiedSearchEventService.publishJobComplete(jobId, totalResults.get());
+                        
+                        // Notify AutoCrawl of discovered URLs
+                        if (autoCrawlEnabled && !discoveredUrls.isEmpty()) {
+                            autoCrawlIntegrationService.onSearchCompleted(query, discoveredUrls);
+                        }
                     })
                     .exceptionally(ex -> {
                         log.error("Error in async search for job: {}", jobId, ex);
@@ -788,16 +1048,204 @@ public class UnifiedSearchService {
         }
     }
 
-    private void executeDbSearch(String jobId, String query, String window, AtomicInteger totalResults) {
-        // Use hybrid search if available
-        if (hybridSearchService.isEnabled() && hybridSearchService.isSemanticSearchAvailable()) {
-            executeDbSearchHybrid(jobId, query, window, totalResults);
-        } else {
-            executeDbSearchKeywordOnly(jobId, query, window, totalResults);
+    /**
+     * DB 검색 with 폴백 전략
+     */
+    private void executeDbSearchWithFallback(
+            String jobId, 
+            AnalyzedQuery analyzedQuery, 
+            String window, 
+            AtomicInteger totalResults,
+            List<String> discoveredUrls) {
+        
+        int attempt = 0;
+        int resultsFound = 0;
+        
+        // 원본 쿼리로 먼저 시도
+        String currentQuery = analyzedQuery.getOriginalQuery();
+        
+        while (attempt < maxFallbackAttempts && resultsFound < 3) {
+            String strategyDesc = attempt == 0 
+                    ? "원본 쿼리" 
+                    : (attempt <= analyzedQuery.getFallbackStrategies().size() 
+                            ? analyzedQuery.getFallbackStrategies().get(attempt - 1).getDescription()
+                            : "주요 키워드");
+            
+            unifiedSearchEventService.publishStatusUpdate(jobId, "database", 
+                    "검색 전략 " + (attempt + 1) + "/" + maxFallbackAttempts + ": " + strategyDesc);
+            
+            int found = executeDbSearchForQuery(jobId, currentQuery, window, totalResults, discoveredUrls);
+            resultsFound += found;
+            
+            if (resultsFound >= 3) {
+                break;  // 충분한 결과 찾음
+            }
+            
+            // 다음 폴백 전략으로
+            attempt++;
+            if (attempt <= analyzedQuery.getFallbackStrategies().size()) {
+                currentQuery = analyzedQuery.getFallbackStrategies().get(attempt - 1).getQuery();
+            } else {
+                currentQuery = analyzedQuery.getPrimaryKeyword();
+            }
+        }
+        
+        String finalMessage = resultsFound > 0 
+                ? "데이터베이스 검색 완료 (시도: " + (attempt + 1) + ", 결과: " + resultsFound + ")"
+                : "데이터베이스에서 관련 결과를 찾지 못했습니다. 다른 소스를 확인해주세요.";
+        
+        unifiedSearchEventService.publishSourceComplete(jobId, "database", finalMessage, resultsFound);
+    }
+
+    /**
+     * 단일 쿼리로 DB 검색 실행
+     */
+    private int executeDbSearchForQuery(
+            String jobId, 
+            String query, 
+            String window, 
+            AtomicInteger totalResults,
+            List<String> discoveredUrls) {
+        
+        try {
+            // Use hybrid search if available
+            if (hybridSearchService.isEnabled() && hybridSearchService.isSemanticSearchAvailable()) {
+                return executeDbSearchHybridForQuery(jobId, query, window, totalResults, discoveredUrls);
+            } else {
+                return executeDbSearchKeywordForQuery(jobId, query, window, totalResults, discoveredUrls);
+            }
+        } catch (Exception e) {
+            log.error("DB search failed for query '{}': {}", query, e.getMessage());
+            return 0;
         }
     }
 
-    private void executeDbSearchHybrid(String jobId, String query, String window, AtomicInteger totalResults) {
+    private int executeDbSearchHybridForQuery(
+            String jobId, 
+            String query, 
+            String window, 
+            AtomicInteger totalResults,
+            List<String> discoveredUrls) {
+        
+        try {
+            HybridSearchService.HybridSearchResult hybridResult = hybridSearchService.search(query, window).block();
+            
+            if (hybridResult == null || hybridResult.getResults().isEmpty()) {
+                return 0;
+            }
+
+            List<Long> articleIds = hybridResult.getResults().stream()
+                    .map(r -> {
+                        try { return Long.parseLong(r.getId()); } 
+                        catch (NumberFormatException e) { return null; }
+                    })
+                    .filter(id -> id != null)
+                    .toList();
+
+            Map<Long, ArticleAnalysis> analysisMap = articleIds.isEmpty()
+                    ? Map.of()
+                    : articleAnalysisRepository.findByArticleIdIn(articleIds).stream()
+                            .collect(Collectors.toMap(ArticleAnalysis::getArticleId, Function.identity()));
+
+            Map<Long, ArticleDiscussion> discussionMap = articleIds.isEmpty()
+                    ? Map.of()
+                    : articleDiscussionRepository.findByArticleIdIn(articleIds).stream()
+                            .collect(Collectors.toMap(ArticleDiscussion::getArticleId, Function.identity()));
+
+            int count = 0;
+            for (RankedResult rankedResult : hybridResult.getResults()) {
+                Long articleId = null;
+                try { articleId = Long.parseLong(rankedResult.getId()); } 
+                catch (NumberFormatException ignored) {}
+
+                ArticleAnalysis analysis = articleId != null ? analysisMap.get(articleId) : null;
+                ArticleDiscussion discussion = articleId != null ? discussionMap.get(articleId) : null;
+
+                SearchResult result = convertRankedResultToSearchResult(rankedResult, analysis, discussion);
+                unifiedSearchEventService.publishResult(jobId, "database", result);
+                
+                if (result.getUrl() != null && discoveredUrls != null) {
+                    synchronized (discoveredUrls) {
+                        discoveredUrls.add(result.getUrl());
+                    }
+                }
+                
+                count++;
+                totalResults.incrementAndGet();
+            }
+            
+            return count;
+        } catch (Exception e) {
+            log.error("Hybrid search failed: {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    private int executeDbSearchKeywordForQuery(
+            String jobId, 
+            String query, 
+            String window, 
+            AtomicInteger totalResults,
+            List<String> discoveredUrls) {
+        
+        try {
+            LocalDateTime since = calculateSinceDate(window);
+            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
+                    Sort.by(Sort.Direction.DESC, "publishedDate")
+                            .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+
+            Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(query, since, pageRequest);
+
+            List<Long> articleIds = page.getContent().stream()
+                    .map(CollectedData::getId)
+                    .filter(id -> id != null)
+                    .toList();
+
+            Map<Long, ArticleAnalysis> analysisMap = articleIds.isEmpty()
+                    ? Map.of()
+                    : articleAnalysisRepository.findByArticleIdIn(articleIds).stream()
+                            .collect(Collectors.toMap(ArticleAnalysis::getArticleId, Function.identity()));
+
+            Map<Long, ArticleDiscussion> discussionMap = articleIds.isEmpty()
+                    ? Map.of()
+                    : articleDiscussionRepository.findByArticleIdIn(articleIds).stream()
+                            .collect(Collectors.toMap(ArticleDiscussion::getArticleId, Function.identity()));
+
+            int count = 0;
+            for (CollectedData data : page.getContent()) {
+                ArticleAnalysis analysis = data.getId() != null ? analysisMap.get(data.getId()) : null;
+                ArticleDiscussion discussion = data.getId() != null ? discussionMap.get(data.getId()) : null;
+
+                SearchResult result = convertToSearchResult(data, analysis, discussion);
+                unifiedSearchEventService.publishResult(jobId, "database", result);
+
+                if (result.getUrl() != null && discoveredUrls != null) {
+                    synchronized (discoveredUrls) {
+                        discoveredUrls.add(result.getUrl());
+                    }
+                }
+
+                count++;
+                totalResults.incrementAndGet();
+            }
+
+            return count;
+        } catch (Exception e) {
+            log.error("Keyword search failed: {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    private void executeDbSearch(String jobId, String query, String window, AtomicInteger totalResults, List<String> discoveredUrls) {
+        // Use hybrid search if available
+        if (hybridSearchService.isEnabled() && hybridSearchService.isSemanticSearchAvailable()) {
+            executeDbSearchHybrid(jobId, query, window, totalResults, discoveredUrls);
+        } else {
+            executeDbSearchKeywordOnly(jobId, query, window, totalResults, discoveredUrls);
+        }
+    }
+
+    private void executeDbSearchHybrid(String jobId, String query, String window, AtomicInteger totalResults, List<String> discoveredUrls) {
         try {
             unifiedSearchEventService.publishStatusUpdate(jobId, "database", "하이브리드 검색 중 (키워드 + 시맨틱)...");
 
@@ -805,7 +1253,7 @@ public class UnifiedSearchService {
             
             if (hybridResult == null || hybridResult.getResults().isEmpty()) {
                 log.info("Hybrid search returned no results for job: {}, falling back to keyword search", jobId);
-                executeDbSearchKeywordOnly(jobId, query, window, totalResults);
+                executeDbSearchKeywordOnly(jobId, query, window, totalResults, discoveredUrls);
                 return;
             }
 
@@ -848,6 +1296,14 @@ public class UnifiedSearchService {
 
                 SearchResult result = convertRankedResultToSearchResult(rankedResult, analysis, discussion);
                 unifiedSearchEventService.publishResult(jobId, "database", result);
+                
+                // Collect URL for AutoCrawl
+                if (result.getUrl() != null && discoveredUrls != null) {
+                    synchronized (discoveredUrls) {
+                        discoveredUrls.add(result.getUrl());
+                    }
+                }
+                
                 count++;
                 totalResults.incrementAndGet();
             }
@@ -862,11 +1318,11 @@ public class UnifiedSearchService {
 
         } catch (Exception e) {
             log.error("Hybrid search failed for job: {}, falling back to keyword search: {}", jobId, e.getMessage());
-            executeDbSearchKeywordOnly(jobId, query, window, totalResults);
+            executeDbSearchKeywordOnly(jobId, query, window, totalResults, discoveredUrls);
         }
     }
 
-    private void executeDbSearchKeywordOnly(String jobId, String query, String window, AtomicInteger totalResults) {
+    private void executeDbSearchKeywordOnly(String jobId, String query, String window, AtomicInteger totalResults, List<String> discoveredUrls) {
         try {
             unifiedSearchEventService.publishStatusUpdate(jobId, "database", "저장된 뉴스에서 검색 중...");
             
@@ -901,6 +1357,14 @@ public class UnifiedSearchService {
                 
                 SearchResult result = convertToSearchResult(data, analysis, discussion);
                 unifiedSearchEventService.publishResult(jobId, "database", result);
+                
+                // Collect URL for AutoCrawl
+                if (result.getUrl() != null && discoveredUrls != null) {
+                    synchronized (discoveredUrls) {
+                        discoveredUrls.add(result.getUrl());
+                    }
+                }
+                
                 count++;
                 totalResults.incrementAndGet();
             }
@@ -913,7 +1377,7 @@ public class UnifiedSearchService {
         }
     }
 
-    private void executeWebSearch(String jobId, String query, String window, AtomicInteger totalResults, List<String> priorityUrls) {
+    private void executeWebSearch(String jobId, String query, String window, AtomicInteger totalResults, List<String> priorityUrls, List<String> discoveredUrls) {
         try {
             unifiedSearchEventService.publishStatusUpdate(jobId, "web", "웹에서 최신 정보 수집 중...");
             
@@ -945,6 +1409,14 @@ public class UnifiedSearchService {
                                 .build();
 
                         unifiedSearchEventService.publishResult(jobId, "web", result);
+                        
+                        // Collect URL for AutoCrawl
+                        if (discoveredUrls != null) {
+                            synchronized (discoveredUrls) {
+                                discoveredUrls.add(url);
+                            }
+                        }
+                        
                         successCount++;
                         totalResults.incrementAndGet();
                     }
@@ -1007,10 +1479,60 @@ public class UnifiedSearchService {
             unifiedSearchEventService.publishResult(jobId, "ai", aiResult);
             totalResults.incrementAndGet();
             unifiedSearchEventService.publishSourceComplete(jobId, "ai", "AI 분석 완료", 1);
+
+            persistAiReportToSearchHistory(jobId, query, window, fullContent);
             
         } catch (Exception e) {
             log.error("AI search failed for job: {}", jobId, e);
             unifiedSearchEventService.publishSourceError(jobId, "ai", "AI 분석 오류");
         }
+    }
+
+    private void persistAiReportToSearchHistory(String jobId, String query, String window, String fullMarkdown) {
+        try {
+            Map<String, Object> aiSummary = new HashMap<>();
+            aiSummary.put(AI_SUMMARY_KEY_CONTENT, fullMarkdown);
+            aiSummary.put(AI_SUMMARY_KEY_SUMMARY, extractSummarySection(fullMarkdown));
+            aiSummary.put(AI_SUMMARY_KEY_GENERATED_AT, System.currentTimeMillis());
+
+            SearchHistoryMessage message = SearchHistoryMessage.builder()
+                    .externalId(jobId)
+                    .searchType(SearchType.UNIFIED)
+                    .query(query)
+                    .timeWindow(window)
+                    .resultCount(0)
+                    .results(List.of())
+                    .aiSummary(aiSummary)
+                    .success(true)
+                    .timestamp(System.currentTimeMillis())
+                    .build();
+
+            searchHistoryService.saveFromMessage(message);
+            log.info("Saved unified AI report to search history: jobId={}", jobId);
+        } catch (Exception e) {
+            log.warn("Failed to save unified AI report to search history: jobId={}, error={}", jobId, e.getMessage());
+        }
+    }
+
+    private String extractSummarySection(String markdown) {
+        if (markdown == null || markdown.isBlank()) {
+            return null;
+        }
+
+        int start = markdown.indexOf("### [요약]");
+        if (start < 0) {
+            start = markdown.indexOf("## [요약]");
+        }
+        if (start < 0) {
+            return null;
+        }
+
+        int next = markdown.indexOf("\n### ", start + 1);
+        if (next < 0) {
+            next = markdown.length();
+        }
+
+        String section = markdown.substring(start, next).trim();
+        return section.isEmpty() ? null : section;
     }
 }

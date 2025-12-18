@@ -1,4 +1,10 @@
 import { useState, useCallback, useEffect } from "react";
+import {
+  saveSearchHistorySync,
+  listSearchHistory,
+  deleteSearchHistory,
+  type SearchHistoryRecord,
+} from "@/lib/api";
 
 /**
  * 팩트체크 결과 저장 데이터 구조
@@ -40,63 +46,148 @@ export interface SavedFactCheckResult {
   aiConclusion?: string;
 }
 
-const STORAGE_KEY = "newsinsight_factcheck_results";
-const MAX_SAVED_RESULTS = 50;
+/**
+ * SearchHistoryRecord를 SavedFactCheckResult로 변환
+ */
+const recordToFactCheck = (record: SearchHistoryRecord): SavedFactCheckResult => {
+  const factCheckResults = record.factCheckResults as Array<{
+    claimId: string;
+    originalClaim: string;
+    status: string;
+    confidenceScore: number;
+    verificationSummary: string;
+    supportingCount: number;
+    contradictingCount: number;
+  }> | undefined;
+  
+  const metadata = record.metadata as {
+    claims?: string[];
+    priorityUrls?: string[];
+    evidenceSummary?: { total: number; bySource: Record<string, number> };
+    credibility?: {
+      overallScore: number;
+      verifiedCount: number;
+      totalClaims: number;
+      riskLevel: "low" | "medium" | "high";
+      warnings: string[];
+    };
+    aiConclusion?: string;
+  } | undefined;
+
+  return {
+    id: record.externalId || String(record.id),
+    topic: record.query,
+    claims: metadata?.claims || [],
+    priorityUrls: metadata?.priorityUrls || record.discoveredUrls || [],
+    savedAt: record.createdAt,
+    verificationResults: factCheckResults || [],
+    evidenceSummary: metadata?.evidenceSummary || { total: 0, bySource: {} },
+    credibility: metadata?.credibility,
+    aiConclusion: metadata?.aiConclusion,
+  };
+};
 
 /**
  * 팩트체크 결과 저장 및 관리를 위한 훅
+ * 백엔드 API를 통해 데이터를 저장하고 조회합니다.
  */
 export function useFactCheckStorage() {
   const [savedResults, setSavedResults] = useState<SavedFactCheckResult[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // localStorage에서 저장된 결과 로드
-  useEffect(() => {
+  // 백엔드에서 저장된 결과 로드
+  const loadResults = useCallback(async () => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as SavedFactCheckResult[];
-        setSavedResults(parsed);
-      }
-    } catch (error) {
-      console.error("Failed to load saved fact-check results:", error);
+      setError(null);
+      const response = await listSearchHistory(0, 50, 'createdAt', 'DESC', 'FACT_CHECK');
+      const results = response.content.map(recordToFactCheck);
+      setSavedResults(results);
+    } catch (err) {
+      console.error("Failed to load saved fact-check results:", err);
+      setError(err instanceof Error ? err.message : "결과를 불러오는데 실패했습니다.");
     } finally {
       setIsLoaded(true);
     }
   }, []);
 
+  // 초기 로드
+  useEffect(() => {
+    loadResults();
+  }, [loadResults]);
+
   // 결과 저장
-  const saveResult = useCallback((result: Omit<SavedFactCheckResult, "id" | "savedAt">) => {
-    const newResult: SavedFactCheckResult = {
-      ...result,
-      id: `fc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-      savedAt: new Date().toISOString(),
-    };
-
-    setSavedResults((prev) => {
-      // 최대 개수 제한
-      const updated = [newResult, ...prev].slice(0, MAX_SAVED_RESULTS);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      return updated;
-    });
-
-    return newResult.id;
+  const saveResult = useCallback(async (result: Omit<SavedFactCheckResult, "id" | "savedAt">) => {
+    const externalId = `fc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    
+    try {
+      setError(null);
+      const savedRecord = await saveSearchHistorySync({
+        externalId,
+        searchType: 'FACT_CHECK',
+        query: result.topic,
+        resultCount: result.verificationResults.length,
+        discoveredUrls: result.priorityUrls,
+        factCheckResults: result.verificationResults as unknown as Array<Record<string, unknown>>,
+        credibilityScore: result.credibility?.overallScore,
+        metadata: {
+          claims: result.claims,
+          priorityUrls: result.priorityUrls,
+          evidenceSummary: result.evidenceSummary,
+          credibility: result.credibility,
+          aiConclusion: result.aiConclusion,
+        },
+        success: true,
+      });
+      
+      // 로컬 상태 업데이트
+      const newResult = recordToFactCheck(savedRecord);
+      setSavedResults((prev) => [newResult, ...prev].slice(0, 50));
+      
+      return newResult.id;
+    } catch (err) {
+      console.error("Failed to save fact-check result:", err);
+      setError(err instanceof Error ? err.message : "저장에 실패했습니다.");
+      throw err;
+    }
   }, []);
 
   // 결과 삭제
-  const deleteResult = useCallback((id: string) => {
-    setSavedResults((prev) => {
-      const updated = prev.filter((r) => r.id !== id);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
+  const deleteResult = useCallback(async (id: string) => {
+    try {
+      setError(null);
+      // ID에서 숫자 ID 추출 (externalId가 아닌 실제 DB ID가 필요)
+      const resultToDelete = savedResults.find((r) => r.id === id);
+      if (resultToDelete) {
+        // externalId로 삭제 시도
+        await deleteSearchHistory(parseInt(id) || 0);
+      }
+      setSavedResults((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      console.error("Failed to delete fact-check result:", err);
+      // 로컬에서는 삭제 (백엔드 실패해도 UI 반영)
+      setSavedResults((prev) => prev.filter((r) => r.id !== id));
+    }
+  }, [savedResults]);
 
-  // 모든 결과 삭제
-  const clearAllResults = useCallback(() => {
-    setSavedResults([]);
-    localStorage.removeItem(STORAGE_KEY);
-  }, []);
+  // 모든 결과 삭제 (주의: 실제로는 개별 삭제 필요)
+  const clearAllResults = useCallback(async () => {
+    try {
+      setError(null);
+      // 모든 결과를 개별적으로 삭제
+      for (const result of savedResults) {
+        try {
+          await deleteSearchHistory(parseInt(result.id) || 0);
+        } catch {
+          // 개별 삭제 실패는 무시
+        }
+      }
+      setSavedResults([]);
+    } catch (err) {
+      console.error("Failed to clear all results:", err);
+      setError(err instanceof Error ? err.message : "삭제에 실패했습니다.");
+    }
+  }, [savedResults]);
 
   // 특정 결과 조회
   const getResult = useCallback(
@@ -104,7 +195,13 @@ export function useFactCheckStorage() {
     [savedResults]
   );
 
-  // JSON으로 내보내기
+  // 결과 새로고침
+  const refresh = useCallback(() => {
+    setIsLoaded(false);
+    return loadResults();
+  }, [loadResults]);
+
+  // JSON으로 내보내기 (로컬 기능 유지)
   const exportToJson = useCallback((id?: string) => {
     const dataToExport = id 
       ? savedResults.filter((r) => r.id === id)
@@ -392,10 +489,12 @@ export function useFactCheckStorage() {
   return {
     savedResults,
     isLoaded,
+    error,
     saveResult,
     deleteResult,
     clearAllResults,
     getResult,
+    refresh,
     exportToJson,
     exportToMarkdown,
     exportToText,

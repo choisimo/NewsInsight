@@ -33,7 +33,7 @@ export interface ArticlesResponse {
   total: number;
 }
 
-export type SourceType = "RSS" | "WEB" | "API" | "WEBHOOK";
+export type SourceType = "RSS" | "WEB" | "API" | "WEBHOOK" | "BROWSER_AGENT";
 
 export interface DataSource {
   id: number;
@@ -340,4 +340,195 @@ export interface DataSourceUpdateRequest {
   collectionFrequency?: number;
   metadata?: Record<string, unknown>;
   browserAgentConfig?: BrowserAgentConfig;
+}
+
+// ============================================
+// Factcheck Detailed Analytics Types (Backend: /api/ml-addons/factcheck)
+// ============================================
+
+/** Analysis mode for factcheck */
+export type FactcheckAnalysisMode = 
+  | 'heuristic'
+  | 'ml_basic'
+  | 'ml_full'
+  | 'external_api'
+  | 'hybrid';
+
+/** Claim verdict */
+export type ClaimVerdict = 
+  | 'verified'
+  | 'false'
+  | 'unverified'
+  | 'misleading'
+  | 'partially_true';
+
+/** Credibility grade */
+export type CredibilityGrade = 'A' | 'B' | 'C' | 'D' | 'F';
+
+/** Source credibility analysis from backend */
+export interface SourceAnalytics {
+  source_name?: string;
+  is_trusted: boolean;
+  trust_score: number;
+  trust_level: 'trusted' | 'unknown' | 'untrusted';
+  matched_trusted_source?: string;
+  reason: string;
+}
+
+/** Clickbait detection analysis from backend */
+export interface ClickbaitAnalytics {
+  is_clickbait: boolean;
+  score: number;
+  detected_patterns: Array<{
+    pattern: string;
+    matched_text: string;
+    severity: 'low' | 'medium' | 'high';
+  }>;
+  total_patterns_checked: number;
+}
+
+/** Misinformation risk analysis from backend */
+export interface MisinfoAnalytics {
+  risk_score: number;
+  risk_level: 'low' | 'medium' | 'high';
+  detected_patterns: Array<{
+    pattern: string;
+    matched_text: string;
+    type: 'misinformation' | 'unverifiable';
+    category?: string;
+    severity: 'low' | 'medium' | 'high';
+  }>;
+  unverifiable_claim_count: number;
+}
+
+/** Individual claim analysis from backend */
+export interface ClaimAnalytics {
+  claim_id: string;
+  claim_text: string;
+  verdict: ClaimVerdict;
+  confidence: number;
+  ml_confidence?: number;
+  claim_indicator?: string;
+  analysis_method: string;
+  entities?: Array<{
+    entity: string;
+    word: string;
+    score: number;
+  }>;
+  semantic_similarity_scores?: Array<{
+    reference_index: number;
+    similarity: number;
+  }>;
+  supporting_factors: string[];
+  contradicting_factors: string[];
+  external_verification?: Record<string, unknown>;
+}
+
+/** Score breakdown from backend */
+export interface ScoreBreakdown {
+  source_weight: number;
+  clickbait_weight: number;
+  misinfo_weight: number;
+  verification_weight: number;
+  source_contribution: number;
+  clickbait_contribution: number;
+  misinfo_contribution: number;
+  verification_contribution: number;
+  total_score: number;
+  grade: CredibilityGrade;
+}
+
+/** Detailed analytics returned from factcheck backend */
+export interface DetailedAnalytics {
+  source_analysis: SourceAnalytics;
+  clickbait_analysis: ClickbaitAnalytics;
+  misinfo_analysis: MisinfoAnalytics;
+  claim_analyses: ClaimAnalytics[];
+  score_breakdown: ScoreBreakdown;
+  analysis_mode: FactcheckAnalysisMode;
+  ml_models_used: string[];
+  external_apis_used: string[];
+  processing_time_ms: number;
+  analyzed_at: string;
+}
+
+/** Claim result in factcheck response */
+export interface FactcheckClaimResult {
+  claim: string;
+  verdict: ClaimVerdict;
+  confidence: number;
+  evidence?: string;
+  source_url?: string;
+  ml_analysis?: {
+    ml_confidence?: number;
+    entities?: Array<{ entity: string; word: string; score: number }>;
+    supporting: string[];
+    contradicting: string[];
+  };
+}
+
+/** Factcheck result from backend */
+export interface FactcheckResult {
+  overall_credibility: number;
+  credibility_grade: CredibilityGrade;
+  verdict: 'verified' | 'suspicious' | 'unverified';
+  claims_analyzed: number;
+  verified_claims: number;
+  false_claims: number;
+  unverified_claims: number;
+  claims?: FactcheckClaimResult[];
+  risk_flags?: string[];
+  explanations?: string[];
+  detailed_analytics?: DetailedAnalytics;
+}
+
+/** Factcheck addon request */
+export interface FactcheckAddonRequest {
+  request_id: string;
+  addon_id: string;
+  task?: string;
+  input_schema_version?: string;
+  article?: {
+    id?: number;
+    title?: string;
+    content?: string;
+    url?: string;
+    source?: string;
+    published_at?: string;
+  };
+  context?: {
+    language?: string;
+    country?: string;
+  };
+  options?: {
+    importance?: string;
+    debug?: boolean;
+    timeout_ms?: number;
+    analysis_mode?: FactcheckAnalysisMode;
+    include_detailed_analytics?: boolean;
+  };
+}
+
+/** Factcheck addon response */
+export interface FactcheckAddonResponse {
+  request_id: string;
+  addon_id: string;
+  status: 'success' | 'error' | 'partial';
+  output_schema_version?: string;
+  results?: {
+    factcheck?: FactcheckResult;
+    raw?: Record<string, unknown>;
+  };
+  error?: {
+    code: string;
+    message: string;
+    details?: string;
+  };
+  meta?: {
+    model_version: string;
+    latency_ms: number;
+    processed_at: string;
+    ml_enabled?: boolean;
+    models_loaded?: string[];
+  };
 }

@@ -9,82 +9,89 @@
  * - 하단: DailyInsightCard, RecommendedTemplates
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   HeroSearchBar,
   ContinueCard,
   QuickActionCards,
-  TrendingTopics,
   TrendingTopicsCompact,
-  RecentSearches,
   RecentSearchesCompact,
   RecommendedTemplates,
   DailyInsightCard,
   UsageStreakCard,
 } from '@/components/home';
-import { useContinueWork } from '@/hooks/useContinueWork';
 import { useUsageStreak } from '@/hooks/useUsageStreak';
 import { useTrendingTopics } from '@/hooks/useTrendingTopics';
+import { getFavoriteTemplates, getMostUsedTemplates, type SearchTemplate } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Sparkles, TrendingUp } from 'lucide-react';
 
+const DEFAULT_USER_ID = 'default-user';
+
 export function NewHome() {
   const navigate = useNavigate();
-  const { lastWork, recentWorks } = useContinueWork();
-  const { streak, weeklyStats, recordVisit } = useUsageStreak();
-  const { trending, recommended, isLoading: trendingLoading } = useTrendingTopics();
+  const { stats: usageStats, isLoading: usageLoading } = useUsageStreak();
+  const { topics: trending, personalizedTopics: recommended, isLoading: trendingLoading } = useTrendingTopics();
 
-  // 검색 실행
-  const handleSearch = (query: string, mode: 'quick' | 'deep' | 'factcheck') => {
-    const modeParam = mode === 'quick' ? '' : `?mode=${mode}`;
-    navigate(`/search${modeParam}`, { state: { query } });
-  };
+  const [templates, setTemplates] = useState<SearchTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  
+  // 트렌딩 토픽이 없으면 개인화 토픽 사용
+  const displayTopics = trending.length > 0 ? trending : recommended;
 
   // 검색 기록 (localStorage에서)
-  const [recentSearches] = useState<string[]>(() => {
+  const [recentSearches] = useState<any[]>(() => {
     try {
       const stored = localStorage.getItem('newsinsight_recent_searches');
-      return stored ? JSON.parse(stored) : [];
+      const raw = stored ? JSON.parse(stored) : [];
+      if (!Array.isArray(raw)) return [];
+
+      const now = new Date().toISOString();
+      return raw
+        .filter((q) => typeof q === 'string' && q.trim())
+        .slice(0, 20)
+        .map((q, idx) => ({
+          id: idx + 1,
+          query: q,
+          searchType: 'UNIFIED',
+          createdAt: now,
+        }));
     } catch {
       return [];
     }
   });
-
-  // 최근 검색 클릭
-  const handleRecentSearchClick = (query: string) => {
-    navigate('/search', { state: { query } });
-  };
 
   // 트렌드 클릭
   const handleTrendingClick = (keyword: string) => {
     navigate('/search', { state: { query: keyword } });
   };
 
-  // 이어하기 클릭
-  const handleContinueWork = () => {
-    if (lastWork) {
-      navigate(lastWork.path);
-    }
-  };
 
-  // 빠른 액션 클릭
-  const handleQuickAction = (action: string) => {
-    switch (action) {
-      case 'deep':
-        navigate('/search?mode=deep');
-        break;
-      case 'factcheck':
-        navigate('/search?mode=factcheck');
-        break;
-      case 'url':
-        navigate('/ai-agent');
-        break;
-      case 'bias':
-        navigate('/ml-addons');
-        break;
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    const loadTemplates = async () => {
+      setTemplatesLoading(true);
+      try {
+        const [favorites, mostUsed] = await Promise.all([
+          getFavoriteTemplates(DEFAULT_USER_ID).catch(() => []),
+          getMostUsedTemplates(DEFAULT_USER_ID, 10).catch(() => []),
+        ]);
+
+        if (cancelled) return;
+
+        const merged = new Map<number, any>();
+        [...favorites, ...mostUsed].forEach((t: any) => merged.set(t.id, t));
+        setTemplates(Array.from(merged.values()));
+      } finally {
+        if (!cancelled) setTemplatesLoading(false);
+      }
+    };
+    loadTemplates();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="min-h-[calc(100vh-8rem)] bg-gradient-to-b from-background to-muted/20">
@@ -102,17 +109,13 @@ export function NewHome() {
           </div>
 
           {/* 메인 검색창 */}
-          <HeroSearchBar
-            onSearch={handleSearch}
-            placeholder="뉴스 키워드, URL, 또는 분석하고 싶은 주제를 입력하세요..."
-            className="max-w-2xl mx-auto"
-          />
+          <HeroSearchBar className="max-w-2xl mx-auto" />
 
           {/* 연속 사용 뱃지 */}
-          {streak > 0 && (
+          {!usageLoading && usageStats.currentStreak > 0 && (
             <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-sm">
               <Sparkles className="h-4 w-4 text-primary" />
-              <span className="font-medium">{streak}일 연속 사용 중!</span>
+              <span className="font-medium">{usageStats.currentStreak}일 연속 사용 중!</span>
             </div>
           )}
         </div>
@@ -125,37 +128,33 @@ export function NewHome() {
             {/* Left Column - 메인 콘텐츠 */}
             <div className="lg:col-span-2 space-y-6">
               {/* 이어하기 카드 */}
-              {lastWork && (
-                <ContinueCard
-                  work={lastWork}
-                  onContinue={handleContinueWork}
-                />
-              )}
+              <ContinueCard />
 
               {/* 빠른 액션 카드들 */}
-              <QuickActionCards onAction={handleQuickAction} />
+              <QuickActionCards />
 
               {/* 오늘의 논쟁 이슈 */}
               <DailyInsightCard />
 
               {/* 추천 템플릿 */}
-              <RecommendedTemplates />
+              <RecommendedTemplates
+                templates={templates}
+                isLoading={templatesLoading}
+                showDefaults={false}
+              />
             </div>
 
             {/* Right Column - 사이드바 */}
             <div className="space-y-6">
               {/* 사용 현황 */}
-              <UsageStreakCard
-                streak={streak}
-                weeklyStats={weeklyStats}
-              />
+              <UsageStreakCard />
 
               {/* 오늘의 트렌드 */}
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base flex items-center gap-2">
                     <TrendingUp className="h-4 w-4" />
-                    오늘의 트렌드
+                    {trending.length > 0 ? '오늘의 트렌드' : '내 관심 주제'}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-0">
@@ -165,11 +164,16 @@ export function NewHome() {
                         <div key={i} className="h-8 bg-muted animate-pulse rounded" />
                       ))}
                     </div>
-                  ) : (
+                  ) : displayTopics.length > 0 ? (
                     <TrendingTopicsCompact
-                      topics={trending}
+                      topics={displayTopics}
                       onTopicClick={handleTrendingClick}
                     />
+                  ) : (
+                    <div className="text-center py-4 text-muted-foreground">
+                      <p className="text-sm">아직 트렌드 데이터가 없습니다</p>
+                      <p className="text-xs mt-1">검색을 시작해 보세요</p>
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -178,7 +182,6 @@ export function NewHome() {
               {recentSearches.length > 0 && (
                 <RecentSearchesCompact
                   searches={recentSearches}
-                  onSearchClick={handleRecentSearchClick}
                   maxItems={5}
                 />
               )}

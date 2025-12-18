@@ -11,6 +11,7 @@ import reactor.core.publisher.Mono;
 
 import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -98,11 +99,14 @@ public class VectorSearchService {
         return embeddingService.embedQuery(query)
                 .flatMap(queryEmbedding -> {
                     if (queryEmbedding == null || queryEmbedding.length == 0) {
-                        return Mono.just(List.of());
+                        return Mono.just(List.<ScoredDocument>of());
                     }
                     return Mono.fromCallable(() -> searchByVector(queryEmbedding, topK));
                 })
-                .onErrorReturn(List.of());
+                .onErrorResume(e -> {
+                    log.error("Vector search failed: {}", e.getMessage());
+                    return Mono.just(List.<ScoredDocument>of());
+                });
     }
 
     /**

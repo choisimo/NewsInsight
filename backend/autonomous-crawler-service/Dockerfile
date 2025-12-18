@@ -5,6 +5,7 @@ FROM python:3.11-slim as base
 # Install system dependencies for Playwright
 RUN apt-get update && apt-get install -y \
     wget \
+    curl \
     gnupg \
     ca-certificates \
     fonts-liberation \

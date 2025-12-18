@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "cloudflare": {
+      "type": "local",
+      "command": ["npx", "-y", "@cloudflare/mcp-server-cloudflare"],
+      "enabled": true,
+      "environment": {
+        "CLOUDFLARE_ACCOUNT_ID": "{env:CLOUDFLARE_ACCOUNT_ID}",
+        "CLOUDFLARE_API_TOKEN": "{env:CLOUDFLARE_API_TOKEN}"
+      }
+    },
+    "gcp": {
+      "type": "local",
+      "command": ["npx", "-y", "@anthropic/mcp-server-gcp"],
+      "enabled": true,
+      "environment": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "{env:GOOGLE_APPLICATION_CREDENTIALS}"
+      }
+    }
+  }
+}

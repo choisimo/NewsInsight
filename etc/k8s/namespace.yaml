@@ -1,0 +1,13 @@
+# ============================================================================
+# NewsInsight Kubernetes Namespace
+# ============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: newsinsight
+  labels:
+    app.kubernetes.io/name: newsinsight
+    app.kubernetes.io/part-of: newsinsight
+  annotations:
+    description: "NewsInsight AI 기반 뉴스 분석 플랫폼"

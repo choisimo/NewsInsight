@@ -40,7 +40,7 @@ public class GoogleFactCheckSource implements FactCheckSource {
     @Value("${collector.fact-check.google.api-key:}")
     private String apiKey;
 
-    @Value("${collector.fact-check.google.enabled:false}")
+    @Value("${collector.fact-check.google.enabled:true}")
     private boolean enabled;
 
     @Value("${collector.fact-check.timeout-seconds:15}")

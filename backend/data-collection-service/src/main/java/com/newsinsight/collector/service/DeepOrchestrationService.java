@@ -6,6 +6,7 @@ import com.newsinsight.collector.dto.*;
 import com.newsinsight.collector.entity.ai.*;
 import com.newsinsight.collector.repository.AiJobRepository;
 import com.newsinsight.collector.repository.AiSubTaskRepository;
+import com.newsinsight.collector.service.autocrawl.AutoCrawlIntegrationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,11 +21,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
  * Orchestration service for multi-provider AI analysis.
  * Manages job lifecycle, sub-task distribution, and result aggregation.
+ * 
+ * AutoCrawl Integration: Notifies AutoCrawl of discovered URLs when deep analysis completes.
  */
 @Service
 @RequiredArgsConstructor
@@ -35,6 +40,7 @@ public class DeepOrchestrationService {
     private final AiSubTaskRepository aiSubTaskRepository;
     private final KafkaTemplate<String, AiTaskRequestMessage> aiTaskRequestKafkaTemplate;
     private final ObjectMapper objectMapper;
+    private final AutoCrawlIntegrationService autoCrawlIntegrationService;
 
     @Value("${collector.ai.orchestration.topic:ai.tasks.requests}")
     private String aiTaskRequestTopic;
@@ -50,6 +56,15 @@ public class DeepOrchestrationService {
 
     @Value("${collector.ai.orchestration.cleanup-days:7}")
     private int cleanupDays;
+
+    @Value("${autocrawl.enabled:true}")
+    private boolean autoCrawlEnabled;
+
+    // URL extraction pattern for discovering URLs in AI results
+    private static final Pattern URL_PATTERN = Pattern.compile(
+            "https?://[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]+",
+            Pattern.CASE_INSENSITIVE
+    );
 
     /**
      * Start a new deep analysis job with multiple AI providers.
@@ -394,6 +409,8 @@ public class DeepOrchestrationService {
         long pending = subTasks.stream().filter(t -> 
                 t.getStatus() == AiTaskStatus.PENDING || t.getStatus() == AiTaskStatus.IN_PROGRESS).count();
 
+        AiJobStatus previousStatus = job.getOverallStatus();
+        
         if (pending > 0) {
             // Still processing
             job.setOverallStatus(AiJobStatus.IN_PROGRESS);
@@ -414,6 +431,59 @@ public class DeepOrchestrationService {
         aiJobRepository.save(job);
         log.info("Updated job status: id={}, status={}, completed={}/{}", 
                 job.getId(), job.getOverallStatus(), completed, total);
+
+        // Notify AutoCrawl of discovered URLs when job completes (fully or partially)
+        if (autoCrawlEnabled && previousStatus == AiJobStatus.IN_PROGRESS 
+                && (job.getOverallStatus() == AiJobStatus.COMPLETED 
+                    || job.getOverallStatus() == AiJobStatus.PARTIAL_SUCCESS)) {
+            notifyAutoCrawlOfDiscoveredUrls(job, subTasks);
+        }
+    }
+
+    /**
+     * Extract URLs from completed sub-task results and notify AutoCrawl.
+     */
+    private void notifyAutoCrawlOfDiscoveredUrls(AiJob job, List<AiSubTask> subTasks) {
+        try {
+            Set<String> discoveredUrls = new HashSet<>();
+            
+            for (AiSubTask subTask : subTasks) {
+                if (subTask.getStatus() == AiTaskStatus.COMPLETED && subTask.getResultJson() != null) {
+                    // Extract URLs from result JSON
+                    List<String> urls = extractUrlsFromText(subTask.getResultJson());
+                    discoveredUrls.addAll(urls);
+                }
+            }
+
+            if (!discoveredUrls.isEmpty()) {
+                log.info("Deep search job {} discovered {} unique URLs, notifying AutoCrawl", 
+                        job.getId(), discoveredUrls.size());
+                autoCrawlIntegrationService.onDeepSearchCompleted(
+                        job.getId(), 
+                        job.getTopic(), 
+                        new ArrayList<>(discoveredUrls)
+                );
+            }
+        } catch (Exception e) {
+            log.warn("Failed to notify AutoCrawl of discovered URLs: jobId={}, error={}", 
+                    job.getId(), e.getMessage());
+        }
+    }
+
+    /**
+     * Extract URLs from text content.
+     */
+    private List<String> extractUrlsFromText(String text) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        
+        Matcher matcher = URL_PATTERN.matcher(text);
+        List<String> urls = new ArrayList<>();
+        while (matcher.find()) {
+            urls.add(matcher.group());
+        }
+        return urls;
     }
 
     private AiJobDto toJobDto(AiJob job) {

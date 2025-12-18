@@ -21,19 +21,24 @@ public class DataController {
     private final EntityMapper entityMapper;
 
     /**
-     * GET /api/v1/data - 수집된 데이터 목록 조회 (소스/처리상태 필터링 지원)
+     * GET /api/v1/data - 수집된 데이터 목록 조회 (소스/처리상태/검색 필터링 지원)
      */
     @GetMapping
     public ResponseEntity<Page<CollectedDataDTO>> listData(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) Long sourceId,
-            @RequestParam(required = false) Boolean processed) {
+            @RequestParam(required = false) Boolean processed,
+            @RequestParam(required = false) String query) {
         
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "collectedAt"));
         
         Page<CollectedData> data;
-        if (sourceId != null && processed != null) {
+        
+        // 검색어가 있는 경우
+        if (query != null && !query.isBlank()) {
+            data = collectedDataService.searchWithFilter(query, processed, pageable);
+        } else if (sourceId != null && processed != null) {
             // 소스 + 처리상태 동시 필터링은 별도의 커스텀 쿼리 필요 (현재는 소스 기준 필터만 수행)
             data = collectedDataService.findBySourceId(sourceId, pageable);
         } else if (sourceId != null) {

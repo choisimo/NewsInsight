@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.newsinsight.collector.client.PerplexityClient;
 import com.newsinsight.collector.config.TrustScoreConfig;
 import com.newsinsight.collector.service.factcheck.FactCheckSource;
+import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer;
+import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.AnalyzedQuery;
+import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.FallbackStrategy;
 import lombok.Builder;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -43,18 +46,21 @@ public class FactVerificationService {
     private final List<FactCheckSource> factCheckSources;
     private final TrustScoreConfig trustScoreConfig;
     private final List<TrustedSource> trustedSources;
+    private final AdvancedIntentAnalyzer advancedIntentAnalyzer;
 
     public FactVerificationService(
             WebClient webClient,
             ObjectMapper objectMapper,
             PerplexityClient perplexityClient,
             List<FactCheckSource> factCheckSources,
-            TrustScoreConfig trustScoreConfig) {
+            TrustScoreConfig trustScoreConfig,
+            AdvancedIntentAnalyzer advancedIntentAnalyzer) {
         this.webClient = webClient;
         this.objectMapper = objectMapper;
         this.perplexityClient = perplexityClient;
         this.factCheckSources = factCheckSources;
         this.trustScoreConfig = trustScoreConfig;
+        this.advancedIntentAnalyzer = advancedIntentAnalyzer;
         
         // Initialize trusted sources with externalized scores
         this.trustedSources = initializeTrustedSources();
@@ -234,8 +240,16 @@ public class FactVerificationService {
     public Flux<DeepAnalysisEvent> analyzeAndVerify(String topic, List<String> claims) {
         log.info("Starting deep analysis and verification for topic: {}", topic);
 
+        // Advanced Intent Analysis for better search strategies
+        AnalyzedQuery analyzedTopic = advancedIntentAnalyzer.analyzeQuery(topic);
+        log.info("Topic analyzed: keywords={}, primary='{}', intent={}, strategies={}",
+                analyzedTopic.getKeywords().size(),
+                analyzedTopic.getPrimaryKeyword(),
+                analyzedTopic.getIntentType(),
+                analyzedTopic.getFallbackStrategies().size());
+
         // 간단한 언어 감지 (영문 알파벳 포함 여부 기준)
-        String language = detectLanguage(topic);
+        String language = analyzedTopic.getLanguage();
 
         return Flux.create(sink -> {
             // 1. 시작 이벤트
@@ -252,8 +266,8 @@ public class FactVerificationService {
                     .message("관련 개념을 수집하고 있습니다...")
                     .build());
 
-            // 병렬로 모든 신뢰할 수 있는 소스에서 정보 수집
-            List<SourceEvidence> allEvidence = fetchAllSourceEvidence(topic, language);
+            // 병렬로 모든 신뢰할 수 있는 소스에서 정보 수집 (폴백 전략 포함)
+            List<SourceEvidence> allEvidence = fetchAllSourceEvidenceWithFallback(analyzedTopic, language);
 
             // Claim 정보가 있다면, claim과의 유사도 기반으로 근거를 1차 필터링
             List<SourceEvidence> filteredEvidence = filterEvidenceForClaims(allEvidence, claims);
@@ -274,9 +288,17 @@ public class FactVerificationService {
                         .message("신뢰할 수 있는 출처에서 " + filteredEvidence.size() + "개의 유의미한 근거를 수집했습니다. (" + statsMessage + ")")
                         .evidence(filteredEvidence)
                         .build());
+            } else {
+                // 결과가 없을 때 도움말 메시지
+                String noResultMessage = advancedIntentAnalyzer.buildNoResultMessage(analyzedTopic);
+                sink.next(DeepAnalysisEvent.builder()
+                        .eventType("status")
+                        .phase("concepts")
+                        .message("관련 근거를 찾기 어려웠습니다.\n" + noResultMessage)
+                        .build());
             }
 
-            // 3. 각 주장에 대한 검증
+            // 3. 각 주장에 대한 검증 (향상된 키워드 매칭)
             if (claims != null && !claims.isEmpty()) {
                 sink.next(DeepAnalysisEvent.builder()
                         .eventType("status")
@@ -288,7 +310,8 @@ public class FactVerificationService {
                 
                 for (int i = 0; i < claims.size(); i++) {
                     String claim = claims.get(i);
-                    VerificationResult result = verifyClaim(claim, filteredEvidence);
+                    // 향상된 claim 검증
+                    VerificationResult result = verifyClaimWithIntentAnalysis(claim, filteredEvidence);
                     verificationResults.add(result);
 
                     sink.next(DeepAnalysisEvent.builder()
@@ -358,6 +381,149 @@ public class FactVerificationService {
                 sink.complete();
             }
         });
+    }
+
+    // ============================================
+    // Enhanced Evidence Collection with Fallback
+    // ============================================
+
+    /**
+     * 폴백 전략을 사용하여 모든 소스에서 근거 수집
+     */
+    private List<SourceEvidence> fetchAllSourceEvidenceWithFallback(AnalyzedQuery analyzedQuery, String language) {
+        List<SourceEvidence> allEvidence = new CopyOnWriteArrayList<>();
+        
+        // 원본 쿼리로 먼저 시도
+        String currentQuery = analyzedQuery.getOriginalQuery();
+        allEvidence.addAll(fetchAllSourceEvidence(currentQuery, language));
+        
+        // 결과가 부족하면 폴백 전략 사용
+        if (allEvidence.size() < 3 && analyzedQuery.getFallbackStrategies() != null) {
+            int maxAttempts = Math.min(3, analyzedQuery.getFallbackStrategies().size());
+            
+            for (int i = 0; i < maxAttempts && allEvidence.size() < 5; i++) {
+                FallbackStrategy strategy = analyzedQuery.getFallbackStrategies().get(i);
+                log.info("Fact verification fallback attempt {}: strategy='{}', query='{}'", 
+                        i + 1, strategy.getStrategyType(), strategy.getQuery());
+                
+                List<SourceEvidence> fallbackEvidence = fetchAllSourceEvidence(strategy.getQuery(), language);
+                
+                // 중복 제거하며 추가
+                for (SourceEvidence evidence : fallbackEvidence) {
+                    boolean isDuplicate = allEvidence.stream()
+                            .anyMatch(e -> e.getUrl() != null && e.getUrl().equals(evidence.getUrl()));
+                    if (!isDuplicate) {
+                        allEvidence.add(evidence);
+                    }
+                }
+            }
+        }
+        
+        log.info("Total evidence collected with fallback: {} items", allEvidence.size());
+        return new ArrayList<>(allEvidence);
+    }
+
+    /**
+     * 향상된 Claim 검증 - Intent Analysis 사용
+     */
+    private VerificationResult verifyClaimWithIntentAnalysis(String claim, List<SourceEvidence> backgroundEvidence) {
+        // Claim에 대한 의도 분석
+        AnalyzedQuery analyzedClaim = advancedIntentAnalyzer.analyzeQuery(claim);
+        List<String> keywords = analyzedClaim.getKeywords();
+        String primaryKeyword = analyzedClaim.getPrimaryKeyword();
+
+        // 배경 증거와 대조
+        List<SourceEvidence> supporting = new ArrayList<>();
+        List<SourceEvidence> contradicting = new ArrayList<>();
+
+        for (SourceEvidence evidence : backgroundEvidence) {
+            // 향상된 유사도 계산 - 키워드 매칭 포함
+            double similarity = calculateEnhancedSimilarity(claim, evidence.getExcerpt(), keywords, primaryKeyword);
+            
+            if (similarity > 0.25) {  // 낮은 임계값으로 더 많은 매칭
+                evidence.setRelevanceScore(similarity);
+                
+                // 감성 분석으로 지지/반박 구분
+                if (containsContradiction(claim, evidence.getExcerpt())) {
+                    evidence.setStance("contradict");
+                    contradicting.add(evidence);
+                } else {
+                    evidence.setStance("support");
+                    supporting.add(evidence);
+                }
+            }
+        }
+
+        // 검증 상태 결정
+        VerificationStatus status;
+        double confidence;
+
+        if (!supporting.isEmpty() && contradicting.isEmpty()) {
+            status = VerificationStatus.VERIFIED;
+            confidence = Math.min(0.6 + supporting.size() * 0.1, 0.95);
+        } else if (!supporting.isEmpty() && !contradicting.isEmpty()) {
+            status = VerificationStatus.DISPUTED;
+            confidence = 0.5;
+        } else if (supporting.isEmpty() && !contradicting.isEmpty()) {
+            status = VerificationStatus.FALSE;
+            confidence = 0.3;
+        } else {
+            status = VerificationStatus.UNVERIFIED;
+            confidence = 0.4;
+        }
+
+        String summary = generateVerificationSummary(status, supporting.size(), contradicting.size());
+
+        return VerificationResult.builder()
+                .claimId(UUID.randomUUID().toString())
+                .originalClaim(claim)
+                .status(status)
+                .confidenceScore(confidence)
+                .supportingEvidence(supporting)
+                .contradictingEvidence(contradicting)
+                .verificationSummary(summary)
+                .relatedConcepts(keywords)
+                .build();
+    }
+
+    /**
+     * 향상된 유사도 계산 - 키워드 매칭 + 자카드 유사도 결합
+     */
+    private double calculateEnhancedSimilarity(
+            String claim, 
+            String evidence, 
+            List<String> keywords, 
+            String primaryKeyword) {
+        
+        if (claim == null || evidence == null) return 0;
+        
+        String lowerClaim = claim.toLowerCase();
+        String lowerEvidence = evidence.toLowerCase();
+        
+        double score = 0;
+        
+        // 1. 기본 자카드 유사도
+        double jaccardScore = calculateSimilarity(claim, evidence);
+        score += jaccardScore * 0.4;
+        
+        // 2. 주요 키워드 매칭 (높은 가중치)
+        if (primaryKeyword != null && !primaryKeyword.isBlank() && 
+                lowerEvidence.contains(primaryKeyword.toLowerCase())) {
+            score += 0.3;
+        }
+        
+        // 3. 기타 키워드 매칭
+        if (keywords != null && !keywords.isEmpty()) {
+            int matchCount = 0;
+            for (String keyword : keywords) {
+                if (lowerEvidence.contains(keyword.toLowerCase())) {
+                    matchCount++;
+                }
+            }
+            score += (double) matchCount / keywords.size() * 0.3;
+        }
+        
+        return Math.min(score, 1.0);
     }
 
     // ============================================

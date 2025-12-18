@@ -11,7 +11,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import {
   Search,
   Brain,
@@ -44,6 +44,7 @@ import {
   Star,
   Link as LinkIcon,
   FileText,
+  Eye,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,14 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { useToast } from "@/hooks/use-toast";
 import {
   startUnifiedSearchJob,
@@ -87,6 +96,7 @@ import {
   getRecentlyUsedTemplates,
   searchTemplatesByName,
   extractClaimsFromUrl,
+  getSearchHistoryByExternalId,
   type UnifiedSearchResult,
   type Evidence,
   type DeepSearchResult,
@@ -101,6 +111,17 @@ import { PriorityUrlEditor, type PriorityUrl } from "@/components/PriorityUrlEdi
 // ============================================
 
 type SearchMode = "unified" | "deep" | "factcheck" | "urlanalysis";
+
+type TemplateMode = "unified" | "deep" | "factcheck";
+type TemplateItemType = "unified" | "evidence" | "factcheck";
+
+const toTemplateMode = (mode: SearchMode): TemplateMode => {
+  return mode === "urlanalysis" ? "factcheck" : mode;
+};
+
+const isTemplateItem = (item: SelectedItem): item is SelectedItem & { type: TemplateItemType } => {
+  return item.type !== "urlclaim";
+};
 
 interface SelectedItem {
   id: string;
@@ -205,9 +226,10 @@ interface UnifiedResultCardProps {
   result: UnifiedSearchResult;
   isSelected: boolean;
   onSelect: () => void;
+  onViewDetail: () => void;
 }
 
-const UnifiedResultCard = ({ result, isSelected, onSelect }: UnifiedResultCardProps) => {
+const UnifiedResultCard = ({ result, isSelected, onSelect, onViewDetail }: UnifiedResultCardProps) => {
   const sourceConfig = SOURCE_CONFIG[result.source] || SOURCE_CONFIG.web;
   const SourceIcon = sourceConfig.icon;
 
@@ -233,6 +255,19 @@ const UnifiedResultCard = ({ result, isSelected, onSelect }: UnifiedResultCardPr
             )}
           </div>
           <div className="flex flex-col gap-1">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={onViewDetail}
+                    className="p-2 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                  >
+                    <Eye className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>세부 내용 보기</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -273,9 +308,10 @@ interface EvidenceCardProps {
   evidence: Evidence;
   isSelected: boolean;
   onSelect: () => void;
+  onViewDetail: () => void;
 }
 
-const EvidenceCard = ({ evidence, isSelected, onSelect }: EvidenceCardProps) => {
+const EvidenceCard = ({ evidence, isSelected, onSelect, onViewDetail }: EvidenceCardProps) => {
   const stanceConfig = STANCE_CONFIG[evidence.stance] || STANCE_CONFIG.neutral;
   const StanceIcon = stanceConfig.icon;
 
@@ -299,6 +335,19 @@ const EvidenceCard = ({ evidence, isSelected, onSelect }: EvidenceCardProps) => 
             <p className="text-sm text-muted-foreground line-clamp-3">{evidence.snippet}</p>
           </div>
           <div className="flex flex-col gap-1">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={onViewDetail}
+                    className="p-2 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                  >
+                    <Eye className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>세부 내용 보기</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -339,9 +388,10 @@ interface VerificationCardProps {
   result: VerificationResult;
   isSelected: boolean;
   onSelect: () => void;
+  onViewDetail: () => void;
 }
 
-const VerificationCard = ({ result, isSelected, onSelect }: VerificationCardProps) => {
+const VerificationCard = ({ result, isSelected, onSelect, onViewDetail }: VerificationCardProps) => {
   const config = VERIFICATION_CONFIG[result.status] || VERIFICATION_CONFIG.UNVERIFIED;
   const StatusIcon = config.icon;
   const [expanded, setExpanded] = useState(false);
@@ -365,6 +415,19 @@ const VerificationCard = ({ result, isSelected, onSelect }: VerificationCardProp
               <p className="text-sm text-muted-foreground">{result.verificationSummary}</p>
             </div>
             <div className="flex flex-col gap-1">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={onViewDetail}
+                      className="p-2 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>세부 내용 보기</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -525,6 +588,7 @@ const SelectionPanel = ({ selectedItems, onRemove, onClear, onSaveTemplate }: Se
 
 export default function SmartSearch() {
   const { toast } = useToast();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Get initial mode from URL params (for backward compatibility redirects)
@@ -551,6 +615,12 @@ export default function SmartSearch() {
   const [unifiedLoading, setUnifiedLoading] = useState(false);
   const [unifiedError, setUnifiedError] = useState<string | null>(null);
   const unifiedEventSourceRef = useRef<EventSource | null>(null);
+  const [unifiedJobId, setUnifiedJobId] = useState<string | null>(null);
+
+  const [aiReportLoading, setAiReportLoading] = useState(false);
+  const [aiReportError, setAiReportError] = useState<string | null>(null);
+  const [aiReportSummary, setAiReportSummary] = useState<string | null>(null);
+  const [aiReportContent, setAiReportContent] = useState<string | null>(null);
 
   // Deep Search State
   const [deepJobId, setDeepJobId] = useState<string | null>(null);
@@ -578,6 +648,36 @@ export default function SmartSearch() {
   const [urlAnalysisError, setUrlAnalysisError] = useState<string | null>(null);
   const [urlPageTitle, setUrlPageTitle] = useState<string | null>(null);
   const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
+
+  // Detail View Dialog State
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [detailItem, setDetailItem] = useState<{
+    type: "unified" | "evidence" | "verification";
+    data: UnifiedSearchResult | Evidence | VerificationResult;
+  } | null>(null);
+
+  // Track if we should auto-search on initial load
+  const initialSearchRef = useRef(false);
+
+  // Accept navigation state from other pages (SearchHistory, UrlCollections, ParallelSearch, etc.)
+  useEffect(() => {
+    const state = location.state as {
+      query?: string;
+      priorityUrls?: PriorityUrl[];
+      fromHistory?: boolean;
+      autoSearch?: boolean;
+    } | null;
+
+    if (!state) return;
+
+    if (typeof state.query === 'string' && state.query.trim()) {
+      setQuery(state.query);
+    }
+
+    if (Array.isArray(state.priorityUrls) && state.priorityUrls.length > 0) {
+      setPriorityUrls(state.priorityUrls);
+    }
+  }, [location.state]);
 
   // Deep Search SSE Hook
   const {
@@ -657,11 +757,16 @@ export default function SmartSearch() {
               // Migrate old localStorage templates to server
               for (const t of localTemplates) {
                 try {
+                  const sanitizedMode = toTemplateMode(t.mode as SearchMode);
+                  const sanitizedItems = Array.isArray(t.items)
+                    ? (t.items as SelectedItem[]).filter(isTemplateItem)
+                    : [];
+
                   await createSearchTemplate({
                     name: t.name,
                     query: t.query,
-                    mode: t.mode,
-                    items: t.items,
+                    mode: sanitizedMode,
+                    items: sanitizedItems,
                     userId: DEFAULT_USER_ID,
                   });
                 } catch (migrationError) {
@@ -697,11 +802,10 @@ export default function SmartSearch() {
   // Save template to server
   const saveAsTemplate = useCallback(async (name: string) => {
     try {
-      const created = await createSearchTemplate({
-        name,
-        query,
-        mode: activeTab,
-        items: selectedItems.map((item) => ({
+      const templateMode = toTemplateMode(activeTab);
+      const templateItems = selectedItems
+        .filter(isTemplateItem)
+        .map((item) => ({
           id: item.id,
           type: item.type,
           title: item.title,
@@ -711,7 +815,13 @@ export default function SmartSearch() {
           stance: item.stance,
           verificationStatus: item.verificationStatus,
           addedAt: item.addedAt,
-        })),
+        }));
+
+      const created = await createSearchTemplate({
+        name,
+        query,
+        mode: templateMode,
+        items: templateItems,
         userId: DEFAULT_USER_ID,
       });
       
@@ -815,6 +925,7 @@ export default function SmartSearch() {
 
     try {
       const job = await startUnifiedSearchJob(query, "7d");
+      setUnifiedJobId(job.jobId);
       const es = await openUnifiedSearchJobStream(job.jobId);
       unifiedEventSourceRef.current = es;
 
@@ -855,6 +966,91 @@ export default function SmartSearch() {
       setUnifiedLoading(false);
     }
   }, [query]);
+
+  // Helper: Extract summary section from markdown content
+  const extractSummaryFromContent = useCallback((markdown: string | null | undefined): string | null => {
+    if (!markdown) return null;
+    
+    // Look for "### [요약]" or "## [요약]" section
+    let start = markdown.indexOf("### [요약]");
+    if (start < 0) start = markdown.indexOf("## [요약]");
+    if (start < 0) start = markdown.indexOf("### 요약");
+    if (start < 0) start = markdown.indexOf("## 요약");
+    if (start < 0) return null;
+
+    // Find next section header
+    let end = markdown.indexOf("\n### ", start + 1);
+    if (end < 0) end = markdown.indexOf("\n## ", start + 1);
+    if (end < 0) end = markdown.length;
+
+    const section = markdown.substring(start, end).trim();
+    return section || null;
+  }, []);
+
+  useEffect(() => {
+    const loadAiReport = async () => {
+      const current = detailItem?.type === "unified" ? (detailItem.data as UnifiedSearchResult) : null;
+      if (!detailDialogOpen || !current || current.source !== "ai") {
+        setAiReportLoading(false);
+        setAiReportError(null);
+        setAiReportSummary(null);
+        setAiReportContent(null);
+        return;
+      }
+
+      // Priority 1: Use SSE content if available (immediate, no network call)
+      const sseContent = current.content || null;
+      const sseSnippet = current.snippet || null;
+      
+      // If no jobId, use SSE data only
+      if (!unifiedJobId) {
+        setAiReportLoading(false);
+        setAiReportError(null);
+        const content = sseContent || sseSnippet;
+        setAiReportContent(content);
+        setAiReportSummary(extractSummaryFromContent(content));
+        return;
+      }
+
+      // Set initial content from SSE immediately while loading DB data
+      const initialContent = sseContent || sseSnippet;
+      setAiReportContent(initialContent);
+      setAiReportSummary(extractSummaryFromContent(initialContent));
+      
+      // Priority 2: Try to fetch from DB for persistence across refreshes
+      setAiReportLoading(true);
+      setAiReportError(null);
+      
+      try {
+        const record = await getSearchHistoryByExternalId(unifiedJobId);
+        const aiSummary = record.aiSummary || {};
+        const dbSummary = typeof (aiSummary as Record<string, unknown>).summary === "string" 
+          ? (aiSummary as Record<string, unknown>).summary as string 
+          : null;
+        const dbContent = typeof (aiSummary as Record<string, unknown>).content === "string" 
+          ? (aiSummary as Record<string, unknown>).content as string 
+          : null;
+
+        // Use DB content if available (most reliable), otherwise keep SSE content
+        const finalContent = dbContent || sseContent || sseSnippet;
+        const finalSummary = dbSummary || extractSummaryFromContent(finalContent);
+        
+        setAiReportContent(finalContent);
+        setAiReportSummary(finalSummary);
+      } catch (e) {
+        // DB fetch failed - keep using SSE content (already set above)
+        console.warn("Failed to load AI report from DB, using SSE content:", e);
+        // Don't show error to user if we have SSE content
+        if (!sseContent && !sseSnippet) {
+          setAiReportError(e instanceof Error ? e.message : "AI 보고서를 불러오는데 실패했습니다");
+        }
+      } finally {
+        setAiReportLoading(false);
+      }
+    };
+
+    void loadAiReport();
+  }, [detailDialogOpen, detailItem, unifiedJobId, extractSummaryFromContent]);
 
   // Deep Search
   const runDeepSearch = useCallback(async () => {
@@ -1026,6 +1222,21 @@ export default function SmartSearch() {
     else if (activeTab === "factcheck") runFactCheck();
     else if (activeTab === "urlanalysis") runUrlAnalysis();
   };
+
+  // Auto-search on initial load if query param exists (from home page navigation)
+  useEffect(() => {
+    const queryParam = searchParams.get("q");
+    if (queryParam && queryParam.trim() && !initialSearchRef.current) {
+      initialSearchRef.current = true;
+      // Delay to ensure state is set
+      const timer = setTimeout(() => {
+        if (activeTab === "unified") runUnifiedSearch();
+        else if (activeTab === "deep") runDeepSearch();
+        else if (activeTab === "factcheck") runFactCheck();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams, activeTab, runUnifiedSearch, runDeepSearch, runFactCheck]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1318,6 +1529,10 @@ export default function SmartSearch() {
                       source: result.source,
                     })
                   }
+                  onViewDetail={() => {
+                    setDetailItem({ type: "unified", data: result });
+                    setDetailDialogOpen(true);
+                  }}
                 />
               ))}
               {!unifiedLoading && unifiedResults.length === 0 && !unifiedError && (
@@ -1403,6 +1618,10 @@ export default function SmartSearch() {
                       stance: STANCE_CONFIG[evidence.stance]?.label,
                     })
                   }
+                  onViewDetail={() => {
+                    setDetailItem({ type: "evidence", data: evidence });
+                    setDetailDialogOpen(true);
+                  }}
                 />
               ))}
               {!deepLoading && (!deepResults || deepResults.evidence?.length === 0) && !deepError && (
@@ -1479,6 +1698,10 @@ export default function SmartSearch() {
                       verificationStatus: result.status,
                     })
                   }
+                  onViewDetail={() => {
+                    setDetailItem({ type: "verification", data: result });
+                    setDetailDialogOpen(true);
+                  }}
                 />
               ))}
               {!factCheckLoading && factCheckResults.length === 0 && !factCheckError && (
@@ -1679,6 +1902,230 @@ export default function SmartSearch() {
           상단의 "선택한 항목" 패널에서 템플릿으로 저장할 수 있습니다.
         </span>
       </div>
+
+      {/* Detail View Dialog */}
+      <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          {detailItem?.type === "unified" && (() => {
+            const result = detailItem.data as UnifiedSearchResult;
+            const sourceConfig = SOURCE_CONFIG[result.source] || SOURCE_CONFIG.web;
+            const SourceIcon = sourceConfig.icon;
+            return (
+              <>
+                <DialogHeader>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge variant="outline" className={`${sourceConfig.color} flex items-center gap-1`}>
+                      <SourceIcon className="h-3 w-3" />
+                      {result.sourceLabel || sourceConfig.label}
+                    </Badge>
+                    {result.publishedAt && (
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(result.publishedAt).toLocaleDateString("ko-KR")}
+                      </span>
+                    )}
+                  </div>
+                  <DialogTitle className="text-lg">{result.title}</DialogTitle>
+                  {result.url && (
+                    <DialogDescription className="break-all">
+                      <a href={result.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline flex items-center gap-1">
+                        {result.url}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </DialogDescription>
+                  )}
+                </DialogHeader>
+                <div className="mt-4 space-y-4">
+                  {result.source === "ai" ? (
+                    <div>
+                      {/* Summary Section */}
+                      <div className="flex items-center gap-2 mb-2">
+                        <h4 className="font-medium text-sm">요약</h4>
+                        {aiReportLoading && (
+                          <span className="text-xs text-muted-foreground animate-pulse">
+                            (DB에서 불러오는 중...)
+                          </span>
+                        )}
+                      </div>
+                      <div className="bg-muted/30 rounded-lg p-3">
+                        {aiReportSummary ? (
+                          <MarkdownRenderer content={aiReportSummary} isStreaming={false} />
+                        ) : aiReportLoading ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <div className="h-4 w-4 border-2 border-muted-foreground/30 border-t-muted-foreground rounded-full animate-spin" />
+                            불러오는 중...
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">요약 섹션이 없습니다.</p>
+                        )}
+                      </div>
+
+                      {/* Full Content Section */}
+                      <h4 className="font-medium text-sm mt-4 mb-2">전체 내용</h4>
+                      <div className="bg-white/70 dark:bg-black/30 rounded-lg border p-4 max-h-[50vh] overflow-y-auto">
+                        {aiReportError && (
+                          <p className="text-sm text-amber-600 dark:text-amber-400 mb-2 flex items-center gap-1">
+                            <span className="shrink-0">!</span> 
+                            DB 조회 실패 - SSE 데이터를 표시합니다
+                          </p>
+                        )}
+                        {aiReportContent ? (
+                          <MarkdownRenderer content={aiReportContent} isStreaming={false} />
+                        ) : aiReportLoading ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <div className="h-4 w-4 border-2 border-muted-foreground/30 border-t-muted-foreground rounded-full animate-spin" />
+                            불러오는 중...
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">내용이 없습니다.</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : result.content ? (
+                    <div>
+                      <h4 className="font-medium text-sm mb-2">전체 내용</h4>
+                      <div className="bg-white/70 dark:bg-black/30 rounded-lg border p-4 max-h-[50vh] overflow-y-auto">
+                        <MarkdownRenderer content={result.content} isStreaming={false} />
+                      </div>
+                    </div>
+                  ) : result.snippet ? (
+                    <div>
+                      <h4 className="font-medium text-sm mb-2">내용</h4>
+                      <div className="bg-muted/30 rounded-lg p-3">
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{result.snippet}</p>
+                      </div>
+                    </div>
+                  ) : null}
+                  {(() => {
+                    const author = (result as unknown as { author?: unknown })?.author;
+                    if (typeof author !== "string" || !author) return null;
+                    return (
+                      <div>
+                        <h4 className="font-medium text-sm mb-1">작성자</h4>
+                        <p className="text-sm text-muted-foreground">{author}</p>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </>
+            );
+          })()}
+          
+          {detailItem?.type === "evidence" && (() => {
+            const evidence = detailItem.data as Evidence;
+            const stanceConfig = STANCE_CONFIG[evidence.stance] || STANCE_CONFIG.neutral;
+            const StanceIcon = stanceConfig.icon;
+            return (
+              <>
+                <DialogHeader>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge variant="outline" className={`${stanceConfig.color} flex items-center gap-1`}>
+                      <StanceIcon className="h-3 w-3" />
+                      {stanceConfig.label}
+                    </Badge>
+                    {evidence.source && (
+                      <span className="text-xs text-muted-foreground">{evidence.source}</span>
+                    )}
+                  </div>
+                  <DialogTitle className="text-lg">{evidence.title || "증거 자료"}</DialogTitle>
+                  {evidence.url && (
+                    <DialogDescription className="break-all">
+                      <a href={evidence.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline flex items-center gap-1">
+                        {evidence.url}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </DialogDescription>
+                  )}
+                </DialogHeader>
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <h4 className="font-medium text-sm mb-2">전체 내용</h4>
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{evidence.snippet}</p>
+                  </div>
+                  {(() => {
+                    const relevance = (evidence as unknown as { relevance?: unknown })?.relevance;
+                    if (typeof relevance !== "number") return null;
+                    return (
+                      <div>
+                        <h4 className="font-medium text-sm mb-1">관련도</h4>
+                        <Progress value={relevance * 100} className="h-2" />
+                        <span className="text-xs text-muted-foreground">{Math.round(relevance * 100)}%</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </>
+            );
+          })()}
+          
+          {detailItem?.type === "verification" && (() => {
+            const result = detailItem.data as VerificationResult;
+            const config = VERIFICATION_CONFIG[result.status] || VERIFICATION_CONFIG.UNVERIFIED;
+            const StatusIcon = config.icon;
+            return (
+              <>
+                <DialogHeader>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge className={`${config.bgColor} ${config.color} border-none`}>
+                      <StatusIcon className="h-3 w-3 mr-1" />
+                      {config.label}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      신뢰도: {Math.round(result.confidenceScore * 100)}%
+                    </span>
+                  </div>
+                  <DialogTitle className="text-lg">팩트체크 결과</DialogTitle>
+                </DialogHeader>
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <h4 className="font-medium text-sm mb-2">원본 주장</h4>
+                    <p className="text-sm p-3 bg-muted rounded-lg">{result.originalClaim}</p>
+                  </div>
+                  <div>
+                    <h4 className="font-medium text-sm mb-2">검증 요약</h4>
+                    <p className="text-sm text-muted-foreground">{result.verificationSummary}</p>
+                  </div>
+                  {result.supportingEvidence.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-sm mb-2 text-green-600">지지 근거 ({result.supportingEvidence.length})</h4>
+                      <div className="space-y-2">
+                        {result.supportingEvidence.map((e, i) => (
+                          <div key={i} className="text-sm p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border-l-2 border-green-400">
+                            <p className="font-medium text-xs text-green-700 mb-1">{e.sourceName}</p>
+                            <p className="text-muted-foreground">{e.excerpt}</p>
+                            {e.url && (
+                              <a href={e.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline mt-1 inline-flex items-center gap-1">
+                                출처 보기 <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {result.contradictingEvidence.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-sm mb-2 text-red-600">반박 근거 ({result.contradictingEvidence.length})</h4>
+                      <div className="space-y-2">
+                        {result.contradictingEvidence.map((e, i) => (
+                          <div key={i} className="text-sm p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border-l-2 border-red-400">
+                            <p className="font-medium text-xs text-red-700 mb-1">{e.sourceName}</p>
+                            <p className="text-muted-foreground">{e.excerpt}</p>
+                            {e.url && (
+                              <a href={e.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline mt-1 inline-flex items-center gap-1">
+                                출처 보기 <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

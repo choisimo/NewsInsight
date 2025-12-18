@@ -52,12 +52,14 @@ export const listCollectedData = async (
   page: number = 0,
   size: number = 20,
   sourceId?: number,
-  processed?: boolean
+  processed?: boolean,
+  query?: string
 ): Promise<PageResponse<CollectedDataDTO>> => {
   const client = await getApiClient();
   const params: Record<string, string | number | boolean> = { page, size };
   if (sourceId !== undefined) params.sourceId = sourceId;
   if (processed !== undefined) params.processed = processed;
+  if (query !== undefined && query.trim() !== '') params.query = query.trim();
   
   const response = await client.get<PageResponse<CollectedDataDTO>>('/api/v1/data', { params });
   return response.data;

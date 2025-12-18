@@ -1,10 +1,19 @@
 import { useState, useCallback, useEffect } from "react";
+import {
+  saveSearchHistorySync,
+  listSearchHistory,
+  deleteSearchHistory,
+  updateSearchTags,
+  updateSearchNotes,
+  type SearchHistoryRecord,
+} from "@/lib/api";
 
 /**
  * Browser Agent 작업 결과 저장 데이터 구조
  */
 export interface SavedAgentResult {
   id: string;
+  dbId?: number; // 백엔드 DB ID
   savedAt: string;
   
   // 작업 정보
@@ -62,80 +71,180 @@ export interface SaveAgentResultInput {
   notes?: string;
 }
 
-const STORAGE_KEY = "newsinsight_agent_results";
-const MAX_SAVED_RESULTS = 100;
 const MAX_SCREENSHOT_SIZE = 500000; // 500KB limit for screenshots
 
 /**
+ * SearchHistoryRecord를 SavedAgentResult로 변환
+ */
+const recordToAgentResult = (record: SearchHistoryRecord): SavedAgentResult => {
+  const metadata = record.metadata as {
+    task?: string;
+    startUrl?: string;
+    status?: "completed" | "failed" | "cancelled";
+    result?: string;
+    error?: string;
+    executionStats?: {
+      totalSteps: number;
+      maxSteps: number;
+      durationMs?: number;
+      startedAt?: string;
+      completedAt?: string;
+    };
+    visitedUrls?: string[];
+    lastScreenshot?: string;
+  } | undefined;
+
+  return {
+    id: record.externalId || String(record.id),
+    dbId: record.id,
+    savedAt: record.createdAt,
+    task: record.query,
+    startUrl: metadata?.startUrl,
+    jobId: record.externalId || String(record.id),
+    status: metadata?.status || (record.success ? "completed" : "failed"),
+    result: metadata?.result,
+    error: record.errorMessage || metadata?.error,
+    executionStats: metadata?.executionStats || {
+      totalSteps: 0,
+      maxSteps: 0,
+      durationMs: record.durationMs,
+    },
+    visitedUrls: record.discoveredUrls || metadata?.visitedUrls || [],
+    lastScreenshot: metadata?.lastScreenshot,
+    tags: record.tags,
+    notes: record.notes,
+  };
+};
+
+/**
  * Browser Agent 결과 저장 및 관리를 위한 훅
+ * 백엔드 API를 통해 데이터를 저장하고 조회합니다.
  */
 export function useAgentResultsStorage() {
   const [savedResults, setSavedResults] = useState<SavedAgentResult[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // localStorage에서 저장된 결과 로드
-  useEffect(() => {
+  // 백엔드에서 저장된 결과 로드
+  const loadResults = useCallback(async () => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as SavedAgentResult[];
-        setSavedResults(parsed);
-      }
-    } catch (error) {
-      console.error("Failed to load saved agent results:", error);
+      setError(null);
+      const response = await listSearchHistory(0, 100, 'createdAt', 'DESC', 'BROWSER_AGENT');
+      const results = response.content.map(recordToAgentResult);
+      setSavedResults(results);
+    } catch (err) {
+      console.error("Failed to load saved agent results:", err);
+      setError(err instanceof Error ? err.message : "결과를 불러오는데 실패했습니다.");
     } finally {
       setIsLoaded(true);
     }
   }, []);
 
+  // 초기 로드
+  useEffect(() => {
+    loadResults();
+  }, [loadResults]);
+
   // 결과 저장
-  const saveResult = useCallback((input: SaveAgentResultInput): string => {
+  const saveResult = useCallback(async (input: SaveAgentResultInput): Promise<string> => {
     // 스크린샷 크기 제한
     let screenshot = input.lastScreenshot;
     if (screenshot && screenshot.length > MAX_SCREENSHOT_SIZE) {
       screenshot = undefined; // 너무 크면 저장하지 않음
     }
 
-    const newResult: SavedAgentResult = {
-      ...input,
-      lastScreenshot: screenshot,
-      id: `agent_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-      savedAt: new Date().toISOString(),
-    };
+    const externalId = `agent_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-    setSavedResults((prev) => {
-      // 최대 개수 제한
-      const updated = [newResult, ...prev].slice(0, MAX_SAVED_RESULTS);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      return updated;
-    });
+    try {
+      setError(null);
+      const savedRecord = await saveSearchHistorySync({
+        externalId,
+        searchType: 'BROWSER_AGENT',
+        query: input.task,
+        discoveredUrls: input.visitedUrls,
+        durationMs: input.executionStats.durationMs,
+        errorMessage: input.error,
+        success: input.status === "completed",
+        metadata: {
+          task: input.task,
+          startUrl: input.startUrl,
+          status: input.status,
+          result: input.result,
+          error: input.error,
+          executionStats: input.executionStats,
+          visitedUrls: input.visitedUrls,
+          lastScreenshot: screenshot,
+        },
+      });
 
-    return newResult.id;
+      // 로컬 상태 업데이트
+      const newResult = recordToAgentResult(savedRecord);
+      setSavedResults((prev) => [newResult, ...prev].slice(0, 100));
+
+      return newResult.id;
+    } catch (err) {
+      console.error("Failed to save agent result:", err);
+      setError(err instanceof Error ? err.message : "저장에 실패했습니다.");
+      throw err;
+    }
   }, []);
 
   // 결과 삭제
-  const deleteResult = useCallback((id: string) => {
-    setSavedResults((prev) => {
-      const updated = prev.filter((r) => r.id !== id);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
+  const deleteResult = useCallback(async (id: string) => {
+    try {
+      setError(null);
+      const resultToDelete = savedResults.find((r) => r.id === id);
+      if (resultToDelete?.dbId) {
+        await deleteSearchHistory(resultToDelete.dbId);
+      }
+      setSavedResults((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      console.error("Failed to delete agent result:", err);
+      // 로컬에서는 삭제 (백엔드 실패해도 UI 반영)
+      setSavedResults((prev) => prev.filter((r) => r.id !== id));
+    }
+  }, [savedResults]);
 
   // 여러 결과 삭제
-  const deleteResults = useCallback((ids: string[]) => {
-    setSavedResults((prev) => {
-      const updated = prev.filter((r) => !ids.includes(r.id));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
+  const deleteResults = useCallback(async (ids: string[]) => {
+    try {
+      setError(null);
+      for (const id of ids) {
+        const resultToDelete = savedResults.find((r) => r.id === id);
+        if (resultToDelete?.dbId) {
+          try {
+            await deleteSearchHistory(resultToDelete.dbId);
+          } catch {
+            // 개별 삭제 실패는 무시
+          }
+        }
+      }
+      setSavedResults((prev) => prev.filter((r) => !ids.includes(r.id)));
+    } catch (err) {
+      console.error("Failed to delete agent results:", err);
+      setSavedResults((prev) => prev.filter((r) => !ids.includes(r.id)));
+    }
+  }, [savedResults]);
 
   // 모든 결과 삭제
-  const clearAllResults = useCallback(() => {
-    setSavedResults([]);
-    localStorage.removeItem(STORAGE_KEY);
-  }, []);
+  const clearAllResults = useCallback(async () => {
+    try {
+      setError(null);
+      for (const result of savedResults) {
+        if (result.dbId) {
+          try {
+            await deleteSearchHistory(result.dbId);
+          } catch {
+            // 개별 삭제 실패는 무시
+          }
+        }
+      }
+      setSavedResults([]);
+    } catch (err) {
+      console.error("Failed to clear all results:", err);
+      setError(err instanceof Error ? err.message : "삭제에 실패했습니다.");
+    }
+  }, [savedResults]);
 
   // 특정 결과 조회
   const getResult = useCallback(
@@ -144,15 +253,36 @@ export function useAgentResultsStorage() {
   );
 
   // 결과 업데이트 (태그, 메모 등)
-  const updateResult = useCallback((id: string, updates: Partial<Pick<SavedAgentResult, "tags" | "notes">>) => {
-    setSavedResults((prev) => {
-      const updated = prev.map((r) => 
-        r.id === id ? { ...r, ...updates } : r
+  const updateResult = useCallback(async (id: string, updates: Partial<Pick<SavedAgentResult, "tags" | "notes">>) => {
+    try {
+      setError(null);
+      const resultToUpdate = savedResults.find((r) => r.id === id);
+      if (resultToUpdate?.dbId) {
+        // 태그와 메모를 개별 API로 업데이트
+        if (updates.tags !== undefined) {
+          await updateSearchTags(resultToUpdate.dbId, updates.tags);
+        }
+        if (updates.notes !== undefined) {
+          await updateSearchNotes(resultToUpdate.dbId, updates.notes);
+        }
+      }
+      setSavedResults((prev) => 
+        prev.map((r) => r.id === id ? { ...r, ...updates } : r)
       );
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
+    } catch (err) {
+      console.error("Failed to update agent result:", err);
+      // 로컬에서는 업데이트 (백엔드 실패해도 UI 반영)
+      setSavedResults((prev) => 
+        prev.map((r) => r.id === id ? { ...r, ...updates } : r)
+      );
+    }
+  }, [savedResults]);
+
+  // 결과 새로고침
+  const refresh = useCallback(() => {
+    setIsLoaded(false);
+    return loadResults();
+  }, [loadResults]);
 
   // 태그로 필터링
   const getResultsByTag = useCallback(
@@ -173,7 +303,7 @@ export function useAgentResultsStorage() {
     return Array.from(tags).sort();
   }, [savedResults]);
 
-  // JSON으로 내보내기
+  // JSON으로 내보내기 (로컬 기능 유지)
   const exportToJson = useCallback((id?: string) => {
     const dataToExport = id 
       ? savedResults.filter((r) => r.id === id)
@@ -181,8 +311,8 @@ export function useAgentResultsStorage() {
     
     if (dataToExport.length === 0) return null;
 
-    // 스크린샷 제외한 데이터로 내보내기 (파일 크기 감소)
-    const exportData = dataToExport.map(({ lastScreenshot, ...rest }) => rest);
+    // 스크린샷 및 dbId 제외한 데이터로 내보내기
+    const exportData = dataToExport.map(({ lastScreenshot, dbId, ...rest }) => rest);
 
     const blob = new Blob(
       [JSON.stringify(exportData, null, 2)],
@@ -385,12 +515,14 @@ export function useAgentResultsStorage() {
   return {
     savedResults,
     isLoaded,
+    error,
     saveResult,
     deleteResult,
     deleteResults,
     clearAllResults,
     getResult,
     updateResult,
+    refresh,
     getResultsByTag,
     getResultsByStatus,
     getAllTags,

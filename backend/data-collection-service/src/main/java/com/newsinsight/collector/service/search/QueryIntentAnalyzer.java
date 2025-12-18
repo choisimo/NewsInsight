@@ -138,8 +138,8 @@ public class QueryIntentAnalyzer {
                 .timeRange(timeRange)
                 .build();
 
-        log.debug("Query intent analyzed: query='{}', type={}, confidence={:.2f}, keywords={}", 
-                query, bestIntent, confidence, keywords);
+        log.debug("Query intent analyzed: query='{}', type={}, confidence={}, keywords={}", 
+                query, bestIntent, String.format("%.2f", confidence), keywords);
 
         return intent;
     }

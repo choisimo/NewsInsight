@@ -2,8 +2,10 @@ package com.newsinsight.collector.service;
 
 import com.newsinsight.collector.dto.CrawlResultMessage;
 import com.newsinsight.collector.entity.CollectedData;
+import com.newsinsight.collector.service.autocrawl.AutoCrawlIntegrationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 
@@ -17,6 +19,10 @@ import java.util.List;
 /**
  * Kafka Consumer for crawl results.
  * Handles idempotency via content hash deduplication in CollectedDataService.
+ * 
+ * Integrates with AutoCrawl to:
+ * - Trigger URL discovery from collected articles
+ * - Update CrawlTarget status on completion
  */
 @Service
 @RequiredArgsConstructor
@@ -24,6 +30,10 @@ import java.util.List;
 public class CrawlResultConsumerService {
 
     private final CollectedDataService collectedDataService;
+    private final AutoCrawlIntegrationService autoCrawlIntegrationService;
+
+    @Value("${autocrawl.enabled:true}")
+    private boolean autoCrawlEnabled;
 
     /**
      * Supported date formats for parsing publishedAt from various sources.
@@ -87,6 +97,19 @@ public class CrawlResultConsumerService {
         log.info("Saved crawl result: id={}, jobId={}, sourceId={}, url={}, hasContent={}, duplicate={}",
                 saved.getId(), message.jobId(), message.sourceId(), message.url(), 
                 hasContent, saved.getDuplicate());
+
+        // Integrate with AutoCrawl: discover new URLs from article and notify completion
+        if (autoCrawlEnabled) {
+            // 1. Discover new URLs from the collected article's content
+            autoCrawlIntegrationService.onArticleCollected(saved);
+            
+            // 2. Notify AutoCrawl of completion (update CrawlTarget status)
+            // Note: For AutoCrawl-originated tasks, the callback is sent separately by autonomous-crawler
+            // This is for crawl results that may be from other sources
+            if (saved.getUrl() != null) {
+                autoCrawlIntegrationService.onCrawlCompleted(saved.getUrl(), saved.getId());
+            }
+        }
     }
 
     /**

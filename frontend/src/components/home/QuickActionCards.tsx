@@ -39,7 +39,7 @@ const QUICK_ACTIONS: QuickAction[] = [
     color: 'text-purple-600 dark:text-purple-400',
     bgColor: 'bg-purple-50 dark:bg-purple-900/20',
     hoverColor: 'hover:bg-purple-100 dark:hover:bg-purple-900/30',
-    href: '/?mode=deep',
+    href: '/search?mode=deep',
     badge: 'AI',
   },
   {
@@ -50,7 +50,7 @@ const QUICK_ACTIONS: QuickAction[] = [
     color: 'text-green-600 dark:text-green-400',
     bgColor: 'bg-green-50 dark:bg-green-900/20',
     hoverColor: 'hover:bg-green-100 dark:hover:bg-green-900/30',
-    href: '/?mode=factcheck',
+    href: '/search?mode=factcheck',
   },
   {
     id: 'url',
@@ -60,7 +60,7 @@ const QUICK_ACTIONS: QuickAction[] = [
     color: 'text-orange-600 dark:text-orange-400',
     bgColor: 'bg-orange-50 dark:bg-orange-900/20',
     hoverColor: 'hover:bg-orange-100 dark:hover:bg-orange-900/30',
-    href: '/?mode=urlanalysis',
+    href: '/search?mode=urlanalysis',
   },
 ];
 

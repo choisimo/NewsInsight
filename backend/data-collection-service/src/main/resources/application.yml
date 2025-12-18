@@ -196,7 +196,7 @@ collector:
       browser-task: ${COLLECTOR_CRAWL_BROWSER_TASK_TOPIC:newsinsight.crawl.browser.tasks}
 
   crawler:
-    enabled: ${COLLECTOR_SERVICE_CRAWLER_ENABLED:false}
+    enabled: ${COLLECTOR_SERVICE_CRAWLER_ENABLED:true}
     base-url: ${COLLECTOR_SERVICE_CRAWLER_BASE_URL:http://web-crawler:11235}
 
   # Browser Agent Configuration (autonomous-crawler-service)
@@ -226,13 +226,13 @@ collector:
   # Integrated Crawler Configuration (multi-strategy crawling)
   integrated-crawler:
     # Maximum crawl depth (how many links deep to follow)
-    max-depth: ${COLLECTOR_INTEGRATED_CRAWLER_MAX_DEPTH:2}
+    max-depth: ${COLLECTOR_INTEGRATED_CRAWLER_MAX_DEPTH:3}
     # Maximum pages to crawl per job
-    max-pages: ${COLLECTOR_INTEGRATED_CRAWLER_MAX_PAGES:20}
+    max-pages: ${COLLECTOR_INTEGRATED_CRAWLER_MAX_PAGES:50}
     # Timeout per page crawl in seconds
     timeout-seconds: ${COLLECTOR_INTEGRATED_CRAWLER_TIMEOUT_SECONDS:30}
     # Number of concurrent crawls
-    concurrent-crawls: ${COLLECTOR_INTEGRATED_CRAWLER_CONCURRENT:5}
+    concurrent-crawls: ${COLLECTOR_INTEGRATED_CRAWLER_CONCURRENT:10}
 
   # Browser-Use API Configuration (for JS-rendered content)
   browser-use:
@@ -265,7 +265,7 @@ collector:
     # Google Fact Check Tools API (requires API key)
     # Get API key: https://developers.google.com/fact-check/tools/api
     google:
-      enabled: ${COLLECTOR_GOOGLE_FACTCHECK_ENABLED:false}
+      enabled: ${COLLECTOR_GOOGLE_FACTCHECK_ENABLED:true}
       api-key: ${COLLECTOR_GOOGLE_FACTCHECK_API_KEY:}
 
   # ============================================
@@ -328,3 +328,62 @@ collector:
     # Custom source scores (add your own)
     # custom:
     #   my-trusted-source: 0.88
+
+# ============================================
+# Auto-Crawl Configuration (실시간 확장형 크롤링)
+# ============================================
+# 
+# 검색, 기사, 트렌딩 등에서 자동으로 URL을 발견하고 크롤링합니다.
+# autonomous-crawler-service와 연동하여 동작합니다.
+#
+autocrawl:
+  # 자동 크롤링 활성화 여부
+  enabled: ${AUTOCRAWL_ENABLED:true}
+  
+  # 한 번에 처리할 대상 수
+  batch-size: ${AUTOCRAWL_BATCH_SIZE:10}
+  
+  # 도메인당 최대 동시 크롤링 수 (rate limiting)
+  max-concurrent-per-domain: ${AUTOCRAWL_MAX_CONCURRENT_PER_DOMAIN:3}
+  
+  # IN_PROGRESS 상태 타임아웃 (분) - 이 시간 초과 시 PENDING으로 복구
+  stuck-timeout-minutes: ${AUTOCRAWL_STUCK_TIMEOUT_MINUTES:30}
+  
+  # 오래된 완료/실패 대상 정리 기준 (일)
+  cleanup-days: ${AUTOCRAWL_CLEANUP_DAYS:7}
+  
+  # 오래된 PENDING 대상 만료 기준 (일)
+  expire-pending-days: ${AUTOCRAWL_EXPIRE_PENDING_DAYS:7}
+  
+  # 스케줄러 간격 (밀리초)
+  queue-interval-ms: ${AUTOCRAWL_QUEUE_INTERVAL_MS:30000}        # 30초마다 큐 처리
+  recovery-interval-ms: ${AUTOCRAWL_RECOVERY_INTERVAL_MS:300000}  # 5분마다 복구 체크
+  stats-interval-ms: ${AUTOCRAWL_STATS_INTERVAL_MS:600000}        # 10분마다 통계 로깅
+  
+  # 정리 작업 cron (새벽 3시)
+  cleanup-cron: ${AUTOCRAWL_CLEANUP_CRON:0 0 3 * * *}
+  
+  # URL 발견 소스별 활성화
+  discover-from-search: ${AUTOCRAWL_DISCOVER_FROM_SEARCH:true}
+  discover-from-articles: ${AUTOCRAWL_DISCOVER_FROM_ARTICLES:true}
+  discover-from-deep-search: ${AUTOCRAWL_DISCOVER_FROM_DEEP_SEARCH:true}
+  
+  # 최소 콘텐츠 길이 (이 이상인 경우에만 링크 추출)
+  min-content-length: ${AUTOCRAWL_MIN_CONTENT_LENGTH:200}
+  
+  # ============================================
+  # Seed URL 자동 초기화 설정
+  # ============================================
+  # docker-compose 시작 시 자동으로 seed URL을 큐에 추가합니다.
+  seed:
+    # seed 자동 초기화 활성화 (true로 설정 시 시작 시 seed URL 추가)
+    enabled: ${AUTOCRAWL_SEED_ENABLED:false}
+    
+    # 커스텀 seed URL (콤마로 구분, 비어있으면 기본 뉴스 포털 URL 사용)
+    urls: ${AUTOCRAWL_SEED_URLS:}
+    
+    # seed URL에 연결할 키워드
+    keywords: ${AUTOCRAWL_SEED_KEYWORDS:뉴스,정치,경제,사회,IT,기술}
+    
+    # seed URL 우선순위 (0-100, 높을수록 먼저 크롤링)
+    priority: ${AUTOCRAWL_SEED_PRIORITY:70}

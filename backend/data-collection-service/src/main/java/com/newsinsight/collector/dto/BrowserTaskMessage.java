@@ -1,5 +1,6 @@
 package com.newsinsight.collector.dto;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Builder;
 
 import java.time.LocalDateTime;
@@ -93,7 +94,9 @@ public record BrowserTaskMessage(
         
         /**
          * Task creation timestamp.
+         * Serialized as ISO-8601 string for Python compatibility.
          */
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss")
         LocalDateTime createdAt
 ) {
     public BrowserTaskMessage {

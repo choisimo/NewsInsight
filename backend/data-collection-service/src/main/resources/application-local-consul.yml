@@ -1,0 +1,103 @@
+# ============================================
+# Local Consul Profile Configuration
+# ============================================
+# 
+# 로컬 개발 및 Consul 연동 환경에서 사용하는 설정.
+# 모든 기능이 기본적으로 활성화됩니다.
+#
+# 사용법:
+# - SPRING_PROFILES_ACTIVE=local-consul
+# - docker-compose.consul.yml 사용 시 자동 적용
+#
+
+# ============================================
+# Scheduling (Collection Jobs)
+# ============================================
+collector:
+  scheduling:
+    enabled: true
+    # 30분마다 RSS 수집
+    cron: "0 0/30 * * * ?"
+    skip-if-running: true
+  
+  # RSS Feed
+  rss:
+    enabled: true
+  
+  # Web Scraper
+  web-scraper:
+    enabled: true
+  
+  # Browser Agent (autonomous-crawler-service)
+  browser-agent:
+    enabled: true
+  
+  # Deep Search (내부 통합 크롤러 사용)
+  deep-search:
+    timeout-minutes: 30
+    cleanup-days: 7
+  
+  # Integrated Crawler
+  integrated-crawler:
+    max-depth: 2
+    max-pages: 20
+    timeout-seconds: 30
+    concurrent-crawls: 5
+  
+  # Hybrid Search (Keyword + Semantic)
+  hybrid-search:
+    enabled: true
+    keyword-top-k: 30
+    semantic-top-k: 20
+    final-top-k: 20
+  
+  # Embedding Service
+  embedding:
+    enabled: true
+  
+  # Vector Search
+  vector-search:
+    enabled: true
+
+# ============================================
+# Auto-Crawl (실시간 확장형 크롤링)
+# ============================================
+autocrawl:
+  # 자동 크롤링 활성화
+  enabled: true
+  
+  # 배치 크기
+  batch-size: 10
+  
+  # 도메인당 최대 동시 크롤링
+  max-concurrent-per-domain: 3
+  
+  # 타임아웃 설정
+  stuck-timeout-minutes: 30
+  
+  # 정리 주기
+  cleanup-days: 7
+  expire-pending-days: 7
+  
+  # 스케줄러 간격 (개발환경에서는 짧게)
+  queue-interval-ms: 15000        # 15초마다 큐 처리
+  recovery-interval-ms: 120000    # 2분마다 복구 체크
+  stats-interval-ms: 300000       # 5분마다 통계 로깅
+  
+  # 모든 발견 소스 활성화
+  discover-from-search: true
+  discover-from-articles: true
+  discover-from-deep-search: true
+  
+  # 최소 콘텐츠 길이
+  min-content-length: 200
+
+# ============================================
+# Logging (개발환경에서 상세 로깅)
+# ============================================
+logging:
+  level:
+    root: INFO
+    com.newsinsight: DEBUG
+    com.newsinsight.collector.service.autocrawl: DEBUG
+    com.newsinsight.collector.scheduler: DEBUG

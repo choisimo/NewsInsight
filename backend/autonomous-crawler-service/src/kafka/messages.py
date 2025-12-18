@@ -2,9 +2,37 @@
 
 import json
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def parse_java_datetime(value: Any) -> datetime | None:
+    """
+    Parse datetime from various formats:
+    - ISO-8601 string: "2025-12-17T11:29:39"
+    - Java LocalDateTime array: [2025, 12, 17, 11, 29, 39, 532902301]
+    - Python datetime object
+    - None
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        # ISO-8601 string format
+        try:
+            # Try with microseconds
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            # Try without timezone
+            return datetime.fromisoformat(value)
+    if isinstance(value, (list, tuple)) and len(value) >= 6:
+        # Java LocalDateTime array format: [year, month, day, hour, minute, second, nano?]
+        year, month, day, hour, minute, second = value[:6]
+        microsecond = value[6] // 1000 if len(value) > 6 else 0  # nano to micro
+        return datetime(year, month, day, hour, minute, second, microsecond)
+    raise ValueError(f"Cannot parse datetime from: {value} (type: {type(value).__name__})")
 
 
 class BrowserTaskMessage(BaseModel):
@@ -57,6 +85,13 @@ class BrowserTaskMessage(BaseModel):
     created_at: datetime | None = Field(
         default=None, alias="createdAt", description="Task creation timestamp"
     )
+
+    # Validator to handle Java LocalDateTime array format
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def parse_created_at(cls, value: Any) -> datetime | None:
+        """Parse createdAt from Java LocalDateTime array or ISO string."""
+        return parse_java_datetime(value)
 
     class Config:
         populate_by_name = True
@@ -245,12 +280,12 @@ class EnhancedCrawlResultMessage(CrawlResultMessage):
 
         # 결과 메시지 생성
         result = cls(
-            job_id=job_id,
-            source_id=source_id,
+            jobId=job_id,
+            sourceId=source_id,
             url=url,
             title=title,
             content=content,
-            published_at=published_at,
+            publishedAt=published_at,
         )
         result.set_news_metadata(metadata)
 

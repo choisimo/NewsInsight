@@ -6,6 +6,7 @@ import { MobileNavDrawer } from '@/components/MobileNavDrawer';
 import { NotificationBell } from '@/contexts/NotificationContext';
 import { NewNavigation, MobileBottomNav } from './NewNavigation';
 import { cn } from '@/lib/utils';
+import { useAutoNotifications } from '@/hooks/useNotificationBridge';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -13,6 +14,15 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const location = useLocation();
+
+  // SSE 이벤트를 NotificationContext에 자동 연결
+  useAutoNotifications({
+    enabled: true,
+    // ERROR와 COLLECTION_COMPLETED 이벤트만 알림으로 표시 (너무 많은 알림 방지)
+    enabledEventTypes: ['ERROR', 'COLLECTION_COMPLETED', 'COLLECTION_STARTED'],
+    persistent: false, // 브라우저 새로고침 시 알림 삭제
+    dedupeInterval: 10000, // 10초 내 동일 타입 알림 중복 방지
+  });
 
   return (
     <div className="min-h-screen flex flex-col pb-16 md:pb-0">

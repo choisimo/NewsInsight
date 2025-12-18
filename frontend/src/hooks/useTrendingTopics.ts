@@ -1,11 +1,11 @@
 /**
- * useTrendingTopics - 실시간 트렌드 이슈 및 논쟁 주제 제공
+ * useTrendingTopics - 트렌드 이슈 및 개인화 추천 주제 제공
  * 
  * 기능:
- * - 오늘의 핫 이슈 목록
- * - 입장 분포 (찬/반/중립)
- * - 관련 뉴스 수
- * - 개인화된 추천 주제
+ * - 사용자 검색 기록 기반 개인화 토픽 추천
+ * - 백엔드 트렌딩 API 연동 준비 (현재 미구현)
+ * 
+ * 참고: 트렌딩 토픽 API가 구현되면 fetchTrendingTopics() 함수를 활성화하세요
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -46,117 +46,9 @@ interface UseTrendingTopicsReturn {
   personalizedTopics: TrendingTopic[];
   isLoading: boolean;
   error: string | null;
+  hasTrendingApi: boolean; // 트렌딩 API 사용 가능 여부
   refresh: () => Promise<void>;
 }
-
-// 기본 트렌딩 토픽 (실제 서비스에서는 API로 대체)
-const DEFAULT_TRENDING_TOPICS: TrendingTopic[] = [
-  {
-    id: 'trend_1',
-    title: 'AI 규제 법안 논의',
-    description: '인공지능 기술 규제에 대한 찬반 입장이 첨예',
-    category: '기술/정책',
-    stanceDistribution: {
-      pro: 45,
-      con: 35,
-      neutral: 20,
-      proRatio: 45,
-      conRatio: 35,
-      neutralRatio: 20,
-    },
-    newsCount: 127,
-    searchCount: 89,
-    lastUpdated: new Date().toISOString(),
-    trendScore: 85,
-    isHot: true,
-    isRising: true,
-    searchUrl: '/?mode=deep&q=AI+규제+법안',
-  },
-  {
-    id: 'trend_2',
-    title: '금리 동결 전망',
-    description: '한국은행 기준금리 결정에 대한 전문가 의견',
-    category: '경제',
-    stanceDistribution: {
-      pro: 40,
-      con: 30,
-      neutral: 30,
-      proRatio: 40,
-      conRatio: 30,
-      neutralRatio: 30,
-    },
-    newsCount: 98,
-    searchCount: 67,
-    lastUpdated: new Date().toISOString(),
-    trendScore: 78,
-    isHot: true,
-    isRising: false,
-    searchUrl: '/?mode=deep&q=기준금리+동결',
-  },
-  {
-    id: 'trend_3',
-    title: '기후변화 대응 정책',
-    description: '탄소중립 목표와 산업계 영향에 대한 분석',
-    category: '환경',
-    stanceDistribution: {
-      pro: 55,
-      con: 25,
-      neutral: 20,
-      proRatio: 55,
-      conRatio: 25,
-      neutralRatio: 20,
-    },
-    newsCount: 156,
-    searchCount: 112,
-    lastUpdated: new Date().toISOString(),
-    trendScore: 72,
-    isHot: false,
-    isRising: true,
-    searchUrl: '/?mode=deep&q=기후변화+탄소중립',
-  },
-  {
-    id: 'trend_4',
-    title: '반도체 수출 규제',
-    description: '미중 기술 갈등과 한국 반도체 산업 영향',
-    category: '산업/무역',
-    stanceDistribution: {
-      pro: 30,
-      con: 45,
-      neutral: 25,
-      proRatio: 30,
-      conRatio: 45,
-      neutralRatio: 25,
-    },
-    newsCount: 203,
-    searchCount: 145,
-    lastUpdated: new Date().toISOString(),
-    trendScore: 91,
-    isHot: true,
-    isRising: true,
-    searchUrl: '/?mode=deep&q=반도체+수출+규제',
-  },
-  {
-    id: 'trend_5',
-    title: '부동산 정책 효과',
-    description: '최근 부동산 정책의 시장 영향 분석',
-    category: '부동산',
-    stanceDistribution: {
-      pro: 35,
-      con: 50,
-      neutral: 15,
-      proRatio: 35,
-      conRatio: 50,
-      neutralRatio: 15,
-    },
-    newsCount: 178,
-    searchCount: 134,
-    lastUpdated: new Date().toISOString(),
-    trendScore: 68,
-    isHot: false,
-    isRising: false,
-    searchUrl: '/?mode=deep&q=부동산+정책',
-  },
-];
 
 // 검색 히스토리에서 개인화 토픽 추출
 const extractPersonalizedTopics = (history: SearchHistoryRecord[]): TrendingTopic[] => {
@@ -195,18 +87,27 @@ const extractPersonalizedTopics = (history: SearchHistoryRecord[]): TrendingTopi
     searchCount: data.count,
     lastUpdated: data.lastSearched,
     trendScore: Math.min(100, data.count * 20),
-    searchUrl: `/?q=${encodeURIComponent(query)}`,
+    searchUrl: `/search?q=${encodeURIComponent(query)}`,
   }));
 };
 
 /**
  * 트렌딩 토픽 및 개인화 추천 Hook
+ * 
+ * 현재 상태:
+ * - 트렌딩 API가 아직 구현되지 않아 topics는 빈 배열 반환
+ * - personalizedTopics는 사용자 검색 기록 기반으로 생성
+ * 
+ * 향후 개선:
+ * - 백엔드에 트렌딩 API 구현 후 fetchTrendingTopics() 연동
+ * - 예: GET /api/v1/trending/topics
  */
 export function useTrendingTopics(): UseTrendingTopicsReturn {
-  const [topics, setTopics] = useState<TrendingTopic[]>(DEFAULT_TRENDING_TOPICS);
+  const [topics, setTopics] = useState<TrendingTopic[]>([]);
   const [personalizedTopics, setPersonalizedTopics] = useState<TrendingTopic[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasTrendingApi] = useState(false); // 트렌딩 API 구현 시 true로 변경
 
   // 데이터 새로고침
   const refresh = useCallback(async () => {
@@ -219,23 +120,22 @@ export function useTrendingTopics(): UseTrendingTopicsReturn {
       const personalTopics = extractPersonalizedTopics(historyResponse.content);
       setPersonalizedTopics(personalTopics);
       
-      // TODO: 실제 트렌딩 API 연동 시 여기서 호출
-      // const trendingResponse = await fetchTrendingTopics();
-      // setTopics(trendingResponse);
+      // TODO: 백엔드 트렌딩 API 구현 시 활성화
+      // 예시:
+      // try {
+      //   const trendingResponse = await fetchTrendingTopics();
+      //   setTopics(trendingResponse);
+      //   setHasTrendingApi(true);
+      // } catch {
+      //   // 트렌딩 API 실패 시 빈 배열 유지
+      //   setTopics([]);
+      // }
       
-      // 현재는 기본 데이터 + 시간 기반 랜덤화
-      const shuffled = [...DEFAULT_TRENDING_TOPICS]
-        .sort(() => Math.random() - 0.5)
-        .map(topic => ({
-          ...topic,
-          lastUpdated: new Date().toISOString(),
-          trendScore: Math.floor(topic.trendScore! + (Math.random() * 10 - 5)),
-        }));
-      
-      setTopics(shuffled);
+      // 현재는 트렌딩 API가 없으므로 빈 배열
+      setTopics([]);
       
     } catch (e) {
-      setError(e instanceof Error ? e.message : '트렌드를 불러오는데 실패했습니다.');
+      setError(e instanceof Error ? e.message : '데이터를 불러오는데 실패했습니다.');
       console.error('Failed to load trending topics:', e);
     } finally {
       setIsLoading(false);
@@ -258,6 +158,7 @@ export function useTrendingTopics(): UseTrendingTopicsReturn {
     personalizedTopics,
     isLoading,
     error,
+    hasTrendingApi,
     refresh,
   };
 }

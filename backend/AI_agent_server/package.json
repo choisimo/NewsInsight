@@ -1,6 +1,0 @@
-{
-  "name": "opencode-serve-runner",
-  "version": "1.0.0",
-  "private": true,
-  "description": "A runner for the opencode-ai server"
-}

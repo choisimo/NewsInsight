@@ -1,0 +1,73 @@
+# 테스트 환경 설정
+spring:
+  application:
+    name: collector-service-test
+  
+  # Consul 비활성화
+  cloud:
+    consul:
+      enabled: false
+      config:
+        enabled: false
+      discovery:
+        enabled: false
+  
+  # 테스트용 H2 인메모리 DB
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+  
+  # MongoDB 비활성화
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/test
+      auto-index-creation: false
+    redis:
+      host: localhost
+      port: 6379
+  
+  # Kafka 비활성화
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      auto-startup: false
+    producer:
+      retries: 0
+
+# 임베딩 서비스 비활성화
+embedding:
+  enabled: false
+  base-url: http://localhost:8011
+
+# 하이브리드/벡터 검색 비활성화
+hybrid-search:
+  enabled: false
+
+vector-search:
+  enabled: false
+
+# 외부 서비스 Mock URL
+collector:
+  browser-use:
+    base-url: http://localhost:8500
+  service:
+    crawler:
+      base-url: http://localhost:11235
+  callback:
+    base-url: http://localhost:8081
+
+# 로깅 설정
+logging:
+  level:
+    root: WARN
+    com.newsinsight: DEBUG
+    org.springframework.web: DEBUG
+    org.hibernate.SQL: DEBUG

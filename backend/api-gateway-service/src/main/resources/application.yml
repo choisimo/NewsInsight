@@ -36,13 +36,13 @@ spring:
         # ===========================================
         # Collector Service Routes
         # COLLECTOR_SERVICE_URL 환경변수로 직접 URL 지정 가능
-        # Consul 사용 시: lb://collector-service (기본값)
-        # Consul 미사용 시: http://collector-service:8081
+        # Consul 사용 시: lb://collector-service
+        # Consul 미사용 시: http://collector-service:8081 (기본값)
         # ===========================================
         
         # Collector 서비스 - 데이터 API (DataController)
         - id: collector-data
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/data/**
           # NOTE: Redis RateLimiter 비활성화 - Redis 없이도 동작하도록 설정
@@ -55,47 +55,49 @@ spring:
 
         # Collector 서비스 - 소스 관리 (SourceController)
         - id: collector-sources
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/sources/**
 
         # Collector 서비스 - 수집 작업 (CollectionController)
         - id: collector-collections
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/collections/**
 
         # Articles & Analysis - 프론트엔드 API
         - id: articles-root
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/articles
 
         - id: articles-alias
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/articles/**
 
         - id: analysis-root
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/analysis
 
         - id: analysis-alias
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/analysis/**
+          metadata:
+            response-timeout: 300000
 
         # Search API - 통합 검색 (SSE 스트리밍)
         # NOTE: SSE 스트리밍은 RateLimiter와 호환성 문제가 있어 비활성화
         - id: search-api
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/search/**
 
         # Search History API - 검색 기록 관리
         - id: search-history
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/search-history/**
           metadata:
@@ -104,27 +106,38 @@ spring:
 
         # Search Template API - SmartSearch 검색 템플릿 관리
         - id: search-templates
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/search-templates/**
+
+        # AutoCrawl API - 자동 크롤링 관리 (AutoCrawlController)
+        - id: autocrawl
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/autocrawl/**
 
         # Config API - 프론트엔드 설정
         # NOTE: Gateway 자체 FrontendConfigController가 우선 처리됨
         # 이 라우트는 fallback으로 유지 (collector-service에도 ConfigController가 있을 경우)
         - id: config-api
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/config/**
 
         # AI Orchestration - AI 분석 요청 (collector-service AiOrchestrationController)
         - id: collector-ai
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/ai/**
 
+        - id: collector-ml
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/ml/**
+
         # Dashboard Events - SSE 실시간 업데이트 (collector-service DashboardEventsController)
         - id: collector-events
-          uri: ${COLLECTOR_SERVICE_URL:lb://collector-service}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/events/**
           metadata:
@@ -141,12 +154,12 @@ spring:
 
         # Autonomous Crawler - 크롤링 작업 관리
         - id: autonomous-crawler-api
-          uri: ${AUTONOMOUS_CRAWLER_URL:http://autonomous-crawler:9090}
+          uri: ${AUTONOMOUS_CRAWLER_API_URL:${AUTONOMOUS_CRAWLER_URL:http://autonomous-crawler:8030}}
           predicates:
             - Path=/api/v1/crawler/**
           filters:
-            # /api/v1/crawler/** -> /** 로 전달
-            - StripPrefix=2
+            # /api/v1/crawler/** -> /** 로 전달 (3 segments: api, v1, crawler)
+            - StripPrefix=3
 
         # Browser-Use API - AI 브라우저 자동화
         - id: browser-use-browse
@@ -207,6 +220,13 @@ spring:
             - Path=/api/ml-addons/bias/**
           filters:
             # /api/ml-addons/bias/** -> /** 로 전달
+            - StripPrefix=3
+
+        - id: ml-addon-bot-detector
+          uri: ${ML_ADDON_BOT_DETECTOR_URL:http://bot-detector:8041}
+          predicates:
+            - Path=/api/ml-addons/bot-detector/**
+          filters:
             - StripPrefix=3
 
         # Health Check Rewrite - 프론트엔드가 /api/actuator/health 호출 시 처리

@@ -400,6 +400,7 @@ const BrowserAgent = () => {
   const [enableIntervention, setEnableIntervention] = useState(true);
   const [autoIntervention, setAutoIntervention] = useState(true);
   const [autoSaveUrls, setAutoSaveUrls] = useState(true);
+  const [useProxyRotation, setUseProxyRotation] = useState(false);
 
   // Job state
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -705,27 +706,34 @@ const BrowserAgent = () => {
     },
   });
 
-  const handleSubmit = useCallback((e: React.FormEvent) => {
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!task.trim()) return;
 
     // 작업 시작 시간 기록
     jobStartTimeRef.current = new Date().toISOString();
 
-    startMutation.mutate({
+    await startMutation.mutateAsync({
       task: task.trim(),
       url: url.trim() || undefined,
       max_steps: maxSteps,
       headless: false,
       enable_human_intervention: enableIntervention,
       auto_request_intervention: autoIntervention,
+      use_proxy_rotation: useProxyRotation,
     });
-  }, [task, url, maxSteps, enableIntervention, autoIntervention, startMutation]);
+  }, [task, url, maxSteps, enableIntervention, autoIntervention, useProxyRotation, startMutation]);
 
   const handleReset = useCallback(() => {
     setCurrentJobId(null);
     setTask("");
     setUrl("");
+    setMaxSteps(25);
+    setEnableIntervention(true);
+    setAutoIntervention(true);
+    setAutoSaveUrls(true);
+    setUseProxyRotation(false);
+    setWsConnected(false);
     setLiveScreenshot(null);
     setLiveUrl(null);
     savedUrlsRef.current.clear();
@@ -735,7 +743,7 @@ const BrowserAgent = () => {
   }, [queryClient]);
 
   // 결과 저장 핸들러
-  const handleSaveResult = useCallback(() => {
+  const handleSaveResult = useCallback(async () => {
     if (!currentJob || !currentJobId) {
       toast({
         title: "저장할 결과가 없습니다",
@@ -749,28 +757,36 @@ const BrowserAgent = () => {
     const startedAt = jobStartTimeRef.current || completedAt;
     const durationMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
 
-    const savedId = saveResult({
-      task: task || currentJob.task || "Unknown task",
-      startUrl: url || undefined,
-      jobId: currentJobId,
-      status: currentJob.status as "completed" | "failed" | "cancelled",
-      result: currentJob.result || undefined,
-      error: currentJob.error || undefined,
-      executionStats: {
-        totalSteps: currentJob.current_step,
-        maxSteps: currentJob.max_steps,
-        durationMs,
-        startedAt,
-        completedAt,
-      },
-      visitedUrls: currentJob.urls_visited || [],
-      lastScreenshot: liveScreenshot || undefined,
-    });
+    try {
+      const savedId = await saveResult({
+        task: task || "Unknown task",
+        startUrl: url || undefined,
+        jobId: currentJobId,
+        status: currentJob.status as "completed" | "failed" | "cancelled",
+        result: currentJob.result || undefined,
+        error: currentJob.error || undefined,
+        executionStats: {
+          totalSteps: currentJob.current_step,
+          maxSteps: currentJob.max_steps,
+          durationMs,
+          startedAt,
+          completedAt,
+        },
+        visitedUrls: currentJob.urls_visited || [],
+        lastScreenshot: liveScreenshot || undefined,
+      });
 
-    toast({
-      title: "결과 저장됨",
-      description: `작업 결과가 저장되었습니다. (ID: ${savedId.slice(0, 8)}...)`,
-    });
+      toast({
+        title: "결과 저장됨",
+        description: `작업 결과가 저장되었습니다. (ID: ${savedId.slice(0, 8)}...)`,
+      });
+    } catch (err) {
+      toast({
+        title: "결과 저장 실패",
+        description: err instanceof Error ? err.message : "저장 중 오류가 발생했습니다.",
+        variant: "destructive",
+      });
+    }
   }, [currentJob, currentJobId, task, url, liveScreenshot, saveResult, toast]);
 
   // Deep Search로 분석 연계
@@ -1421,6 +1437,22 @@ const BrowserAgent = () => {
                       id="autoSaveUrls"
                       checked={autoSaveUrls}
                       onCheckedChange={setAutoSaveUrls}
+                      disabled={isProcessing || needsIntervention}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="useProxyRotation">Proxy Rotation</Label>
+                      <Badge variant="outline" className="text-xs">
+                        <Shield className="h-3 w-3 mr-1" />
+                        ip-rotation
+                      </Badge>
+                    </div>
+                    <Switch
+                      id="useProxyRotation"
+                      checked={useProxyRotation}
+                      onCheckedChange={setUseProxyRotation}
                       disabled={isProcessing || needsIntervention}
                     />
                   </div>

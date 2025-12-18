@@ -54,6 +54,7 @@ import {
   startUnifiedSearchJob,
   openUnifiedSearchJobStream,
   getUnifiedSearchJobStatus,
+  saveSearchHistorySync,
   type UnifiedSearchResult,
   type UnifiedSearchEvent,
   type UnifiedSearchJob,
@@ -218,11 +219,15 @@ interface AIStreamCardProps {
 const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence = [] }: AIStreamCardProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isFullViewOpen, setIsFullViewOpen] = useState(false);
+  const [showFullContent, setShowFullContent] = useState(false);
 
   if (!content) return null;
 
   // Filter evidence to only include non-AI results with URLs
   const validEvidence = evidence.filter(r => r.source !== 'ai' && r.url);
+
+  // Check if content is long (more than ~500 characters indicates substantial content)
+  const isLongContent = content.length > 500;
 
   return (
     <Card className="bg-purple-100 dark:bg-purple-900/30 border-l-4 border-l-purple-500">
@@ -370,8 +375,83 @@ const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence =
         <CollapsibleContent>
           <CardContent>
             <div className="bg-white/50 dark:bg-black/20 p-4 rounded-lg">
-              <MarkdownRenderer content={content} isStreaming={!isComplete} />
+              {/* Show full content or truncated based on state */}
+              {isLongContent && !showFullContent && isComplete ? (
+                <>
+                  <div className="max-h-[400px] overflow-hidden relative">
+                    <MarkdownRenderer content={content} isStreaming={false} />
+                    {/* Gradient fade at bottom */}
+                    <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-white/90 dark:from-black/40 to-transparent pointer-events-none" />
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowFullContent(true)}
+                    className="w-full mt-2 text-purple-600 hover:text-purple-700 hover:bg-purple-100"
+                  >
+                    <ChevronDown className="h-4 w-4 mr-1" />
+                    전체 내용 펼치기
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <MarkdownRenderer content={content} isStreaming={!isComplete} />
+                  {isLongContent && showFullContent && isComplete && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowFullContent(false)}
+                      className="w-full mt-2 text-purple-600 hover:text-purple-700 hover:bg-purple-100"
+                    >
+                      <ChevronUp className="h-4 w-4 mr-1" />
+                      접기
+                    </Button>
+                  )}
+                </>
+              )}
             </div>
+            
+            {/* Evidence summary in main view when complete */}
+            {isComplete && validEvidence.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-purple-200 dark:border-purple-800">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-purple-700 dark:text-purple-300 flex items-center gap-1">
+                    <Globe className="h-4 w-4" />
+                    참조 소스 ({validEvidence.length}개)
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsFullViewOpen(true)}
+                    className="text-xs text-purple-600"
+                  >
+                    모두 보기
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {validEvidence.slice(0, 5).map((item, index) => (
+                    <a
+                      key={item.id || index}
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white/70 dark:bg-black/30 text-xs hover:bg-white dark:hover:bg-black/50 transition-colors"
+                      title={item.title || item.url}
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      <span className="max-w-[150px] truncate">
+                        {item.sourceLabel || item.title || new URL(item.url).hostname}
+                      </span>
+                    </a>
+                  ))}
+                  {validEvidence.length > 5 && (
+                    <span className="inline-flex items-center px-2 py-1 text-xs text-muted-foreground">
+                      +{validEvidence.length - 5}개 더
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </CardContent>
         </CollapsibleContent>
       </Collapsible>
@@ -801,31 +881,33 @@ const ParallelSearch = () => {
   }, [addUrl, addFolder, urlExists, collection.root.children, toast]);
 
   // Save AI analysis result
-  const handleSaveAnalysis = useCallback(() => {
+  const handleSaveAnalysis = useCallback(async () => {
     if (!aiContent || !query) return;
     
-    const analysisKey = `newsinsight-analysis-${Date.now()}`;
-    const analysisData = {
-      id: analysisKey,
-      query,
-      content: aiContent,
-      timestamp: new Date().toISOString(),
-      jobId: currentJobId,
-      resultCount: results.length,
-    };
-    
     try {
-      // Get existing analyses
-      const existingStr = localStorage.getItem('newsinsight-saved-analyses');
-      const existing = existingStr ? JSON.parse(existingStr) : [];
-      
-      // Add new analysis
-      existing.unshift(analysisData);
-      
-      // Keep only the last 50 analyses
-      const trimmed = existing.slice(0, 50);
-      
-      localStorage.setItem('newsinsight-saved-analyses', JSON.stringify(trimmed));
+      // Save to backend using search history API
+      await saveSearchHistorySync({
+        externalId: currentJobId || `analysis-${Date.now()}`,
+        searchType: 'UNIFIED',
+        query,
+        resultCount: results.length,
+        results: results.map(r => ({
+          url: r.url,
+          title: r.title,
+          snippet: r.snippet,
+          source: r.source,
+          topics: r.topics,
+        })),
+        aiSummary: {
+          content: aiContent,
+          timestamp: new Date().toISOString(),
+        },
+        metadata: {
+          savedManually: true,
+          savedAt: new Date().toISOString(),
+        },
+        success: true,
+      });
       
       setIsAnalysisSaved(true);
       toast({
@@ -840,7 +922,7 @@ const ParallelSearch = () => {
         variant: "destructive",
       });
     }
-  }, [aiContent, query, currentJobId, results.length, toast]);
+  }, [aiContent, query, currentJobId, results, toast]);
 
   // Manual URL save handler for individual results
   const handleManualSaveUrl = useCallback((result: UnifiedSearchResult) => {

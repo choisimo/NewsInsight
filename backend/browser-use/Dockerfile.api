@@ -56,7 +56,7 @@ RUN apt-get update -qq \
     && ln -sf /usr/bin/chromium /usr/bin/chromium-browser
 
 # Install uv for fast package management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+RUN pip install --no-cache-dir uv
 
 # Copy dependency manifest first for caching
 COPY pyproject.toml uv.lock* ./

@@ -10,31 +10,17 @@
 #    - newsinsight.nodove.com -> http://frontend:8080
 #    - newsinsight.nodove.com/api/* -> http://api-gateway:8000
 #
-# 실행: docker compose -f docker-compose.zerotrust-newsinsight.yml up -d
+# 실행: docker compose -p newsinsight -f docker-compose.zerotrust-newsinsight.yml up -d
 
 services:
-  # Cloudflare Tunnel - 외부 트래픽을 내부 서비스로 라우팅
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: newsinsight-dedicated-cloudflared
-    restart: unless-stopped
-    command: tunnel run
-    environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN_NEWSINSIGHT}
-    depends_on:
-      frontend:
-        condition: service_started
-      api-gateway:
-        condition: service_started
-    networks:
-      - default
-    # 외부 포트 노출 없음 - Cloudflare Tunnel을 통해서만 접근
-
+  # ============================================================================
+  # Infrastructure Services
+  # ============================================================================
+  
   consul:
     image: hashicorp/consul:1.18
     container_name: newsinsight-consul
     command: ["agent", "-dev", "-client", "0.0.0.0", "-ui"]
-    # 외부 포트 노출 제거 - 내부 네트워크에서만 접근 가능
     expose:
       - "8500"
     environment:
@@ -44,6 +30,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    volumes:
+      - consul-data:/consul/data
 
   consul-seed:
     image: alpine:3.18
@@ -63,131 +51,6 @@ services:
         /scripts/consul_seed.sh ${ENVIRONMENT:-production}
       "
     restart: "no"
-
-  api-gateway:
-    build:
-      context: ../../
-      dockerfile: backend/api-gateway-service/Dockerfile
-    image: newsinsight/api-gateway:local
-    container_name: newsinsight-api-gateway
-    depends_on:
-      consul:
-        condition: service_healthy
-      consul-seed:
-        condition: service_completed_successfully
-      collector-service:
-        condition: service_started
-      browser-use-api:
-        condition: service_started
-    environment:
-      - CONSUL_HOST=${CONSUL_HOST:-consul}
-      - CONSUL_PORT=${CONSUL_PORT:-8500}
-      - CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN:-}
-      - REDIS_HOST=${REDIS_HOST:-redis}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - PORT=${API_GATEWAY_PORT:-8000}
-      - BROWSER_USE_URL=http://browser-use-api:8500
-      - BROWSER_USE_WS_URL=ws://browser-use-api:8500
-    # 외부 포트 노출 제거 - Cloudflare Tunnel을 통해서만 접근
-    expose:
-      - "8000"
-    networks:
-      - default
-
-  frontend:
-    image: node:20-alpine
-    container_name: newsinsight-frontend
-    working_dir: /app
-    volumes:
-      - ../../frontend:/app
-      - frontend-node-modules:/app/node_modules
-    environment:
-      # Zero Trust 환경: Vite 프록시를 통해 내부 api-gateway로 라우팅
-      - VITE_API_BASE_URL=http://api-gateway:8000
-      - VITE_BROWSER_USE_URL=http://api-gateway:8000
-    command: >
-      sh -c "(npm ci --legacy-peer-deps || npm install --legacy-peer-deps) \
-      && npm run dev -- --host 0.0.0.0 --port 8080"
-    # 외부 포트 노출 제거 - Cloudflare Tunnel을 통해서만 접근
-    expose:
-      - "8080"
-    depends_on:
-      api-gateway:
-        condition: service_started
-    networks:
-      - default
-
-  collector-service:
-    build:
-      context: ../../
-      dockerfile: backend/data-collection-service/Dockerfile
-    image: newsinsight/collector-service:local
-    container_name: newsinsight-collector-service
-    depends_on:
-      consul:
-        condition: service_healthy
-      consul-seed:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-      mongo:
-        condition: service_healthy
-      web-crawler:
-        condition: service_started
-      redpanda-dev:
-        condition: service_started
-    environment:
-      - CONSUL_HOST=${CONSUL_HOST:-consul}
-      - CONSUL_PORT=${CONSUL_PORT:-8500}
-      - CONSUL_ENABLED=${CONSUL_ENABLED:-true}
-      - "SPRING_CONFIG_IMPORT=consul:"
-      - SPRING_CLOUD_CONSUL_CONFIG_ENABLED=true
-      - SPRING_CLOUD_CONSUL_CONFIG_PREFIX=config
-      - SPRING_CLOUD_CONSUL_CONFIG_DEFAULT_CONTEXT=collector-service
-      - SPRING_CLOUD_CONSUL_CONFIG_FORMAT=YAML
-      - SPRING_CLOUD_CONSUL_CONFIG_FAIL_FAST=true
-      - REDIS_HOST=${REDIS_HOST:-redis}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - SPRING_DATA_REDIS_HOST=${REDIS_HOST:-redis}
-      - SPRING_DATA_REDIS_PORT=${REDIS_PORT:-6379}
-      - SPRING_JPA_HIBERNATE_DDL_AUTO=validate
-      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
-      - PERPLEXITY_MODEL=${PERPLEXITY_MODEL:-sonar}
-      - PERPLEXITY_BASE_URL=${PERPLEXITY_BASE_URL:-https://api.perplexity.ai}
-      # AI Service URLs (can be overridden via Consul KV)
-      - COLLECTOR_AIDOVE_BASE_URL=${COLLECTOR_SERVICE_AIDOVE_BASE_URL:-https://workflow.nodove.com/webhook/aidove}
-      - COLLECTOR_CALLBACK_BASE_URL=${COLLECTOR_SERVICE_CALLBACK_BASE_URL:-http://collector-service:8081}
-      # DeepSearch - uses IntegratedCrawlerService (n8n deprecated)
-      - COLLECTOR_DEEP_SEARCH_ENABLED=false
-      - COLLECTOR_DEEP_SEARCH_FALLBACK_TO_WEBHOOK=false
-      - DB_HOST=${DB_HOST:-postgres}
-      - DB_PORT=${DB_PORT:-5432}
-      - DB_NAME=${DB_NAME:-newsinsight}
-      - DB_USER=${DB_USER:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres}
-      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
-      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-redpanda-dev:9092}
-      - SERVER_PORT=${COLLECTOR_PORT:-8081}
-      - SPRING_CLOUD_INETUTILS_PREFERRED_NETWORKS=172.20
-    expose:
-      - "8081"
-    networks:
-      - default
-
-  web-crawler:
-    image: unclecode/crawl4ai:latest
-    container_name: newsinsight-web-crawler
-    shm_size: 1g
-    environment:
-      - LOG_LEVEL=${WEB_CRAWLER_LOG_LEVEL:-INFO}
-    # 외부 포트 노출 제거
-    expose:
-      - "11235"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:11235/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
   postgres:
     image: postgres:15-alpine
@@ -223,6 +86,20 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: newsinsight-redis
+    expose:
+      - "6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   redpanda-dev:
     image: docker.redpanda.com/redpandadata/redpanda:latest
     container_name: newsinsight-redpanda
@@ -243,26 +120,260 @@ services:
       - PLAINTEXT://0.0.0.0:9092
       - --advertise-kafka-addr
       - PLAINTEXT://redpanda-dev:9092
-    # 외부 포트 노출 제거
     expose:
       - "9092"
       - "9644"
-    networks:
-      - default
 
-  redis:
-    image: redis:7-alpine
-    container_name: newsinsight-redis
+  # ============================================================================
+  # Crawling Infrastructure
+  # ============================================================================
+
+  web-crawler:
+    image: unclecode/crawl4ai:latest
+    container_name: newsinsight-web-crawler
+    shm_size: 1g
+    environment:
+      - LOG_LEVEL=${WEB_CRAWLER_LOG_LEVEL:-INFO}
     expose:
-      - "6379"
-    command: redis-server --appendonly yes
-    volumes:
-      - redis-data:/data
+      - "11235"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+      test: ["CMD", "wget", "-qO-", "http://localhost:11235/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ip-rotation:
+    build:
+      context: ../../backend/browser-use/ip-rotation
+      dockerfile: Dockerfile
+    image: newsinsight/ip-rotation:local
+    container_name: newsinsight-ip-rotation
+    restart: unless-stopped
+    environment:
+      - STRATEGY=${IP_ROTATION_STRATEGY:-weighted}
+      - MAX_FAILURES=${IP_ROTATION_MAX_FAILURES:-5}
+      - COOLDOWN_MINUTES=${IP_ROTATION_COOLDOWN:-30}
+      - HEALTH_CHECK_INTERVAL=${IP_ROTATION_HEALTH_CHECK:-300}
+      - PERSISTENCE_PATH=/data/ip_pool_state.json
+      - PORT=8050
+    volumes:
+      - ip-rotation-data:/data
+    expose:
+      - "8050"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8050/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  crawl-worker:
+    build:
+      context: ../../
+      dockerfile: backend/autonomous-crawler-service/crawl-worker/Dockerfile
+    image: newsinsight/crawl-worker:local
+    container_name: newsinsight-crawl-worker
+    restart: unless-stopped
+    environment:
+      - PORT=8040
+      - MAX_CONCURRENT_CRAWLS=${CRAWL_WORKER_MAX_CONCURRENT:-5}
+      - USE_PROXY_ROTATION=${USE_PROXY_ROTATION:-true}
+      - PROXY_ROTATION_URL=http://ip-rotation:8050
+    expose:
+      - "8040"
+    depends_on:
+      ip-rotation:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  maigret-worker:
+    build:
+      context: ../../
+      dockerfile: backend/data-collection-service/maigret-worker/Dockerfile
+    image: newsinsight/maigret-worker:local
+    container_name: newsinsight-maigret-worker
+    restart: unless-stopped
+    environment:
+      - PORT=8020
+      - MAX_CONCURRENT_SCANS=${MAIGRET_MAX_CONCURRENT:-3}
+      - SCAN_TIMEOUT_SEC=${MAIGRET_TIMEOUT:-300}
+      - REPORTS_DIR=/app/reports
+      - USE_PROXY_ROTATION=${USE_PROXY_ROTATION:-true}
+      - PROXY_ROTATION_URL=http://ip-rotation:8050
+    volumes:
+      - maigret-reports:/app/reports
+    expose:
+      - "8020"
+    depends_on:
+      ip-rotation:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8020/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  browser-use-api:
+    build:
+      context: ../../backend/browser-use
+      dockerfile: Dockerfile.api
+    image: newsinsight/browser-use-api:local
+    container_name: newsinsight-browser-use-api
+    restart: unless-stopped
+    environment:
+      - AIDOVE_WEBHOOK_URL=${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
+      - BROWSER_HEADLESS=${BROWSER_USE_HEADLESS:-true}
+      - SERVER_PORT=8500
+      - LOG_LEVEL=${BROWSER_USE_LOG_LEVEL:-INFO}
+    expose:
+      - "8500"
+    shm_size: 2g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================================================
+  # ML Add-ons
+  # ============================================================================
+
+  sentiment-addon:
+    build:
+      context: ../../backend/ml-addons/sentiment-addon
+      dockerfile: Dockerfile
+    image: newsinsight/sentiment-addon:local
+    container_name: newsinsight-sentiment-addon
+    restart: unless-stopped
+    expose:
+      - "8100"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  factcheck-addon:
+    build:
+      context: ../../backend/ml-addons/factcheck-addon
+      dockerfile: Dockerfile
+    image: newsinsight/factcheck-addon:local
+    container_name: newsinsight-factcheck-addon
+    restart: unless-stopped
+    expose:
+      - "8101"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  bias-addon:
+    build:
+      context: ../../backend/ml-addons/bias-addon
+      dockerfile: Dockerfile
+    image: newsinsight/bias-addon:local
+    container_name: newsinsight-bias-addon
+    restart: unless-stopped
+    expose:
+      - "8102"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8102/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  bot-detector:
+    build:
+      context: ../../
+      dockerfile: backend/browser-use/bot-detector/Dockerfile
+    image: newsinsight/bot-detector:local
+    container_name: newsinsight-bot-detector
+    restart: unless-stopped
+    environment:
+      - BOT_DETECTOR_MODEL_NAME=${BOT_DETECTOR_MODEL_NAME:-roberta-base-openai-detector}
+    expose:
+      - "8040"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ============================================================================
+  # Application Services
+  # ============================================================================
+
+  collector-service:
+    build:
+      context: ../../
+      dockerfile: backend/data-collection-service/Dockerfile
+    image: newsinsight/collector-service:local
+    container_name: newsinsight-collector-service
+    depends_on:
+      consul:
+        condition: service_healthy
+      consul-seed:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web-crawler:
+        condition: service_started
+      redpanda-dev:
+        condition: service_started
+    environment:
+      - CONSUL_HOST=${CONSUL_HOST:-consul}
+      - CONSUL_PORT=${CONSUL_PORT:-8500}
+      - CONSUL_ENABLED=${CONSUL_ENABLED:-true}
+      - "SPRING_CONFIG_IMPORT=consul:"
+      - SPRING_PROFILES_ACTIVE=local-consul
+      - SPRING_CLOUD_CONSUL_CONFIG_ENABLED=true
+      - SPRING_CLOUD_CONSUL_CONFIG_PREFIX=config
+      - SPRING_CLOUD_CONSUL_CONFIG_DEFAULT_CONTEXT=collector-service
+      - SPRING_CLOUD_CONSUL_CONFIG_FORMAT=YAML
+      - SPRING_CLOUD_CONSUL_CONFIG_FAIL_FAST=true
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - SPRING_DATA_REDIS_HOST=${REDIS_HOST:-redis}
+      - SPRING_DATA_REDIS_PORT=${REDIS_PORT:-6379}
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=validate
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
+      - PERPLEXITY_MODEL=${PERPLEXITY_MODEL:-sonar}
+      - PERPLEXITY_BASE_URL=${PERPLEXITY_BASE_URL:-https://api.perplexity.ai}
+      - COLLECTOR_AIDOVE_BASE_URL=${COLLECTOR_SERVICE_AIDOVE_BASE_URL:-https://workflow.nodove.com/webhook/aidove}
+      - COLLECTOR_CALLBACK_BASE_URL=${COLLECTOR_SERVICE_CALLBACK_BASE_URL:-http://collector-service:8081}
+      - COLLECTOR_DEEP_SEARCH_ENABLED=false
+      - COLLECTOR_DEEP_SEARCH_FALLBACK_TO_WEBHOOK=false
+      # Auto-Crawl Configuration (실시간 확장형 크롤링)
+      - AUTOCRAWL_ENABLED=true
+      - AUTOCRAWL_BATCH_SIZE=10
+      - AUTOCRAWL_DISCOVER_FROM_SEARCH=true
+      - AUTOCRAWL_DISCOVER_FROM_ARTICLES=true
+      - AUTOCRAWL_DISCOVER_FROM_DEEP_SEARCH=true
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-newsinsight}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-redpanda-dev:9092}
+      - SERVER_PORT=${COLLECTOR_PORT:-8081}
+    expose:
+      - "8081"
 
   autonomous-crawler:
     build:
@@ -278,12 +389,16 @@ services:
         condition: service_completed_successfully
       redpanda-dev:
         condition: service_started
+      browser-use-api:
+        condition: service_healthy
     environment:
       - CONSUL_HOST=${CONSUL_HOST:-consul}
       - CONSUL_PORT=${CONSUL_PORT:-8500}
       - CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN:-}
       - CONSUL_ENABLED=${CONSUL_ENABLED:-true}
       - CONSUL_SERVICE_NAME=autonomous-crawler
+      - SERVICE_MODE=${CRAWLER_SERVICE_MODE:-hybrid}
+      - API_PORT=${CRAWLER_API_PORT:-8030}
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-redpanda-dev:9092}
       - KAFKA_CONSUMER_GROUP_ID=${CRAWLER_CONSUMER_GROUP:-autonomous-crawler-group}
       - KAFKA_BROWSER_TASK_TOPIC=${CRAWLER_TASK_TOPIC:-newsinsight.crawl.browser.tasks}
@@ -305,46 +420,106 @@ services:
       - METRICS_PORT=${CRAWLER_METRICS_PORT:-9090}
       - LOG_LEVEL=${CRAWLER_LOG_LEVEL:-INFO}
       - LOG_FORMAT=${CRAWLER_LOG_FORMAT:-json}
-    # 외부 포트 노출 제거
     expose:
       - "9090"
-    shm_size: 2g
-    networks:
-      - default
-
-  browser-use-api:
-    build:
-      context: ../../backend/browser-use
-      dockerfile: Dockerfile.api
-    image: newsinsight/browser-use-api:local
-    container_name: newsinsight-browser-use-api
-    restart: unless-stopped
-    environment:
-      - AIDOVE_WEBHOOK_URL=${AIDOVE_WEBHOOK_URL:-https://workflow.nodove.com/webhook/aidove}
-      - BROWSER_HEADLESS=${BROWSER_USE_HEADLESS:-true}
-      - SERVER_PORT=8500
-      - LOG_LEVEL=${BROWSER_USE_LOG_LEVEL:-INFO}
-    # 외부 포트 노출 제거
-    expose:
-      - "8500"
+      - "8030"
     shm_size: 2g
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8500/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8030/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-    networks:
-      - default
+      start_period: 30s
+
+  api-gateway:
+    build:
+      context: ../../
+      dockerfile: backend/api-gateway-service/Dockerfile
+    image: newsinsight/api-gateway:local
+    container_name: newsinsight-api-gateway
+    depends_on:
+      consul:
+        condition: service_healthy
+      consul-seed:
+        condition: service_completed_successfully
+      collector-service:
+        condition: service_started
+      browser-use-api:
+        condition: service_started
+      sentiment-addon:
+        condition: service_started
+      factcheck-addon:
+        condition: service_started
+      bias-addon:
+        condition: service_started
+      bot-detector:
+        condition: service_started
+    environment:
+      - CONSUL_HOST=${CONSUL_HOST:-consul}
+      - CONSUL_PORT=${CONSUL_PORT:-8500}
+      - CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN:-}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - PORT=${API_GATEWAY_PORT:-8000}
+      - BROWSER_USE_URL=http://browser-use-api:8500
+      - BROWSER_USE_WS_URL=ws://browser-use-api:8500
+      - ML_ADDON_SENTIMENT_URL=http://sentiment-addon:8100
+      - ML_ADDON_FACTCHECK_URL=http://factcheck-addon:8101
+      - ML_ADDON_BIAS_URL=http://bias-addon:8102
+      - ML_ADDON_BOT_DETECTOR_URL=http://bot-detector:8040
+    expose:
+      - "8000"
+
+  frontend:
+    image: node:20-alpine
+    container_name: newsinsight-frontend
+    working_dir: /app
+    volumes:
+      - ../../frontend:/app
+      - frontend-node-modules:/app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://api-gateway:8000
+      - VITE_BROWSER_USE_URL=http://api-gateway:8000
+    command: >
+      sh -c "(npm ci --legacy-peer-deps || npm install --legacy-peer-deps) \
+      && npm run dev -- --host 0.0.0.0 --port 8080"
+    expose:
+      - "8080"
+    depends_on:
+      api-gateway:
+        condition: service_started
+
+  # ============================================================================
+  # Cloudflare Tunnel - 외부 트래픽을 내부 서비스로 라우팅
+  # ============================================================================
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: newsinsight-cloudflared
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN_NEWSINSIGHT}
+    depends_on:
+      frontend:
+        condition: service_started
+      api-gateway:
+        condition: service_started
 
 volumes:
+  consul-data:
+    name: newsinsight-consul-data
   postgres-data:
     name: newsinsight-postgres-data
+  mongo-data:
+    name: newsinsight-mongo-data
   redis-data:
     name: newsinsight-redis-data
   frontend-node-modules:
     name: newsinsight-frontend-node-modules
-  mongo-data:
-    name: newsinsight-mongo-data
+  ip-rotation-data:
+    name: newsinsight-ip-rotation-data
+  maigret-reports:
+    name: newsinsight-maigret-reports
 
 networks:
   default:

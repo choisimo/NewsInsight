@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
-export type SearchMode = 'unified' | 'deep' | 'factcheck' | 'url';
+export type SearchMode = 'unified' | 'deep' | 'factcheck' | 'urlanalysis';
 
 interface SearchModeConfig {
   id: SearchMode;
@@ -67,7 +67,7 @@ const SEARCH_MODES: SearchModeConfig[] = [
     placeholder: '검증할 주장을 붙여넣으세요...',
   },
   {
-    id: 'url',
+    id: 'urlanalysis',
     label: 'URL 분석',
     description: 'URL에서 주장 추출',
     icon: LinkIcon,
@@ -114,7 +114,7 @@ export function HeroSearchBar({
       const modeParam = mode === 'unified' ? '' : `mode=${mode}`;
       const queryParam = `q=${encodeURIComponent(trimmedQuery)}`;
       const params = [modeParam, queryParam].filter(Boolean).join('&');
-      navigate(`/?${params}`);
+      navigate(`/search?${params}`);
     }
 
     setIsLoading(false);
