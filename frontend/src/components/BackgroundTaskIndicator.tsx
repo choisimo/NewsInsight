@@ -104,20 +104,20 @@ const TaskItem = ({ task, onNavigate, onRemove, onCancel }: TaskItemProps & { on
       !isActive && !isCompleted && "bg-muted/50"
     )}>
       <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 overflow-hidden">
           <div className="flex items-center gap-2 mb-1">
-            {getStatusIcon()}
-            <span className="font-medium text-sm truncate">{task.title}</span>
+            <span className="shrink-0">{getStatusIcon()}</span>
+            <span className="font-medium text-sm truncate" title={task.title}>{task.title}</span>
           </div>
           
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline" className="h-5 gap-1">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <Badge variant="outline" className="h-5 gap-1 shrink-0">
               {getTypeIcon()}
               {getTypeLabel()}
             </Badge>
-            <span>{getStatusLabel()}</span>
+            <span className="shrink-0">{getStatusLabel()}</span>
             {task.evidenceCount !== undefined && task.evidenceCount > 0 && (
-              <span>| {task.evidenceCount}개 증거</span>
+              <span className="shrink-0">| {task.evidenceCount}개 증거</span>
             )}
           </div>
           
@@ -126,15 +126,15 @@ const TaskItem = ({ task, onNavigate, onRemove, onCancel }: TaskItemProps & { on
             <div className="mt-2 space-y-1">
               <Progress value={task.progress} className="h-1.5" />
               <div className="flex justify-between text-xs text-muted-foreground">
-                <span>{task.progressMessage || '처리 중...'}</span>
-                <span>{task.progress}%</span>
+                <span className="truncate mr-2">{task.progressMessage || '처리 중...'}</span>
+                <span className="shrink-0">{task.progress}%</span>
               </div>
             </div>
           )}
           
           {/* Error message */}
           {task.error && (
-            <p className="mt-1 text-xs text-red-600 dark:text-red-400 truncate">
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400 line-clamp-2" title={task.error}>
               {task.error}
             </p>
           )}
@@ -148,7 +148,7 @@ const TaskItem = ({ task, onNavigate, onRemove, onCancel }: TaskItemProps & { on
           </div>
         </div>
         
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           {task.resultUrl && (isCompleted || isActive) && (
             <Button
               variant="ghost"
@@ -268,11 +268,12 @@ export function BackgroundTaskIndicator() {
       </PopoverTrigger>
       
       <PopoverContent 
-        className="w-96 p-0 max-h-[80vh] flex flex-col" 
+        className="w-96 p-0" 
         align="end"
         sideOffset={8}
       >
-        <div className="flex items-center justify-between p-3 border-b">
+        {/* Header - fixed */}
+        <div className="flex items-center justify-between p-3 border-b bg-background sticky top-0 z-10">
           <h3 className="font-semibold">백그라운드 작업</h3>
           <Button
             variant="ghost"
@@ -284,7 +285,8 @@ export function BackgroundTaskIndicator() {
           </Button>
         </div>
         
-        <ScrollArea className="flex-1">
+        {/* Scrollable content area with explicit height */}
+        <ScrollArea className="max-h-[60vh] overflow-auto">
           <div className="p-3 space-y-4">
             {/* Active Tasks */}
             {activeTasks.length > 0 && (
@@ -338,9 +340,9 @@ export function BackgroundTaskIndicator() {
           </div>
         </ScrollArea>
         
-        {/* Footer with clear button */}
+        {/* Footer with clear button - fixed */}
         {completedTasks.length > 0 && (
-          <div className="p-3 border-t">
+          <div className="p-3 border-t bg-background sticky bottom-0">
             <Button
               variant="outline"
               size="sm"

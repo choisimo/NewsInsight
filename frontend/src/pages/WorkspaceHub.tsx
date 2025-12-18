@@ -274,24 +274,27 @@ export function WorkspaceHub() {
                   {recentWorks.slice(0, 5).map((work, idx) => (
                     <Link
                       key={idx}
-                      to={work.path}
+                      to={work.continueUrl}
                       className="flex items-center gap-3 p-3 rounded-lg hover:bg-accent transition-colors"
                     >
                       <div className="p-2 rounded bg-muted">
-                        {work.type === 'search' && <History className="h-4 w-4" />}
-                        {work.type === 'project' && <FolderOpen className="h-4 w-4" />}
-                        {work.type === 'analysis' && <FileText className="h-4 w-4" />}
+                        {(work.type === 'unified_search' || work.type === 'deep_search') && <History className="h-4 w-4" />}
+                        {work.type === 'fact_check' && <FileText className="h-4 w-4" />}
+                        {work.type === 'browser_agent' && <Globe className="h-4 w-4" />}
+                        {work.type === 'url_analysis' && <FolderOpen className="h-4 w-4" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{work.title}</p>
                         <p className="text-xs text-muted-foreground">
-                          {formatDistanceToNow(work.timestamp, { addSuffix: true, locale: ko })}
+                          {formatDistanceToNow(new Date(work.lastUpdated), { addSuffix: true, locale: ko })}
                         </p>
                       </div>
                       <Badge variant="outline" className="text-xs">
-                        {work.type === 'search' && '검색'}
-                        {work.type === 'project' && '프로젝트'}
-                        {work.type === 'analysis' && '분석'}
+                        {work.type === 'unified_search' && '검색'}
+                        {work.type === 'deep_search' && '심층분석'}
+                        {work.type === 'fact_check' && '팩트체크'}
+                        {work.type === 'browser_agent' && 'AI 에이전트'}
+                        {work.type === 'url_analysis' && 'URL 분석'}
                       </Badge>
                     </Link>
                   ))}

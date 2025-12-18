@@ -107,7 +107,7 @@ export function useContinueWork(): UseContinueWorkReturn {
             description: `${WORK_TYPE_LABELS.deep_search} 진행 중`,
             progress: jobStatus.status === 'PENDING' ? 0 : 50,
             status: 'in_progress',
-            continueUrl: `/?mode=deep&q=${encodeURIComponent(jobStatus.topic)}&jobId=${activeJobId}`,
+            continueUrl: `/search?mode=deep&q=${encodeURIComponent(jobStatus.topic)}&jobId=${activeJobId}`,
             lastUpdated: jobStatus.createdAt,
             metadata: {
               jobId: activeJobId,
@@ -144,7 +144,7 @@ export function useContinueWork(): UseContinueWorkReturn {
         title: item.query,
         description: `${WORK_TYPE_LABELS[type]} - ${item.resultCount || 0}개 결과`,
         status: 'ready' as const,
-        continueUrl: `/?mode=${modeParam}&q=${encodeURIComponent(item.query)}`,
+        continueUrl: `/search?mode=${modeParam}&q=${encodeURIComponent(item.query)}`,
         lastUpdated: item.createdAt,
         metadata: {
           query: item.query,
@@ -280,7 +280,7 @@ export function trackDeepSearchJob(jobId: string, topic: string) {
     description: '심층 분석 진행 중...',
     progress: 0,
     status: 'in_progress',
-    continueUrl: `/?mode=deep&q=${encodeURIComponent(topic)}&jobId=${jobId}`,
+    continueUrl: `/search?mode=deep&q=${encodeURIComponent(topic)}&jobId=${jobId}`,
     metadata: { jobId, query: topic },
   });
 }

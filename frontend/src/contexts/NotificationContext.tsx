@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, ReactNode } from "react";
-import { Bell, X, CheckCircle2, AlertCircle, Info, AlertTriangle, ExternalLink } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Bell, X, CheckCircle2, AlertCircle, Info, AlertTriangle, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -187,9 +188,10 @@ interface NotificationItemProps {
   notification: Notification;
   onMarkAsRead: (id: string) => void;
   onRemove: (id: string) => void;
+  onNavigate?: (url: string) => void;
 }
 
-function NotificationItem({ notification, onMarkAsRead, onRemove }: NotificationItemProps) {
+function NotificationItem({ notification, onMarkAsRead, onRemove, onNavigate }: NotificationItemProps) {
   const config = typeConfig[notification.type];
   const Icon = config.icon;
 
@@ -198,6 +200,14 @@ function NotificationItem({ notification, onMarkAsRead, onRemove }: Notification
       onMarkAsRead(notification.id);
     }
   }, [notification.id, notification.read, onMarkAsRead]);
+
+  const handleActionClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (notification.actionUrl && onNavigate) {
+      onMarkAsRead(notification.id);
+      onNavigate(notification.actionUrl);
+    }
+  }, [notification.actionUrl, notification.id, onMarkAsRead, onNavigate]);
 
   return (
     <div
@@ -238,15 +248,14 @@ function NotificationItem({ notification, onMarkAsRead, onRemove }: Notification
             <span className="text-xs text-muted-foreground">
               {formatRelativeTime(notification.timestamp)}
             </span>
-            {notification.actionUrl && (
-              <a
-                href={notification.actionUrl}
-                onClick={(e) => e.stopPropagation()}
+            {notification.actionUrl && onNavigate && (
+              <button
+                onClick={handleActionClick}
                 className="text-xs text-primary hover:underline flex items-center gap-1"
               >
                 {notification.actionLabel || "자세히"}
-                <ExternalLink className="h-3 w-3" />
-              </a>
+                <ArrowRight className="h-3 w-3" />
+              </button>
             )}
           </div>
         </div>
@@ -262,6 +271,8 @@ function NotificationItem({ notification, onMarkAsRead, onRemove }: Notification
  * 알림 벨 버튼 컴포넌트
  */
 export function NotificationBell() {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
   const {
     notifications,
     unreadCount,
@@ -271,8 +282,13 @@ export function NotificationBell() {
     clearAll,
   } = useNotifications();
 
+  const handleNavigate = useCallback((url: string) => {
+    setOpen(false);
+    navigate(url);
+  }, [navigate]);
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
@@ -326,6 +342,7 @@ export function NotificationBell() {
                   notification={notification}
                   onMarkAsRead={markAsRead}
                   onRemove={removeNotification}
+                  onNavigate={handleNavigate}
                 />
               ))}
             </div>

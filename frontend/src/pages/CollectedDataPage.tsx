@@ -47,8 +47,8 @@ import {
   useUnprocessedData,
   useDataStats,
 } from '@/hooks/useCollectedData';
+import { useMlAnalysis } from '@/hooks/useMlAnalysis';
 import { type CollectedDataDTO, summarizeData } from '@/lib/api/data';
-import { analyzeArticle, analyzeArticlesBatch, analyzeByCategory } from '@/lib/api/ml';
 import type { AddonCategory } from '@/types/api';
 
 // ============================================
@@ -281,6 +281,9 @@ const CollectedDataPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
 
+  // ML 분석 Hook
+  const { startAnalysis, startBatchAnalysis, startCategoryAnalysis, isAnalyzing } = useMlAnalysis();
+
   // Debounce search query
   React.useEffect(() => {
     const timer = setTimeout(() => {
@@ -358,35 +361,11 @@ const CollectedDataPage: React.FC = () => {
   };
 
   const handleAnalyze = async (id: number, importance: 'realtime' | 'batch' = 'batch') => {
-    try {
-      const result = await analyzeArticle(id, importance);
-      toast({
-        title: 'ML 분석 시작',
-        description: `${result.executionIds.length}개 Add-on 분석이 시작되었습니다. (배치: ${result.batchId.slice(0, 8)}...)`,
-      });
-    } catch (e) {
-      toast({
-        title: '분석 실패',
-        description: e instanceof Error ? e.message : 'ML 분석을 시작할 수 없습니다.',
-        variant: 'destructive',
-      });
-    }
+    await startAnalysis(id, importance);
   };
 
   const handleAnalyzeCategory = async (id: number, category: AddonCategory) => {
-    try {
-      await analyzeByCategory(id, category);
-      toast({
-        title: '분석 시작',
-        description: `${category} 분석이 시작되었습니다.`,
-      });
-    } catch (e) {
-      toast({
-        title: '분석 실패',
-        description: e instanceof Error ? e.message : '분석을 시작할 수 없습니다.',
-        variant: 'destructive',
-      });
-    }
+    await startCategoryAnalysis(id, category);
   };
 
   const handleBatchAnalyze = async () => {
@@ -396,19 +375,7 @@ const CollectedDataPage: React.FC = () => {
       return;
     }
     
-    try {
-      const result = await analyzeArticlesBatch(unprocessedIds.slice(0, 50)); // 최대 50개
-      toast({
-        title: '일괄 분석 시작',
-        description: `${result.articleCount}개 기사의 분석이 시작되었습니다.`,
-      });
-    } catch (e) {
-      toast({
-        title: '일괄 분석 실패',
-        description: e instanceof Error ? e.message : '일괄 분석을 시작할 수 없습니다.',
-        variant: 'destructive',
-      });
-    }
+    await startBatchAnalysis(unprocessedIds.slice(0, 50)); // 최대 50개
   };
 
   // Current data based on active tab

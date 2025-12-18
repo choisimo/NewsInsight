@@ -17,6 +17,7 @@ import SearchHistory from "./pages/SearchHistory";
 import SmartSearch from "./pages/SmartSearch";
 import Settings from "./pages/Settings";
 import MLAddons from "./pages/MLAddons";
+import MLResults from "./pages/MLResults";
 import Projects from "./pages/Projects";
 import LiveDashboard from "./pages/LiveDashboard";
 import Operations from "./pages/Operations";
@@ -70,6 +71,7 @@ const App = () => (
                 {/* Tools Section */}
                 <Route path="/tools" element={<ToolsHub />} />
                 <Route path="/ml-addons" element={<MLAddons />} />
+                <Route path="/ml-results" element={<MLResults />} />
                 <Route path="/ai-agent" element={<BrowserAgent />} />
                 <Route path="/ai-jobs" element={<AiJobs />} />
                 <Route path="/parallel-search" element={<ParallelSearch />} />

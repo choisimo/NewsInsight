@@ -3,6 +3,8 @@ package com.newsinsight.collector.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.newsinsight.collector.client.PerplexityClient;
+import com.newsinsight.collector.client.OpenAICompatibleClient;
+import com.newsinsight.collector.client.AIDoveClient;
 import com.newsinsight.collector.config.TrustScoreConfig;
 import com.newsinsight.collector.service.factcheck.FactCheckSource;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer;
@@ -43,6 +45,8 @@ public class FactVerificationService {
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
     private final PerplexityClient perplexityClient;
+    private final OpenAICompatibleClient openAICompatibleClient;
+    private final AIDoveClient aiDoveClient;
     private final List<FactCheckSource> factCheckSources;
     private final TrustScoreConfig trustScoreConfig;
     private final List<TrustedSource> trustedSources;
@@ -52,12 +56,16 @@ public class FactVerificationService {
             WebClient webClient,
             ObjectMapper objectMapper,
             PerplexityClient perplexityClient,
+            OpenAICompatibleClient openAICompatibleClient,
+            AIDoveClient aiDoveClient,
             List<FactCheckSource> factCheckSources,
             TrustScoreConfig trustScoreConfig,
             AdvancedIntentAnalyzer advancedIntentAnalyzer) {
         this.webClient = webClient;
         this.objectMapper = objectMapper;
         this.perplexityClient = perplexityClient;
+        this.openAICompatibleClient = openAICompatibleClient;
+        this.aiDoveClient = aiDoveClient;
         this.factCheckSources = factCheckSources;
         this.trustScoreConfig = trustScoreConfig;
         this.advancedIntentAnalyzer = advancedIntentAnalyzer;
@@ -299,14 +307,15 @@ public class FactVerificationService {
             }
 
             // 3. 각 주장에 대한 검증 (향상된 키워드 매칭)
+            final List<VerificationResult> verificationResults = new ArrayList<>();
+            final CredibilityAssessment[] credibilityHolder = new CredibilityAssessment[1];
+            
             if (claims != null && !claims.isEmpty()) {
                 sink.next(DeepAnalysisEvent.builder()
                         .eventType("status")
                         .phase("verification")
                         .message(claims.size() + "개의 주장을 검증하고 있습니다...")
                         .build());
-
-                List<VerificationResult> verificationResults = new ArrayList<>();
                 
                 for (int i = 0; i < claims.size(); i++) {
                     String claim = claims.get(i);
@@ -323,65 +332,194 @@ public class FactVerificationService {
                 }
 
                 // 4. 신뢰도 평가
-                CredibilityAssessment credibility = assessCredibility(verificationResults);
+                credibilityHolder[0] = assessCredibility(verificationResults);
                 
                 sink.next(DeepAnalysisEvent.builder()
                         .eventType("assessment")
                         .phase("assessment")
                         .message("신뢰도 평가 완료")
-                        .credibility(credibility)
+                        .credibility(credibilityHolder[0])
                         .build());
             }
 
-            // 5. AI 기반 종합 분석
+            // 5. AI 기반 종합 분석 (Fallback Chain)
             sink.next(DeepAnalysisEvent.builder()
                     .eventType("status")
                     .phase("synthesis")
                     .message("AI가 수집된 정보를 종합 분석하고 있습니다...")
                     .build());
 
-            if (perplexityClient.isEnabled()) {
-                String synthesisPrompt = buildSynthesisPrompt(topic, filteredEvidence, claims);
-                StringBuilder aiResponse = new StringBuilder();
+            // Build provider chain and try each in sequence
+            String synthesisPrompt = buildSynthesisPrompt(topic, filteredEvidence, claims);
+            StringBuilder aiResponse = new StringBuilder();
 
-                perplexityClient.streamCompletion(synthesisPrompt)
-                        .doOnNext(chunk -> {
-                            aiResponse.append(chunk);
-                            sink.next(DeepAnalysisEvent.builder()
-                                    .eventType("ai_synthesis")
-                                    .phase("synthesis")
-                                    .message(chunk)
-                                    .build());
-                        })
-                        .doOnComplete(() -> {
-                            sink.next(DeepAnalysisEvent.builder()
-                                    .eventType("complete")
-                                    .phase("complete")
-                                    .message("심층 분석이 완료되었습니다.")
-                                    .finalConclusion(aiResponse.toString())
-                                    .build());
-                            sink.complete();
-                        })
-                        .doOnError(e -> {
-                            log.error("AI synthesis failed: {}", e.getMessage());
-                            sink.next(DeepAnalysisEvent.builder()
-                                    .eventType("complete")
-                                    .phase("complete")
-                                    .message("분석이 완료되었습니다. (AI 종합 분석 생략)")
-                                    .build());
-                            sink.complete();
-                        })
-                        .subscribe();
-            } else {
-                sink.next(DeepAnalysisEvent.builder()
-                        .eventType("complete")
-                        .phase("complete")
-                        .message("심층 분석이 완료되었습니다.")
-                        .build());
-                sink.complete();
-            }
+            // Try AI providers in order of preference
+            Flux<String> aiStream = getAiStreamWithFallback(synthesisPrompt);
+            
+            aiStream
+                    .doOnNext(chunk -> {
+                        aiResponse.append(chunk);
+                        sink.next(DeepAnalysisEvent.builder()
+                                .eventType("ai_synthesis")
+                                .phase("synthesis")
+                                .message(chunk)
+                                .build());
+                    })
+                    .doOnComplete(() -> {
+                        String conclusion = aiResponse.toString();
+                        if (conclusion.isBlank()) {
+                            conclusion = buildFallbackConclusion(topic, verificationResults, credibilityHolder[0]);
+                        }
+                        sink.next(DeepAnalysisEvent.builder()
+                                .eventType("complete")
+                                .phase("complete")
+                                .message("심층 분석이 완료되었습니다.")
+                                .finalConclusion(conclusion)
+                                .build());
+                        sink.complete();
+                    })
+                    .doOnError(e -> {
+                        log.error("All AI providers failed: {}", e.getMessage());
+                        // Generate fallback conclusion without AI
+                        String fallbackConclusion = buildFallbackConclusion(topic, verificationResults, credibilityHolder[0]);
+                        sink.next(DeepAnalysisEvent.builder()
+                                .eventType("complete")
+                                .phase("complete")
+                                .message("분석이 완료되었습니다.")
+                                .finalConclusion(fallbackConclusion)
+                                .build());
+                        sink.complete();
+                    })
+                    .subscribe();
         });
     }
+
+    /**
+     * Get AI stream with fallback chain.
+     * Tries providers in order: Perplexity -> OpenAI -> OpenRouter -> Azure -> AI Dove -> Ollama
+     */
+    private Flux<String> getAiStreamWithFallback(String prompt) {
+        List<AiProviderAttempt> providers = buildAiProviderChain(prompt);
+        
+        if (providers.isEmpty()) {
+            log.warn("No AI providers available, returning empty stream");
+            return Flux.empty();
+        }
+
+        log.info("AI synthesis using fallback chain: {}", 
+                providers.stream().map(AiProviderAttempt::name).toList());
+
+        return tryAiProvidersInSequence(providers, 0);
+    }
+
+    /**
+     * Build the AI provider chain based on availability
+     */
+    private List<AiProviderAttempt> buildAiProviderChain(String prompt) {
+        List<AiProviderAttempt> chain = new ArrayList<>();
+
+        // 1. Perplexity - Best for fact-checking with online search
+        if (perplexityClient.isEnabled()) {
+            chain.add(new AiProviderAttempt("Perplexity", () -> perplexityClient.streamCompletion(prompt)));
+        }
+
+        // 2. OpenAI
+        if (openAICompatibleClient.isOpenAIEnabled()) {
+            chain.add(new AiProviderAttempt("OpenAI", () -> openAICompatibleClient.streamFromOpenAI(prompt)));
+        }
+
+        // 3. OpenRouter - Access to multiple models
+        if (openAICompatibleClient.isOpenRouterEnabled()) {
+            chain.add(new AiProviderAttempt("OpenRouter", () -> openAICompatibleClient.streamFromOpenRouter(prompt)));
+        }
+
+        // 4. Azure OpenAI
+        if (openAICompatibleClient.isAzureEnabled()) {
+            chain.add(new AiProviderAttempt("Azure", () -> openAICompatibleClient.streamFromAzure(prompt)));
+        }
+
+        // 5. AI Dove (n8n webhook) - Simulated streaming
+        if (aiDoveClient.isEnabled()) {
+            chain.add(new AiProviderAttempt("AI Dove", () -> aiDoveClient.chatStream(prompt, null)));
+        }
+
+        // 6. Ollama - Local LLM (always in chain, may fail if not running)
+        chain.add(new AiProviderAttempt("Ollama", () -> openAICompatibleClient.streamFromOllama(prompt)));
+
+        // 7. Custom endpoint
+        if (openAICompatibleClient.isCustomEnabled()) {
+            chain.add(new AiProviderAttempt("Custom", () -> openAICompatibleClient.streamFromCustom(prompt)));
+        }
+
+        return chain;
+    }
+
+    /**
+     * Try AI providers in sequence until one succeeds
+     */
+    private Flux<String> tryAiProvidersInSequence(List<AiProviderAttempt> providers, int index) {
+        if (index >= providers.size()) {
+            log.warn("All AI providers exhausted");
+            return Flux.empty();
+        }
+
+        AiProviderAttempt current = providers.get(index);
+        log.info("Trying AI provider: {} ({}/{})", current.name(), index + 1, providers.size());
+
+        return current.streamSupplier().get()
+                .timeout(Duration.ofSeconds(90))
+                .onErrorResume(e -> {
+                    log.warn("AI provider {} failed: {}. Trying next...", current.name(), e.getMessage());
+                    return tryAiProvidersInSequence(providers, index + 1);
+                })
+                .switchIfEmpty(Flux.defer(() -> {
+                    log.warn("AI provider {} returned empty. Trying next...", current.name());
+                    return tryAiProvidersInSequence(providers, index + 1);
+                }));
+    }
+
+    /**
+     * Build a fallback conclusion when AI is not available
+     */
+    private String buildFallbackConclusion(String topic, List<VerificationResult> results, CredibilityAssessment credibility) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## ").append(topic).append(" 분석 결과\n\n");
+        
+        if (results == null || results.isEmpty()) {
+            sb.append("검증된 주장이 없습니다.\n");
+        } else {
+            sb.append("### 검증 결과 요약\n\n");
+            int verified = 0, unverified = 0, contradicted = 0;
+            for (VerificationResult r : results) {
+                if (r.getStatus() == null) continue;
+                switch (r.getStatus()) {
+                    case VERIFIED, PARTIALLY_VERIFIED -> verified++;
+                    case UNVERIFIED -> unverified++;
+                    case DISPUTED, FALSE -> contradicted++;
+                }
+            }
+            sb.append(String.format("- 검증됨: %d건\n", verified));
+            sb.append(String.format("- 미확인: %d건\n", unverified));
+            sb.append(String.format("- 반박됨: %d건\n\n", contradicted));
+        }
+
+        if (credibility != null) {
+            sb.append("### 신뢰도 평가\n");
+            sb.append(String.format("- 전체 신뢰도: %.0f%%\n", credibility.getOverallScore() * 100));
+            sb.append(String.format("- 위험 수준: %s\n", credibility.getRiskLevel()));
+        }
+
+        sb.append("\n*AI 종합 분석은 현재 사용 불가합니다. 위 결과를 참고하여 판단해 주세요.*");
+        return sb.toString();
+    }
+
+    /**
+     * AI provider attempt wrapper
+     */
+    private record AiProviderAttempt(
+            String name,
+            java.util.function.Supplier<Flux<String>> streamSupplier
+    ) {}
 
     // ============================================
     // Enhanced Evidence Collection with Fallback

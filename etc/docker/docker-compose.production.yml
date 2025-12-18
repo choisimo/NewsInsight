@@ -456,6 +456,12 @@ services:
       # AIdove/custom LLM
       AIDOVE_API_KEY: ${AIDOVE_API_KEY}
       AIDOVE_API_BASE_URL: ${AIDOVE_API_BASE_URL:-https://ai.nodove.com}
+      # MCP Server URLs for integrated analysis
+      BIAS_MCP_URL: http://bias-mcp:5001
+      FACTCHECK_MCP_URL: http://factcheck-mcp:5002
+      TOPIC_MCP_URL: http://topic-mcp:5003
+      NEWSINSIGHT_MCP_URL: http://newsinsight-mcp:5000
+      HUGGINGFACE_MCP_URL: http://huggingface-mcp:5011
       # Observability
       LOG_LEVEL: INFO
       LOG_FORMAT: json
@@ -479,6 +485,15 @@ services:
       browser-use-api:
         condition: service_healthy
       web-crawler:
+        condition: service_healthy
+      # MCP servers for analysis
+      newsinsight-mcp:
+        condition: service_healthy
+      bias-mcp:
+        condition: service_healthy
+      factcheck-mcp:
+        condition: service_healthy
+      topic-mcp:
         condition: service_healthy
     healthcheck:
       # Check both metrics (9090) and API (8030) endpoints

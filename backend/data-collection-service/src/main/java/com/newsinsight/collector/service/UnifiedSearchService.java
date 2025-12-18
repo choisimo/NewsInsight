@@ -3,6 +3,8 @@ package com.newsinsight.collector.service;
 import com.newsinsight.collector.dto.SearchHistoryMessage;
 import com.newsinsight.collector.client.Crawl4aiClient;
 import com.newsinsight.collector.client.PerplexityClient;
+import com.newsinsight.collector.client.OpenAICompatibleClient;
+import com.newsinsight.collector.client.AIDoveClient;
 import com.newsinsight.collector.dto.ArticleDto;
 import com.newsinsight.collector.dto.ArticleWithAnalysisDto;
 import com.newsinsight.collector.entity.CollectedData;
@@ -67,6 +69,8 @@ public class UnifiedSearchService {
     private final ArticleAnalysisRepository articleAnalysisRepository;
     private final ArticleDiscussionRepository articleDiscussionRepository;
     private final PerplexityClient perplexityClient;
+    private final OpenAICompatibleClient openAICompatibleClient;
+    private final AIDoveClient aiDoveClient;
     private final Crawl4aiClient crawl4aiClient;
     private final CrawlSearchService crawlSearchService;
     private final UnifiedSearchEventService unifiedSearchEventService;
@@ -759,12 +763,17 @@ public class UnifiedSearchService {
     }
 
     // ============================================
-    // AI-Powered Search
+    // AI-Powered Search with Fallback Chain
     // ============================================
 
     private Flux<SearchEvent> searchAI(String query, String window) {
-        // AI 검색 기능이 비활성화된 경우
-        if (!perplexityClient.isEnabled() && !crawlSearchService.isAvailable()) {
+        // Check if any AI provider is available
+        boolean hasAnyProvider = perplexityClient.isEnabled() 
+                || openAICompatibleClient.isEnabled() 
+                || aiDoveClient.isEnabled()
+                || crawlSearchService.isAvailable();
+
+        if (!hasAnyProvider) {
             return Flux.just(SearchEvent.builder()
                     .eventType("status")
                     .source("ai")
@@ -781,12 +790,8 @@ public class UnifiedSearchService {
 
             String prompt = buildAISearchPrompt(query, window);
 
-            Flux<String> aiStream;
-            if (perplexityClient.isEnabled()) {
-                aiStream = perplexityClient.streamCompletion(prompt);
-            } else {
-                aiStream = crawlSearchService.searchAndAnalyze(query, window);
-            }
+            // Build AI stream with fallback chain
+            Flux<String> aiStream = getAiStreamWithFallbackForSearch(prompt, query, window);
 
             StringBuilder fullResponse = new StringBuilder();
 
@@ -841,6 +846,103 @@ public class UnifiedSearchService {
                     .subscribe();
         });
     }
+
+    /**
+     * Get AI stream with fallback chain for search.
+     * Tries providers in order until one succeeds.
+     */
+    private Flux<String> getAiStreamWithFallbackForSearch(String prompt, String query, String window) {
+        List<AiSearchProviderAttempt> providers = buildAiSearchProviderChain(prompt, query, window);
+        
+        if (providers.isEmpty()) {
+            log.warn("No AI providers available for search");
+            return Flux.just("AI 분석을 수행할 수 없습니다.");
+        }
+
+        log.info("AI search using fallback chain: {}", 
+                providers.stream().map(AiSearchProviderAttempt::name).toList());
+
+        return tryAiSearchProvidersInSequence(providers, 0);
+    }
+
+    /**
+     * Build AI provider chain for search
+     */
+    private List<AiSearchProviderAttempt> buildAiSearchProviderChain(String prompt, String query, String window) {
+        List<AiSearchProviderAttempt> chain = new ArrayList<>();
+
+        // 1. Perplexity - Best for search with online capabilities
+        if (perplexityClient.isEnabled()) {
+            chain.add(new AiSearchProviderAttempt("Perplexity", () -> perplexityClient.streamCompletion(prompt)));
+        }
+
+        // 2. OpenAI
+        if (openAICompatibleClient.isOpenAIEnabled()) {
+            chain.add(new AiSearchProviderAttempt("OpenAI", () -> openAICompatibleClient.streamFromOpenAI(prompt)));
+        }
+
+        // 3. OpenRouter
+        if (openAICompatibleClient.isOpenRouterEnabled()) {
+            chain.add(new AiSearchProviderAttempt("OpenRouter", () -> openAICompatibleClient.streamFromOpenRouter(prompt)));
+        }
+
+        // 4. Azure OpenAI
+        if (openAICompatibleClient.isAzureEnabled()) {
+            chain.add(new AiSearchProviderAttempt("Azure", () -> openAICompatibleClient.streamFromAzure(prompt)));
+        }
+
+        // 5. AI Dove
+        if (aiDoveClient.isEnabled()) {
+            chain.add(new AiSearchProviderAttempt("AI Dove", () -> aiDoveClient.chatStream(prompt, null)));
+        }
+
+        // 6. CrawlSearchService as fallback
+        if (crawlSearchService.isAvailable()) {
+            chain.add(new AiSearchProviderAttempt("Crawl Search", () -> crawlSearchService.searchAndAnalyze(query, window)));
+        }
+
+        // 7. Ollama - Local LLM
+        chain.add(new AiSearchProviderAttempt("Ollama", () -> openAICompatibleClient.streamFromOllama(prompt)));
+
+        // 8. Custom endpoint
+        if (openAICompatibleClient.isCustomEnabled()) {
+            chain.add(new AiSearchProviderAttempt("Custom", () -> openAICompatibleClient.streamFromCustom(prompt)));
+        }
+
+        return chain;
+    }
+
+    /**
+     * Try AI search providers in sequence
+     */
+    private Flux<String> tryAiSearchProvidersInSequence(List<AiSearchProviderAttempt> providers, int index) {
+        if (index >= providers.size()) {
+            log.warn("All AI search providers exhausted");
+            return Flux.just("AI 분석 서비스에 연결할 수 없습니다.");
+        }
+
+        AiSearchProviderAttempt current = providers.get(index);
+        log.info("Trying AI search provider: {} ({}/{})", current.name(), index + 1, providers.size());
+
+        return current.streamSupplier().get()
+                .timeout(Duration.ofSeconds(90))
+                .onErrorResume(e -> {
+                    log.warn("AI search provider {} failed: {}. Trying next...", current.name(), e.getMessage());
+                    return tryAiSearchProvidersInSequence(providers, index + 1);
+                })
+                .switchIfEmpty(Flux.defer(() -> {
+                    log.warn("AI search provider {} returned empty. Trying next...", current.name());
+                    return tryAiSearchProvidersInSequence(providers, index + 1);
+                }));
+    }
+
+    /**
+     * AI search provider attempt wrapper
+     */
+    private record AiSearchProviderAttempt(
+            String name,
+            java.util.function.Supplier<Flux<String>> streamSupplier
+    ) {}
 
     private String buildAISearchPrompt(String query, String window) {
         String timeFrame = switch (window) {
@@ -1434,8 +1536,13 @@ public class UnifiedSearchService {
     }
 
     private void executeAiSearch(String jobId, String query, String window, AtomicInteger totalResults) {
-        // AI search disabled check
-        if (!perplexityClient.isEnabled() && !crawlSearchService.isAvailable()) {
+        // Check if any AI provider is available
+        boolean hasAnyProvider = perplexityClient.isEnabled() 
+                || openAICompatibleClient.isEnabled() 
+                || aiDoveClient.isEnabled()
+                || crawlSearchService.isAvailable();
+
+        if (!hasAnyProvider) {
             unifiedSearchEventService.publishStatusUpdate(jobId, "ai", "AI 분석 기능이 비활성화되어 있습니다.");
             unifiedSearchEventService.publishSourceComplete(jobId, "ai", "AI 분석 비활성화", 0);
             return;
@@ -1446,12 +1553,8 @@ public class UnifiedSearchService {
             
             String prompt = buildAISearchPrompt(query, window);
             
-            Flux<String> aiStream;
-            if (perplexityClient.isEnabled()) {
-                aiStream = perplexityClient.streamCompletion(prompt);
-            } else {
-                aiStream = crawlSearchService.searchAndAnalyze(query, window);
-            }
+            // Use fallback chain
+            Flux<String> aiStream = getAiStreamWithFallbackForSearch(prompt, query, window);
 
             StringBuilder fullResponse = new StringBuilder();
             

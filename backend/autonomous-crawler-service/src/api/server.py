@@ -32,6 +32,9 @@ from src.config import Settings, get_settings
 from src.crawler import AutonomousCrawlerAgent
 from src.state.store import StateStore, get_state_store, close_state_store
 
+# MCP Integration
+from src.mcp.router import router as mcp_router
+
 logger = structlog.get_logger(__name__)
 
 
@@ -694,6 +697,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 def register_routes(app: FastAPI):
     """API 라우트 등록"""
+
+    # MCP Add-on Router 등록
+    app.include_router(mcp_router)
 
     @app.get("/health")
     @app.head("/health")

@@ -109,6 +109,12 @@ const navConfig: NavItem[] = [
         description: '편향성, 감정 분석'
       },
       {
+        to: '/ml-results',
+        icon: <Sparkles className="h-4 w-4" />,
+        label: 'ML 분석 결과',
+        description: '분석 결과 확인'
+      },
+      {
         to: '/ai-agent',
         icon: <Bot className="h-4 w-4" />,
         label: '브라우저 에이전트',

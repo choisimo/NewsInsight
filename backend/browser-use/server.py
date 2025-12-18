@@ -622,7 +622,6 @@ async def execute_human_action(job: Job, action: HumanAction) -> bool:
 		return False
 
 
-
 def _extract_agent_result_text(result: Any) -> str:
 	if result is None:
 		return ''
@@ -736,12 +735,14 @@ async def run_browser_task(job: Job):
 		# Analyze the task
 		analyzed_intent = None
 		try:
-			analyzed_intent = await intent_analyzer.analyze(job.task, use_llm=True)
+			# Use extract_topic=True to extract meaningful search topic from task description
+			analyzed_intent = await intent_analyzer.analyze(job.task, use_llm=True, extract_topic=True)
 			logger.info(
 				f'Job {job.id}: Intent analysis complete - '
 				f'keywords={analyzed_intent.keywords}, '
 				f"primary='{analyzed_intent.primary_keyword}', "
 				f"intent_type='{analyzed_intent.intent_type}', "
+				f"search_topic='{analyzed_intent.original_query}', "
 				f'strategies={len(analyzed_intent.fallback_strategies)}'
 			)
 

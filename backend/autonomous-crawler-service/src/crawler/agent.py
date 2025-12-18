@@ -1835,6 +1835,20 @@ class AutonomousCrawlerAgent:
 
         return "\n".join(prompt_parts)
 
+    def _is_invalid_agent_output(self, text: str) -> bool:
+        """Check if text contains raw Python object representations that shouldn't be used as article content."""
+        invalid_patterns = [
+            "ActionResult(",
+            "AgentHistoryList(",
+            "AgentHistory(",
+            "include_extracted_content_only_once=",
+            "include_in_memory=",
+            "metadata=None",
+            "is_done=",
+            "extracted_content=",
+        ]
+        return any(pattern in text for pattern in invalid_patterns)
+
     def _parse_agent_output(
         self, result: Any, job_id: int, source_id: int
     ) -> list[CrawlResultMessage]:
@@ -1848,7 +1862,14 @@ class AutonomousCrawlerAgent:
                 final_result = result.final_result
                 value = final_result() if callable(final_result) else final_result
                 if isinstance(value, str) and value.strip():
-                    output_text = value
+                    # Validate that this is actual content, not raw Python objects
+                    if not self._is_invalid_agent_output(value):
+                        output_text = value
+                    else:
+                        logger.warning(
+                            "final_result contains raw Python object representation, skipping",
+                            job_id=job_id,
+                        )
             except Exception:
                 output_text = ""
 
@@ -1859,13 +1880,21 @@ class AutonomousCrawlerAgent:
                     for r in reversed(item.result):
                         extracted_content = getattr(r, "extracted_content", None)
                         if isinstance(extracted_content, str) and extracted_content.strip():
-                            output_text = extracted_content
-                            break
+                            # Validate extracted content is not raw debug output
+                            if not self._is_invalid_agent_output(extracted_content):
+                                output_text = extracted_content
+                                break
+                            else:
+                                logger.debug(
+                                    "Skipping invalid extracted_content",
+                                    job_id=job_id,
+                                    content_preview=extracted_content[:100],
+                                )
                     if output_text:
                         break
 
         if not output_text:
-            logger.warning("No output from agent", job_id=job_id)
+            logger.warning("No valid output from agent", job_id=job_id)
             return articles
 
         # Parse articles from the output
@@ -1943,6 +1972,33 @@ class AutonomousCrawlerAgent:
             metadata_json=json.dumps({"source": "browser-agent"}),
         )
 
+    def _extract_title_from_content(self, content: str) -> str | None:
+        """Extract a meaningful title from content, or return None if not possible."""
+        # Skip content that contains raw Python object representations
+        if self._is_invalid_agent_output(content):
+            return None
+
+        # Try to find a headline-like first line
+        lines = content.strip().split("\n")
+        for line in lines[:3]:  # Check first 3 lines
+            line = line.strip()
+            # Skip empty lines and very short lines
+            if len(line) < 10:
+                continue
+            # Skip lines that look like metadata or code
+            if any(char in line for char in ["=", "(", ")", "{", "}", "[", "]"]):
+                continue
+            # Found a good candidate for title
+            if len(line) <= 100:
+                return line
+            return line[:97] + "..."
+
+        # Fallback: use first 100 chars if content looks valid
+        clean_content = content.strip()
+        if len(clean_content) >= 20:
+            return clean_content[:97] + "..."
+        return None
+
     def _extract_from_unstructured(
         self, text: str, job_id: int, source_id: int
     ) -> list[CrawlResultMessage]:
@@ -1950,6 +2006,15 @@ class AutonomousCrawlerAgent:
         # This is a fallback for when the agent doesn't follow the exact format
         # Look for URL patterns and try to associate content
         articles = []
+
+        # First, validate the entire text is not invalid output
+        if self._is_invalid_agent_output(text):
+            logger.warning(
+                "Skipping unstructured extraction - text contains invalid agent output",
+                job_id=job_id,
+                text_preview=text[:200] if len(text) > 200 else text,
+            )
+            return articles
 
         # Simple heuristic: split by URL patterns
         url_pattern = r"(https?://[^\s]+)"
@@ -1964,19 +2029,28 @@ class AutonomousCrawlerAgent:
                 if current_url and current_content:
                     content = " ".join(current_content).strip()
                     if len(content) > 100:  # Minimum content length
-                        articles.append(
-                            CrawlResultMessage(
-                                job_id=job_id,
-                                source_id=source_id,
-                                url=current_url,
-                                title=content[:100] + "...",  # Use first 100 chars as title
-                                content=content,
-                                published_at=None,
-                                metadata_json=json.dumps(
-                                    {"source": "browser-agent", "extraction": "unstructured"}
-                                ),
+                        # Extract a valid title from content
+                        title = self._extract_title_from_content(content)
+                        if title:
+                            articles.append(
+                                CrawlResultMessage(
+                                    job_id=job_id,
+                                    source_id=source_id,
+                                    url=current_url,
+                                    title=title,
+                                    content=content,
+                                    published_at=None,
+                                    metadata_json=json.dumps(
+                                        {"source": "browser-agent", "extraction": "unstructured"}
+                                    ),
+                                )
                             )
-                        )
+                        else:
+                            logger.debug(
+                                "Skipping article - could not extract valid title",
+                                job_id=job_id,
+                                url=current_url,
+                            )
                 current_url = part
                 current_content = []
             else:

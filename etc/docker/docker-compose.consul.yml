@@ -307,6 +307,15 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
+      # MCP servers for analysis
+      newsinsight-mcp:
+        condition: service_healthy
+      bias-mcp:
+        condition: service_healthy
+      factcheck-mcp:
+        condition: service_healthy
+      topic-mcp:
+        condition: service_healthy
     environment:
       # Consul configuration
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -363,6 +372,12 @@ services:
       - METRICS_PORT=${CRAWLER_METRICS_PORT:-9090}
       - LOG_LEVEL=${CRAWLER_LOG_LEVEL:-INFO}
       - LOG_FORMAT=${CRAWLER_LOG_FORMAT:-json}
+      # MCP Server URLs for integrated analysis
+      - BIAS_MCP_URL=http://bias-mcp:5001
+      - FACTCHECK_MCP_URL=http://factcheck-mcp:5002
+      - TOPIC_MCP_URL=http://topic-mcp:5003
+      - NEWSINSIGHT_MCP_URL=http://newsinsight-mcp:5000
+      - HUGGINGFACE_MCP_URL=http://huggingface-mcp:5011
     expose:
       - "9090"
     ports:
@@ -555,6 +570,151 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8020/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  # ============================================================================
+  # MCP Servers - Analysis Tool Servers (Local Development)
+  # ============================================================================
+  newsinsight-mcp:
+    build:
+      context: ../../mcp/newsinsight_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/newsinsight-mcp:local
+    restart: unless-stopped
+    environment:
+      - DB_BACKEND=postgres
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - PORT=5000
+    expose:
+      - "5000"
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  bias-mcp:
+    build:
+      context: ../../mcp/bias_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/bias-mcp:local
+    restart: unless-stopped
+    environment:
+      - DB_BACKEND=postgres
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - PORT=5001
+    expose:
+      - "5001"
+    ports:
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  factcheck-mcp:
+    build:
+      context: ../../mcp/factcheck_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/factcheck-mcp:local
+    restart: unless-stopped
+    environment:
+      - DB_BACKEND=postgres
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - PORT=5002
+    expose:
+      - "5002"
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  topic-mcp:
+    build:
+      context: ../../mcp/topic_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/topic-mcp:local
+    restart: unless-stopped
+    environment:
+      - DB_BACKEND=postgres
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - PORT=5003
+    expose:
+      - "5003"
+    ports:
+      - "5003:5003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  aiagent-mcp:
+    build:
+      context: ../../mcp/aiagent_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/aiagent-mcp:local
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - ENCRYPTION_KEY=${AI_PROVIDER_ENCRYPTION_KEY:-}
+      - PORT=5004
+    expose:
+      - "5004"
+    ports:
+      - "5004:5004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
       interval: 30s
       timeout: 10s
       retries: 3
