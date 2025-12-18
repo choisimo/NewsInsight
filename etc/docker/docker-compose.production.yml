@@ -145,6 +145,36 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ============================================================================
+  # Consul Seed - Initialize Consul KV and register services
+  # ============================================================================
+  consul-seed:
+    image: alpine:3.18
+    container_name: newsinsight-prod-consul-seed
+    depends_on:
+      consul:
+        condition: service_healthy
+    volumes:
+      - ../scripts:/scripts:ro
+      - ../configs:/configs:ro
+    environment:
+      CONSUL_HTTP_ADDR: http://consul:8500
+      CONSUL_HTTP_TOKEN: ${CONSUL_HTTP_TOKEN:-}
+    command: >
+      sh -c "
+        apk add --no-cache curl bash jq &&
+        /scripts/consul_seed.sh production --json
+      "
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.15
+    restart: "no"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:latest
     container_name: newsinsight-prod-redpanda
@@ -212,6 +242,7 @@ services:
       AUTONOMOUS_CRAWLER_URL: http://autonomous-crawler:9090
       AUTONOMOUS_CRAWLER_API_URL: http://autonomous-crawler:8030
       ADMIN_DASHBOARD_URL: http://admin-dashboard:8888
+      ML_ADDON_BOT_DETECTOR_URL: http://bot-detector:8041
       # Frontend config
       FRONTEND_API_BASE_URL: https://newsinsight.nodove.com
       # JVM settings
@@ -228,6 +259,8 @@ services:
         condition: service_healthy
       consul:
         condition: service_healthy
+      consul-seed:
+        condition: service_completed_successfully
       redpanda:
         condition: service_healthy
     healthcheck:
@@ -274,6 +307,13 @@ services:
       EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-true}
       VECTOR_SEARCH_ENABLED: ${VECTOR_SEARCH_ENABLED:-true}
       HYBRID_SEARCH_ENABLED: ${HYBRID_SEARCH_ENABLED:-true}
+      # Auto-Crawl Configuration (실시간 확장형 크롤링)
+      AUTOCRAWL_ENABLED: ${AUTOCRAWL_ENABLED:-true}
+      AUTOCRAWL_BATCH_SIZE: ${AUTOCRAWL_BATCH_SIZE:-10}
+      AUTOCRAWL_MAX_CONCURRENT_PER_DOMAIN: ${AUTOCRAWL_MAX_CONCURRENT_PER_DOMAIN:-3}
+      AUTOCRAWL_DISCOVER_FROM_SEARCH: ${AUTOCRAWL_DISCOVER_FROM_SEARCH:-true}
+      AUTOCRAWL_DISCOVER_FROM_ARTICLES: ${AUTOCRAWL_DISCOVER_FROM_ARTICLES:-true}
+      AUTOCRAWL_DISCOVER_FROM_DEEP_SEARCH: ${AUTOCRAWL_DISCOVER_FROM_DEEP_SEARCH:-true}
       # JVM settings
       JAVA_OPTS: "-Xms256m -Xmx512m"
     networks:
@@ -286,6 +326,8 @@ services:
         condition: service_healthy
       consul:
         condition: service_healthy
+      consul-seed:
+        condition: service_completed_successfully
       redpanda:
         condition: service_healthy
       embedding-server:
@@ -800,7 +842,7 @@ services:
   ip-rotation:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/ip-rotation:${TAG:-latest}
     build:
-      context: ../../backend/subs/ip-rotation
+      context: ../../backend/browser-use/ip-rotation
       dockerfile: Dockerfile
     container_name: newsinsight-prod-ip-rotation
     restart: unless-stopped
@@ -840,8 +882,8 @@ services:
   crawl-worker:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/crawl-worker:${TAG:-latest}
     build:
-      context: ../../backend/subs
-      dockerfile: crawl-worker/Dockerfile
+      context: ../../
+      dockerfile: backend/autonomous-crawler-service/crawl-worker/Dockerfile
     container_name: newsinsight-prod-crawl-worker
     restart: unless-stopped
     environment:
@@ -874,8 +916,8 @@ services:
   maigret-worker:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/maigret-worker:${TAG:-latest}
     build:
-      context: ../../backend/subs
-      dockerfile: maigret-worker/Dockerfile
+      context: ../../
+      dockerfile: backend/data-collection-service/maigret-worker/Dockerfile
     container_name: newsinsight-prod-maigret-worker
     restart: unless-stopped
     environment:
@@ -900,6 +942,31 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bot-detector:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/bot-detector:${TAG:-latest}
+    build:
+      context: ../../
+      dockerfile: backend/browser-use/bot-detector/Dockerfile
+    container_name: newsinsight-prod-bot-detector
+    restart: unless-stopped
+    environment:
+      BOT_DETECTOR_MODEL_NAME: ${BOT_DETECTOR_MODEL_NAME:-roberta-base-openai-detector}
+      PORT: "8041"
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.74
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8041/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     logging:
       driver: "json-file"
       options:

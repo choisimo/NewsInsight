@@ -233,7 +233,7 @@ public class IntegratedCrawlerService {
                                 Flux.just(page),
                                 Flux.fromIterable(links)
                                         .filter(link -> !visitedUrls.contains(link))
-                                        .take(5) // Limit links per page
+                                        .take(15) // Limit links per page (increased from 5)
                                         .flatMap(link -> crawlWithStrategies(link, topic, strategies, visitedUrls, currentDepth + 1, maxDepth))
                         );
                     }
@@ -452,7 +452,7 @@ public class IntegratedCrawlerService {
             }
         }
 
-        return links.stream().distinct().limit(10).collect(Collectors.toList());
+        return links.stream().distinct().limit(30).collect(Collectors.toList());
     }
 
     /**
@@ -472,7 +472,7 @@ public class IntegratedCrawlerService {
             }
         }
 
-        return links.stream().distinct().limit(10).collect(Collectors.toList());
+        return links.stream().distinct().limit(30).collect(Collectors.toList());
     }
 
     /**

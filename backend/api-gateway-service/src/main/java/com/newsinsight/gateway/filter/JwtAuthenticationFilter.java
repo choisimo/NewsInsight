@@ -42,6 +42,7 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         "/api/v1/auth/register",
         "/api/v1/articles",
         "/api/v1/analysis",
+        "/api/v1/ai",
         "/api/v1/config",
         "/api/v1/sources",
         "/api/v1/collections",
@@ -50,7 +51,10 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         "/api/v1/events",        // SSE 이벤트 스트림 (EventSource는 헤더 전송 불가)
         "/api/v1/search-history",
         "/api/v1/search-templates",
+        "/api/v1/ml",
         "/api/v1/admin",         // Admin Dashboard (자체 인증 처리)
+        "/api/v1/crawler",       // Autonomous Crawler API
+        "/api/v1/autocrawl",     // AutoCrawl API (자동 크롤링 관리)
         "/api/browser-use",      // Browser-Use API (gateway path)
         "/api/ml-addons",        // ML Add-ons API (sentiment, factcheck, bias)
         "/browse",               // Browser-Use API (direct path - legacy)

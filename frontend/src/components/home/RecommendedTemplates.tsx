@@ -84,6 +84,7 @@ interface RecommendedTemplatesProps {
   templates?: SearchTemplate[];
   isLoading?: boolean;
   onSelectTemplate?: (template: SearchTemplate) => void;
+  showDefaults?: boolean;
 }
 
 export function RecommendedTemplates({
@@ -91,6 +92,7 @@ export function RecommendedTemplates({
   templates = [],
   isLoading = false,
   onSelectTemplate,
+  showDefaults = true,
 }: RecommendedTemplatesProps) {
   // 로딩 상태
   if (isLoading) {
@@ -117,12 +119,21 @@ export function RecommendedTemplates({
     .sort((a, b) => (b.useCount || 0) - (a.useCount || 0))
     .slice(0, 3);
 
-  // 표시할 템플릿: 즐겨찾기 > 최근 사용 > 기본
-  const displayTemplates = [
-    ...favoriteTemplates,
-    ...recentTemplates,
-    ...DEFAULT_TEMPLATES,
-  ].slice(0, 6);
+  const prioritizedTemplates = [...favoriteTemplates, ...recentTemplates];
+  const usedModes = new Set(prioritizedTemplates.map(t => t.mode));
+  const defaultsToAdd = showDefaults
+    ? DEFAULT_TEMPLATES.filter(t => !usedModes.has(t.mode))
+    : [];
+
+  const combined = [...prioritizedTemplates, ...defaultsToAdd];
+  const uniqueById = Array.from(
+    combined.reduce((map, t) => {
+      if (!map.has(t.id)) map.set(t.id, t);
+      return map;
+    }, new Map<number, SearchTemplate>())
+  ).map(([, t]) => t);
+
+  const displayTemplates = uniqueById.slice(0, 6);
 
   return (
     <Card className={className}>
@@ -133,7 +144,7 @@ export function RecommendedTemplates({
             추천 템플릿
           </CardTitle>
           <Button variant="ghost" size="sm" asChild className="text-xs h-7">
-            <Link to="/workspace/templates">
+            <Link to="/workspace">
               전체 보기
               <ArrowRight className="h-3 w-3 ml-1" />
             </Link>
@@ -141,15 +152,26 @@ export function RecommendedTemplates({
         </div>
       </CardHeader>
       <CardContent>
-        <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
-          {displayTemplates.map(template => (
-            <TemplateCard
-              key={template.id}
-              template={template}
-              onClick={() => onSelectTemplate?.(template)}
-            />
-          ))}
-        </div>
+        {displayTemplates.length === 0 ? (
+          <div className="flex items-center justify-between gap-4">
+            <div className="text-sm text-muted-foreground">
+              아직 추천할 템플릿이 없습니다
+            </div>
+            <Button variant="outline" size="sm" asChild className="text-xs h-8">
+              <Link to="/workspace">템플릿 만들기</Link>
+            </Button>
+          </div>
+        ) : (
+          <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+            {displayTemplates.map(template => (
+              <TemplateCard
+                key={template.id}
+                template={template}
+                onClick={() => onSelectTemplate?.(template)}
+              />
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -170,13 +192,13 @@ function TemplateCard({ template, onClick }: TemplateCardProps) {
   const getTemplateUrl = () => {
     if (isDefault) {
       // 기본 템플릿은 모드만 설정
-      return `/?mode=${template.mode}`;
+      return `/search?mode=${template.mode}`;
     }
     // 사용자 템플릿은 쿼리 포함
     const mode = template.mode === 'unified' ? '' : `mode=${template.mode}`;
     const query = template.query ? `q=${encodeURIComponent(template.query)}` : '';
     const params = [mode, query].filter(Boolean).join('&');
-    return params ? `/?${params}` : '/';
+    return params ? `/search?${params}` : '/search';
   };
 
   return (

@@ -48,6 +48,7 @@ class LLMProvider(str, Enum):
     GOOGLE = "google"
     OPENROUTER = "openrouter"
     OLLAMA = "ollama"
+    AZURE = "azure"
     CUSTOM = "custom"
 
 
@@ -255,27 +256,111 @@ def clear_provider_cache():
 
 
 def get_llm_from_env(provider: LLMProvider, model: Optional[str] = None):
-    """환경변수 기반으로 LLM 인스턴스 생성"""
+    """환경변수/Settings 기반으로 LLM 인스턴스 생성
+
+    Note: Settings는 Consul에서 로드된 설정을 포함합니다.
+    """
     from langchain_openai import ChatOpenAI
     from langchain_anthropic import ChatAnthropic
     from langchain_google_genai import ChatGoogleGenerativeAI
 
+    # Get settings (includes Consul-loaded config)
+    settings = get_settings()
+
     if provider == LLMProvider.OPENAI:
         return ChatOpenAI(
-            model=model or "gpt-4o",
-            api_key=api_config.OPENAI_API_KEY,
+            model=model or settings.llm.openai_model or "gpt-4o",
+            api_key=settings.llm.openai_api_key or api_config.OPENAI_API_KEY,
             temperature=0.1,
         )
     elif provider == LLMProvider.ANTHROPIC:
         return ChatAnthropic(
-            model=model or "claude-3-5-sonnet-20241022",
-            api_key=api_config.ANTHROPIC_API_KEY,
+            model=model or settings.llm.anthropic_model or "claude-3-5-sonnet-20241022",
+            api_key=settings.llm.anthropic_api_key or api_config.ANTHROPIC_API_KEY,
             temperature=0.1,
         )
     elif provider == LLMProvider.GOOGLE:
         return ChatGoogleGenerativeAI(
             model=model or "gemini-1.5-pro",
             google_api_key=api_config.GOOGLE_API_KEY,
+            temperature=0.1,
+        )
+    elif provider == LLMProvider.OPENROUTER:
+        return ChatOpenAI(
+            model=model or settings.llm.openrouter_model or "openai/gpt-4o",
+            api_key=settings.llm.openrouter_api_key,
+            base_url=settings.llm.openrouter_base_url or "https://openrouter.ai/api/v1",
+            temperature=0.1,
+        )
+    elif provider == LLMProvider.OLLAMA:
+        try:
+            from langchain_ollama import ChatOllama
+
+            return ChatOllama(
+                model=model or settings.llm.ollama_model or "llama3.1",
+                base_url=settings.llm.ollama_base_url or "http://localhost:11434",
+                temperature=0.1,
+            )
+        except ImportError:
+            raise ValueError("Ollama support requires langchain-ollama package")
+    elif provider == LLMProvider.AZURE:
+        try:
+            from langchain_openai import AzureChatOpenAI
+
+            azure_endpoint = settings.llm.azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT", "")
+            azure_api_key = settings.llm.azure_api_key or os.getenv("AZURE_OPENAI_API_KEY", "")
+            azure_deployment = (
+                model
+                or settings.llm.azure_deployment_name
+                or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+            )
+            azure_api_version = settings.llm.azure_api_version or os.getenv(
+                "AZURE_OPENAI_API_VERSION", "2024-02-15-preview"
+            )
+
+            if not azure_endpoint:
+                raise ValueError(
+                    "Azure OpenAI requires LLM_AZURE_ENDPOINT or AZURE_OPENAI_ENDPOINT"
+                )
+            if not azure_api_key:
+                raise ValueError("Azure OpenAI requires LLM_AZURE_API_KEY or AZURE_OPENAI_API_KEY")
+
+            return AzureChatOpenAI(
+                azure_endpoint=azure_endpoint,
+                azure_deployment=azure_deployment,
+                api_key=azure_api_key,
+                api_version=azure_api_version,
+                temperature=0.1,
+            )
+        except ImportError:
+            raise ValueError("Azure OpenAI support requires langchain-openai package")
+    elif provider == LLMProvider.CUSTOM:
+        custom_base_url = settings.llm.custom_base_url or os.getenv("CUSTOM_LLM_BASE_URL", "")
+        if not custom_base_url:
+            raise ValueError("Custom provider requires CUSTOM_LLM_BASE_URL or LLM_CUSTOM_BASE_URL")
+
+        custom_request_format = settings.llm.custom_request_format
+        custom_response_path = settings.llm.custom_response_path
+
+        # If custom request format is provided, use CustomRESTAPIClient for non-OpenAI-compatible APIs
+        if custom_request_format:
+            from src.crawler.agent import CustomRESTAPIClient
+
+            return CustomRESTAPIClient(
+                base_url=custom_base_url,
+                api_key=settings.llm.custom_api_key or os.getenv("CUSTOM_LLM_API_KEY", ""),
+                model=model or settings.llm.custom_model or "default",
+                request_format=custom_request_format,
+                response_path=custom_response_path or "reply",
+                custom_headers=settings.llm.custom_headers or "{}",
+                temperature=0.1,
+            )
+
+        # Fallback to OpenAI-compatible format
+        return ChatOpenAI(
+            model=model or settings.llm.custom_model or "default",
+            api_key=settings.llm.custom_api_key or os.getenv("CUSTOM_LLM_API_KEY", "none"),
+            base_url=custom_base_url,
             temperature=0.1,
         )
     else:
@@ -338,6 +423,29 @@ def get_llm_from_config(provider_config: Dict[str, Any], model_override: Optiona
             )
         except ImportError:
             raise ValueError("Ollama support requires langchain-ollama package")
+
+    elif provider_type == "AZURE":
+        try:
+            from langchain_openai import AzureChatOpenAI
+
+            azure_endpoint = extra_config.get("endpoint") or base_url
+            deployment_name = extra_config.get("deployment_name") or default_model
+            api_version = extra_config.get("api_version", "2024-02-15-preview")
+
+            if not azure_endpoint:
+                raise ValueError("Azure provider requires endpoint")
+            if not deployment_name:
+                raise ValueError("Azure provider requires deployment_name")
+
+            return AzureChatOpenAI(
+                azure_endpoint=azure_endpoint,
+                azure_deployment=deployment_name,
+                api_key=api_key,
+                api_version=api_version,
+                temperature=temperature,
+            )
+        except ImportError:
+            raise ValueError("Azure OpenAI support requires langchain-openai package")
 
     elif provider_type == "CUSTOM":
         if not base_url:
@@ -645,23 +753,24 @@ def register_routes(app: FastAPI):
     async def get_available_providers():
         """사용 가능한 LLM Provider 목록 조회"""
         providers = []
+        settings = get_settings()
 
-        if api_config.OPENAI_API_KEY:
+        if settings.llm.openai_api_key or api_config.OPENAI_API_KEY:
             providers.append(
                 {
                     "name": "openai",
                     "providerType": "OPENAI",
-                    "defaultModel": "gpt-4o",
+                    "defaultModel": settings.llm.openai_model or "gpt-4o",
                     "available": True,
                 }
             )
 
-        if api_config.ANTHROPIC_API_KEY:
+        if settings.llm.anthropic_api_key or api_config.ANTHROPIC_API_KEY:
             providers.append(
                 {
                     "name": "anthropic",
                     "providerType": "ANTHROPIC",
-                    "defaultModel": "claude-3-5-sonnet-20241022",
+                    "defaultModel": settings.llm.anthropic_model or "claude-3-5-sonnet-20241022",
                     "available": True,
                 }
             )
@@ -676,10 +785,58 @@ def register_routes(app: FastAPI):
                 }
             )
 
+        # OpenRouter (Settings 우선)
+        if settings.llm.openrouter_api_key or os.getenv("OPENROUTER_API_KEY"):
+            providers.append(
+                {
+                    "name": "openrouter",
+                    "providerType": "OPENROUTER",
+                    "defaultModel": settings.llm.openrouter_model or "openai/gpt-4o",
+                    "available": True,
+                }
+            )
+
+        # Ollama (항상 표시, 로컬에서 실행 가능)
+        providers.append(
+            {
+                "name": "ollama",
+                "providerType": "OLLAMA",
+                "defaultModel": settings.llm.ollama_model or "llama3.1",
+                "available": True,
+                "local": True,
+            }
+        )
+
+        # Azure OpenAI (Settings 우선)
+        if (settings.llm.azure_api_key and settings.llm.azure_endpoint) or (
+            os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT")
+        ):
+            providers.append(
+                {
+                    "name": "azure",
+                    "providerType": "AZURE",
+                    "defaultModel": settings.llm.azure_deployment_name
+                    or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
+                    "available": True,
+                }
+            )
+
+        # Custom (Settings 우선)
+        if settings.llm.custom_base_url or os.getenv("CUSTOM_LLM_BASE_URL"):
+            providers.append(
+                {
+                    "name": "custom",
+                    "providerType": "CUSTOM",
+                    "defaultModel": settings.llm.custom_model or "default",
+                    "available": True,
+                }
+            )
+
         return {
             "providers": providers,
             "defaultProvider": providers[0] if providers else None,
             "source": "environment",
+            "supportedProviders": [p.value for p in LLMProvider],
         }
 
     @app.post("/providers/cache/clear")
@@ -687,6 +844,301 @@ def register_routes(app: FastAPI):
         """Provider 설정 캐시 삭제"""
         clear_provider_cache()
         return {"status": "ok", "message": "Provider cache cleared"}
+
+    @app.post("/providers/test")
+    async def test_provider_connection(
+        provider: LLMProvider = Query(..., description="테스트할 Provider"),
+        model: Optional[str] = Query(default=None, description="테스트할 모델"),
+    ):
+        """
+        LLM Provider 연결 테스트.
+
+        간단한 프롬프트를 보내 Provider가 정상 작동하는지 확인합니다.
+        """
+        import time
+
+        start_time = time.time()
+
+        try:
+            llm = await get_llm(provider, model)
+
+            # 간단한 테스트 프롬프트
+            from langchain_core.messages import HumanMessage
+
+            test_message = HumanMessage(content="Say 'Connection successful!' in one line.")
+            response = await llm.ainvoke([test_message])
+
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+            return {
+                "status": "success",
+                "provider": provider.value,
+                "model": model or "default",
+                "response": response.content[:100] if response.content else "No response",
+                "latency_ms": elapsed_ms,
+                "message": "연결 성공",
+            }
+
+        except Exception as e:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            logger.error("Provider test failed", provider=provider.value, error=str(e))
+            return {
+                "status": "failed",
+                "provider": provider.value,
+                "model": model or "default",
+                "error": str(e),
+                "latency_ms": elapsed_ms,
+                "message": f"연결 실패: {str(e)[:100]}",
+            }
+
+    @app.get("/providers/{provider}/models")
+    async def get_provider_models(
+        provider: LLMProvider,
+        api_key: Optional[str] = Query(
+            default=None, description="API 키 (옵션, 없으면 환경변수 사용)"
+        ),
+        base_url: Optional[str] = Query(default=None, description="Base URL (Ollama, Custom용)"),
+    ):
+        """
+        특정 LLM Provider에서 사용 가능한 모델 목록을 동적으로 조회합니다.
+
+        - OpenAI: /v1/models API 호출
+        - OpenRouter: /api/v1/models API 호출
+        - Ollama: /api/tags API 호출
+        - Anthropic, Google, Azure: 정적 목록 반환 (공식 API 없음)
+        - Custom: /v1/models 또는 정적 목록
+        """
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                if provider == LLMProvider.OPENAI:
+                    key = api_key or os.getenv("OPENAI_API_KEY", "")
+                    if not key:
+                        return {
+                            "provider": provider.value,
+                            "models": _get_static_models("openai"),
+                            "source": "static",
+                            "message": "API 키가 없어 정적 목록 반환",
+                        }
+
+                    resp = await client.get(
+                        "https://api.openai.com/v1/models",
+                        headers={"Authorization": f"Bearer {key}"},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        # GPT 모델만 필터링 (chat 모델)
+                        models = [
+                            {"id": m["id"], "name": m["id"], "owned_by": m.get("owned_by", "")}
+                            for m in data.get("data", [])
+                            if any(prefix in m["id"] for prefix in ["gpt-", "o1-", "chatgpt-"])
+                        ]
+                        # 정렬: gpt-4o 우선
+                        models.sort(key=lambda x: (0 if "gpt-4o" in x["id"] else 1, x["id"]))
+                        return {
+                            "provider": provider.value,
+                            "models": models[:20],  # 최대 20개
+                            "source": "api",
+                            "total": len(models),
+                        }
+                    else:
+                        return {
+                            "provider": provider.value,
+                            "models": _get_static_models("openai"),
+                            "source": "static",
+                            "error": f"API 호출 실패: {resp.status_code}",
+                        }
+
+                elif provider == LLMProvider.OPENROUTER:
+                    key = api_key or os.getenv("OPENROUTER_API_KEY", "")
+                    headers = {}
+                    if key:
+                        headers["Authorization"] = f"Bearer {key}"
+
+                    resp = await client.get(
+                        "https://openrouter.ai/api/v1/models",
+                        headers=headers,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        models = [
+                            {
+                                "id": m["id"],
+                                "name": m.get("name", m["id"]),
+                                "context_length": m.get("context_length"),
+                                "pricing": m.get("pricing"),
+                            }
+                            for m in data.get("data", [])[:50]  # 상위 50개
+                        ]
+                        return {
+                            "provider": provider.value,
+                            "models": models,
+                            "source": "api",
+                            "total": len(data.get("data", [])),
+                        }
+                    else:
+                        return {
+                            "provider": provider.value,
+                            "models": _get_static_models("openrouter"),
+                            "source": "static",
+                            "error": f"API 호출 실패: {resp.status_code}",
+                        }
+
+                elif provider == LLMProvider.OLLAMA:
+                    ollama_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+                    try:
+                        resp = await client.get(f"{ollama_url}/api/tags")
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            models = [
+                                {
+                                    "id": m["name"],
+                                    "name": m["name"],
+                                    "size": m.get("size"),
+                                    "modified_at": m.get("modified_at"),
+                                }
+                                for m in data.get("models", [])
+                            ]
+                            return {
+                                "provider": provider.value,
+                                "models": models,
+                                "source": "api",
+                                "ollama_url": ollama_url,
+                            }
+                        else:
+                            return {
+                                "provider": provider.value,
+                                "models": _get_static_models("ollama"),
+                                "source": "static",
+                                "error": f"Ollama 연결 실패: {resp.status_code}",
+                            }
+                    except httpx.ConnectError:
+                        return {
+                            "provider": provider.value,
+                            "models": _get_static_models("ollama"),
+                            "source": "static",
+                            "error": f"Ollama 서버에 연결할 수 없음: {ollama_url}",
+                        }
+
+                elif provider == LLMProvider.ANTHROPIC:
+                    # Anthropic은 공식 모델 목록 API가 없음
+                    return {
+                        "provider": provider.value,
+                        "models": _get_static_models("anthropic"),
+                        "source": "static",
+                        "message": "Anthropic은 모델 목록 API를 제공하지 않음",
+                    }
+
+                elif provider == LLMProvider.GOOGLE:
+                    # Google AI도 정적 목록 사용
+                    return {
+                        "provider": provider.value,
+                        "models": _get_static_models("google"),
+                        "source": "static",
+                        "message": "Google AI는 정적 모델 목록 사용",
+                    }
+
+                elif provider == LLMProvider.AZURE:
+                    # Azure는 배포 기반이라 동적 조회 불가
+                    return {
+                        "provider": provider.value,
+                        "models": _get_static_models("azure"),
+                        "source": "static",
+                        "message": "Azure OpenAI는 배포 기반으로 동적 조회 불가",
+                    }
+
+                elif provider == LLMProvider.CUSTOM:
+                    custom_url = base_url or os.getenv("CUSTOM_LLM_BASE_URL", "")
+                    if custom_url:
+                        try:
+                            resp = await client.get(f"{custom_url}/v1/models")
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                models = [
+                                    {"id": m["id"], "name": m.get("id", "")}
+                                    for m in data.get("data", [])
+                                ]
+                                return {
+                                    "provider": provider.value,
+                                    "models": models,
+                                    "source": "api",
+                                    "base_url": custom_url,
+                                }
+                        except Exception:
+                            pass
+
+                    return {
+                        "provider": provider.value,
+                        "models": [{"id": "default", "name": "기본 모델"}],
+                        "source": "static",
+                    }
+
+                else:
+                    return {
+                        "provider": provider.value,
+                        "models": [],
+                        "source": "unknown",
+                        "error": "알 수 없는 Provider",
+                    }
+
+        except Exception as e:
+            logger.error("Failed to fetch models", provider=provider.value, error=str(e))
+            return {
+                "provider": provider.value,
+                "models": _get_static_models(provider.value),
+                "source": "static",
+                "error": str(e),
+            }
+
+    def _get_static_models(provider: str) -> List[Dict[str, Any]]:
+        """정적 모델 목록 반환 (fallback)"""
+        static_models = {
+            "openai": [
+                {"id": "gpt-4o", "name": "GPT-4o (추천)"},
+                {"id": "gpt-4o-mini", "name": "GPT-4o Mini (빠름)"},
+                {"id": "gpt-4-turbo", "name": "GPT-4 Turbo"},
+                {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo (저렴)"},
+                {"id": "o1-preview", "name": "o1-preview (추론)"},
+                {"id": "o1-mini", "name": "o1-mini (추론, 빠름)"},
+            ],
+            "anthropic": [
+                {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet (추천)"},
+                {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku (빠름)"},
+                {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus (강력)"},
+            ],
+            "google": [
+                {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro (추천)"},
+                {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash (빠름)"},
+                {"id": "gemini-2.0-flash-exp", "name": "Gemini 2.0 Flash (실험)"},
+            ],
+            "openrouter": [
+                {"id": "openai/gpt-4o", "name": "GPT-4o (OpenAI)"},
+                {"id": "anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet"},
+                {"id": "google/gemini-pro-1.5", "name": "Gemini 1.5 Pro"},
+                {"id": "meta-llama/llama-3.1-405b-instruct", "name": "Llama 3.1 405B"},
+                {"id": "meta-llama/llama-3.1-70b-instruct", "name": "Llama 3.1 70B"},
+                {"id": "mistralai/mixtral-8x22b-instruct", "name": "Mixtral 8x22B"},
+                {"id": "deepseek/deepseek-chat", "name": "DeepSeek Chat"},
+                {"id": "qwen/qwen-2.5-72b-instruct", "name": "Qwen 2.5 72B"},
+            ],
+            "ollama": [
+                {"id": "llama3.1", "name": "Llama 3.1 (추천)"},
+                {"id": "llama3.1:70b", "name": "Llama 3.1 70B"},
+                {"id": "mistral", "name": "Mistral"},
+                {"id": "mixtral", "name": "Mixtral"},
+                {"id": "codellama", "name": "Code Llama"},
+                {"id": "qwen2.5", "name": "Qwen 2.5"},
+                {"id": "gemma2", "name": "Gemma 2"},
+            ],
+            "azure": [
+                {"id": "gpt-4o", "name": "GPT-4o"},
+                {"id": "gpt-4-turbo", "name": "GPT-4 Turbo"},
+                {"id": "gpt-35-turbo", "name": "GPT-3.5 Turbo"},
+            ],
+            "custom": [
+                {"id": "default", "name": "기본 모델"},
+            ],
+        }
+        return static_models.get(provider, [])
 
     @app.post("/agent/crawl", response_model=AgentTaskResult)
     async def agent_crawl(request: AgentTask, req: Request):
@@ -1148,6 +1600,7 @@ def register_routes(app: FastAPI):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 # 1차: crawl4ai 서비스 시도
                 try:
+
                     def extract_content(payload: Any) -> Optional[str]:
                         if isinstance(payload, dict):
                             results = payload.get("results")
@@ -1172,7 +1625,9 @@ def register_routes(app: FastAPI):
                     base_url = api_config.WEB_CRAWLER_URL.rstrip("/")
                     endpoint = f"{base_url}/crawl"
 
-                    crawl_response = await client.get(endpoint, params={"url": url}, headers=headers)
+                    crawl_response = await client.get(
+                        endpoint, params={"url": url}, headers=headers
+                    )
                     if crawl_response.status_code == 200:
                         try:
                             crawl_data = crawl_response.json()
@@ -1195,7 +1650,10 @@ def register_routes(app: FastAPI):
 
                         task_id = crawl_data.get("task_id")
                         if task_id:
-                            for status_path in (f"{base_url}/task/{task_id}", f"{base_url}/job/{task_id}"):
+                            for status_path in (
+                                f"{base_url}/task/{task_id}",
+                                f"{base_url}/job/{task_id}",
+                            ):
                                 try:
                                     status_response = await client.get(status_path, headers=headers)
                                     if status_response.status_code == 200:

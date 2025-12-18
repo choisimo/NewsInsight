@@ -28,7 +28,7 @@ public class WebScraperService {
     private final ObjectMapper objectMapper;
     private final Crawl4aiClient crawl4aiClient;
 
-    @Value("${collector.crawler.enabled:false}")
+    @Value("${collector.crawler.enabled:true}")
     private boolean crawlerEnabled;
 
     /**

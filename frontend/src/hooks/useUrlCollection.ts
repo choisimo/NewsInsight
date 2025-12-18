@@ -549,10 +549,18 @@ export function useUrlCollection() {
     const { category, reliability } = classifyUrl(url);
     const autoTags = generateAutoTags(url, category);
     
+    // Safely extract hostname, fallback to url itself if invalid
+    let hostname: string;
+    try {
+      hostname = new URL(url).hostname;
+    } catch {
+      hostname = url;
+    }
+    
     const newUrl: UrlItem = {
       id: generateId(),
       type: 'url',
-      name: name || new URL(url).hostname,
+      name: name || hostname,
       url,
       description,
       tags: tags ? [...new Set([...tags, ...autoTags])] : autoTags,
@@ -605,10 +613,18 @@ export function useUrlCollection() {
           const { category, reliability } = classifyUrl(urlData.url);
           const autoTags = generateAutoTags(urlData.url, category);
           
+          // Safely extract hostname, fallback to url itself if invalid
+          let hostname: string;
+          try {
+            hostname = new URL(urlData.url).hostname;
+          } catch {
+            hostname = urlData.url;
+          }
+          
           const newUrl: UrlItem = {
             id: generateId(),
             type: 'url',
-            name: urlData.name || new URL(urlData.url).hostname,
+            name: urlData.name || hostname,
             url: urlData.url,
             description: urlData.description,
             tags: urlData.tags ? [...new Set([...urlData.tags, ...autoTags])] : autoTags,

@@ -16,6 +16,8 @@ import {
   Brain,
   Sparkles,
   MoreHorizontal,
+  Search,
+  X,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -23,6 +25,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -275,6 +278,16 @@ const CollectedDataPage: React.FC = () => {
   const [processedFilter, setProcessedFilter] = useState<'all' | 'processed' | 'unprocessed'>(
     'all'
   );
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+
+  // Debounce search query
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Stats Hook
   const { stats, loading: statsLoading, refresh: refreshStats } = useDataStats();
@@ -293,6 +306,7 @@ const CollectedDataPage: React.FC = () => {
   } = useCollectedData({
     size: 12,
     processed: processedFilter === 'all' ? undefined : processedFilter === 'processed',
+    query: debouncedQuery || undefined,
     autoRefresh: true,
     refreshInterval: 30000,
   });
@@ -472,6 +486,34 @@ const CollectedDataPage: React.FC = () => {
             icon={<CheckCircle2 className="h-5 w-5 text-green-500" />}
             description="분석 완료된 문서"
           />
+        </div>
+
+        {/* Search Bar */}
+        <div className="mb-6">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="제목 또는 내용으로 검색..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10 pr-10"
+            />
+            {searchQuery && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                onClick={() => setSearchQuery('')}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+          {debouncedQuery && (
+            <p className="text-sm text-muted-foreground mt-2">
+              "{debouncedQuery}" 검색 결과: {allTotal}건
+            </p>
+          )}
         </div>
 
         {/* Error Alert */}

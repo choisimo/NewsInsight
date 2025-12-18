@@ -464,15 +464,8 @@ const DeepSearch = () => {
     },
   });
 
-  // Fallback: Fetch result if we have jobId but no SSE result (e.g., page refresh)
-  const { data: fetchedResult } = useQuery({
-    queryKey: ['deepSearch', 'result', currentJobId],
-    queryFn: () => getDeepSearchResult(currentJobId!),
-    enabled: !!currentJobId && !sseResult && currentStatus === 'COMPLETED',
-    staleTime: Infinity,
-  });
-
   // Fallback: Get job status if we have jobId but no SSE connection yet
+  // This must be defined BEFORE the result fetch query so we can use fetchedJob in the enabled condition
   const { data: fetchedJob } = useQuery({
     queryKey: ['deepSearch', 'job', currentJobId],
     queryFn: () => getDeepSearchStatus(currentJobId!),
@@ -480,8 +473,19 @@ const DeepSearch = () => {
     staleTime: 5000,
   });
 
-  const result = sseResult || fetchedResult;
+  // Compute jobStatus early so it can be used in the result fetch condition
   const jobStatus = currentStatus || fetchedJob?.status;
+
+  // Fallback: Fetch result if we have jobId but no SSE result (e.g., page refresh or returning from background task)
+  // Use jobStatus instead of currentStatus to include the fallback from fetchedJob
+  const { data: fetchedResult } = useQuery({
+    queryKey: ['deepSearch', 'result', currentJobId],
+    queryFn: () => getDeepSearchResult(currentJobId!),
+    enabled: !!currentJobId && !sseResult && jobStatus === 'COMPLETED',
+    staleTime: Infinity,
+  });
+
+  const result = sseResult || fetchedResult;
 
   // React Query: 검색 시작 Mutation
   const startMutation = useMutation({

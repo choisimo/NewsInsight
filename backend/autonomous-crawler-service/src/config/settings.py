@@ -91,14 +91,24 @@ class BrowserSettings(BaseSettings):
 
 
 class LLMSettings(BaseSettings):
-    """LLM provider settings."""
+    """LLM provider settings.
+
+    Supported providers:
+    - openai: OpenAI API (default)
+    - anthropic: Anthropic Claude API
+    - openrouter: OpenRouter (access to multiple models via single API)
+    - ollama: Local Ollama server
+    - custom: Custom OpenAI-compatible REST API endpoint
+    """
 
     model_config = SettingsConfigDict(env_prefix="LLM_")
 
-    provider: Literal["openai", "anthropic"] = Field(
+    provider: Literal["openai", "anthropic", "openrouter", "ollama", "custom"] = Field(
         default="openai",
-        description="LLM provider to use",
+        description="LLM provider: openai, anthropic, openrouter, ollama, or custom",
     )
+
+    # OpenAI settings
     openai_api_key: str = Field(
         default="",
         description="OpenAI API key",
@@ -107,6 +117,12 @@ class LLMSettings(BaseSettings):
         default="gpt-4o",
         description="OpenAI model to use",
     )
+    openai_base_url: str = Field(
+        default="",
+        description="Custom OpenAI API base URL (leave empty for default)",
+    )
+
+    # Anthropic settings
     anthropic_api_key: str = Field(
         default="",
         description="Anthropic API key",
@@ -115,6 +131,84 @@ class LLMSettings(BaseSettings):
         default="claude-3-5-sonnet-20241022",
         description="Anthropic model to use",
     )
+
+    # OpenRouter settings (https://openrouter.ai)
+    openrouter_api_key: str = Field(
+        default="",
+        description="OpenRouter API key",
+    )
+    openrouter_model: str = Field(
+        default="anthropic/claude-3.5-sonnet",
+        description="OpenRouter model (e.g., anthropic/claude-3.5-sonnet, openai/gpt-4o, google/gemini-pro)",
+    )
+    openrouter_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        description="OpenRouter API base URL",
+    )
+
+    # Ollama settings (local LLM)
+    ollama_base_url: str = Field(
+        default="http://localhost:11434",
+        description="Ollama server URL",
+    )
+    ollama_model: str = Field(
+        default="llama3.2",
+        description="Ollama model name",
+    )
+
+    # Azure OpenAI settings
+    azure_api_key: str = Field(
+        default="",
+        description="Azure OpenAI API key",
+    )
+    azure_endpoint: str = Field(
+        default="",
+        description="Azure OpenAI endpoint URL (e.g., https://your-resource.openai.azure.com)",
+    )
+    azure_deployment_name: str = Field(
+        default="gpt-4o",
+        description="Azure OpenAI deployment name",
+    )
+    azure_api_version: str = Field(
+        default="2024-02-15-preview",
+        description="Azure OpenAI API version",
+    )
+
+    # Custom REST API settings (supports non-OpenAI-compatible APIs)
+    custom_api_key: str = Field(
+        default="",
+        description="API key for custom endpoint (optional if API doesn't require auth)",
+    )
+    custom_base_url: str = Field(
+        default="",
+        description="Custom REST API endpoint URL (e.g., https://workflow.nodove.com/webhook/aidove)",
+    )
+    custom_model: str = Field(
+        default="",
+        description="Model name for custom endpoint (used in request if format includes it)",
+    )
+    custom_request_format: str = Field(
+        default="",
+        description="""JSON template for custom API request body.
+Use placeholders: {prompt} for user message, {session_id} for session ID, {model} for model name.
+Example for AI Dove: {"chatInput": "{prompt}", "sessionId": "{session_id}"}
+Example for standard: {"message": "{prompt}", "model": "{model}"}
+Leave empty for OpenAI-compatible format.""",
+    )
+    custom_response_path: str = Field(
+        default="reply",
+        description="""JSON path to extract response text from API response.
+Use dot notation for nested fields (e.g., 'choices.0.message.content' for OpenAI format).
+For AI Dove API, use 'reply'.""",
+    )
+    custom_headers: str = Field(
+        default="",
+        description="""Custom HTTP headers as JSON object.
+Example: {"X-Custom-Header": "value", "Authorization": "Bearer {api_key}"}
+Use {api_key} placeholder for API key substitution.""",
+    )
+
+    # Common settings
     temperature: float = Field(
         default=0.0,
         description="LLM temperature",
@@ -160,6 +254,36 @@ class SearchSettings(BaseSettings):
     enable_parallel: bool = Field(
         default=True,
         description="Enable parallel search across providers",
+    )
+
+    # RRF (Reciprocal Rank Fusion) Settings
+    enable_rrf: bool = Field(
+        default=True,
+        description="Enable RRF-based multi-strategy search for improved accuracy",
+    )
+    rrf_k: int = Field(
+        default=60,
+        ge=1,
+        le=1000,
+        description="RRF constant k (higher = more weight to lower ranks, default: 60)",
+    )
+    enable_semantic_rrf: bool = Field(
+        default=True,
+        description="Enable semantic similarity scoring in RRF",
+    )
+    enable_query_expansion: bool = Field(
+        default=True,
+        description="Enable LLM-based query expansion for better search accuracy",
+    )
+    max_expanded_queries: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="Maximum number of expanded queries for multi-strategy search",
+    )
+    cache_query_analysis: bool = Field(
+        default=True,
+        description="Cache query analysis results to reduce LLM calls",
     )
 
 

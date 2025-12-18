@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
+import { toast } from '@/hooks/use-toast';
 
 // ============================================
 // Types
@@ -174,8 +175,51 @@ export function BackgroundTaskProvider({ children }: { children: React.ReactNode
   }, []);
 
   const updateTask = useCallback((id: string, updates: Partial<BackgroundTask>) => {
+    // Get current task to check if status changed to a terminal state
+    const currentTask = state.tasks.find(t => t.id === id);
+    
+    // Check if we're transitioning to a terminal status (completed/failed)
+    const isNewlyCompleted = 
+      updates.status && 
+      (updates.status === 'completed' || updates.status === 'failed' || updates.status === 'cancelled') &&
+      currentTask && 
+      currentTask.status !== 'completed' && 
+      currentTask.status !== 'failed' && 
+      currentTask.status !== 'cancelled';
+
     dispatch({ type: 'UPDATE_TASK', id, updates });
-  }, []);
+
+    // Show toast notification for completed/failed tasks
+    // This allows users to know when a background task finishes even if they're on a different page
+    if (isNewlyCompleted && currentTask) {
+      const taskTitle = currentTask.title || 'Background Task';
+      const taskType = currentTask.type === 'deep-search' ? 'Deep Search' 
+        : currentTask.type === 'browser-agent' ? 'Browser Agent'
+        : currentTask.type === 'fact-check' ? 'Fact Check'
+        : currentTask.type;
+
+      if (updates.status === 'completed') {
+        toast({
+          title: `✅ ${taskType} 완료`,
+          description: `"${taskTitle}" 작업이 완료되었습니다. 결과를 확인하세요.`,
+          duration: 8000,
+        });
+      } else if (updates.status === 'failed') {
+        toast({
+          title: `❌ ${taskType} 실패`,
+          description: updates.error || `"${taskTitle}" 작업 중 오류가 발생했습니다.`,
+          variant: 'destructive',
+          duration: 10000,
+        });
+      } else if (updates.status === 'cancelled') {
+        toast({
+          title: `⚠️ ${taskType} 취소됨`,
+          description: `"${taskTitle}" 작업이 취소되었습니다.`,
+          duration: 5000,
+        });
+      }
+    }
+  }, [state.tasks]);
 
   const removeTask = useCallback((id: string) => {
     dispatch({ type: 'REMOVE_TASK', id });

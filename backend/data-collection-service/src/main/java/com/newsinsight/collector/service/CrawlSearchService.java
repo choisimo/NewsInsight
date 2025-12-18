@@ -44,7 +44,7 @@ public class CrawlSearchService {
     @Value("${collector.crawler.timeout-seconds:60}")
     private int crawlerTimeoutSeconds;
 
-    @Value("${collector.crawler.max-urls:5}")
+    @Value("${collector.crawler.max-urls:20}")
     private int maxUrls;
 
     /**

@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 
 import java.util.Map;
 
@@ -35,35 +36,35 @@ public class ClaimExtractionController {
      * @return List of extracted claims with metadata
      */
     @PostMapping("/extract-claims")
-    public ResponseEntity<ClaimExtractionResponse> extractClaims(
+    public Mono<ResponseEntity<ClaimExtractionResponse>> extractClaims(
             @Valid @RequestBody ClaimExtractionRequest request
     ) {
         log.info("Received claim extraction request for URL: {}", request.getUrl());
 
-        try {
-            ClaimExtractionResponse response = claimExtractionService.extractClaims(request).block();
-            
-            if (response == null) {
-                return ResponseEntity.internalServerError()
-                        .body(ClaimExtractionResponse.builder()
-                                .url(request.getUrl())
-                                .message("추출 서비스 오류가 발생했습니다.")
-                                .build());
-            }
+        return claimExtractionService.extractClaims(request)
+                .map(response -> {
+                    if (response == null) {
+                        return ResponseEntity.internalServerError()
+                                .body(ClaimExtractionResponse.builder()
+                                        .url(request.getUrl())
+                                        .message("추출 서비스 오류가 발생했습니다.")
+                                        .build());
+                    }
 
-            log.info("Extracted {} claims from URL: {}", 
-                    response.getClaims() != null ? response.getClaims().size() : 0, 
-                    request.getUrl());
+                    log.info("Extracted {} claims from URL: {}",
+                            response.getClaims() != null ? response.getClaims().size() : 0,
+                            request.getUrl());
 
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            log.error("Claim extraction failed for URL: {}", request.getUrl(), e);
-            return ResponseEntity.internalServerError()
-                    .body(ClaimExtractionResponse.builder()
-                            .url(request.getUrl())
-                            .message("주장 추출 실패: " + e.getMessage())
-                            .build());
-        }
+                    return ResponseEntity.ok(response);
+                })
+                .onErrorResume(e -> {
+                    log.error("Claim extraction failed for URL: {}", request.getUrl(), e);
+                    return Mono.just(ResponseEntity.internalServerError()
+                            .body(ClaimExtractionResponse.builder()
+                                    .url(request.getUrl())
+                                    .message("주장 추출 실패: " + e.getMessage())
+                                    .build()));
+                });
     }
 
     /**

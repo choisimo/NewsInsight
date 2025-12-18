@@ -21,6 +21,8 @@ public interface DataSourceRepository extends JpaRepository<DataSource, Long> {
 
     Optional<DataSource> findByName(String name);
 
+    Optional<DataSource> findByUrl(String url);
+
     @Query("SELECT ds FROM DataSource ds WHERE ds.isActive = true " +
            "AND (ds.lastCollected IS NULL OR ds.lastCollected < :threshold)")
     List<DataSource> findDueForCollection(LocalDateTime threshold);

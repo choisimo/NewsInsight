@@ -145,9 +145,9 @@ const MLAddonCard: React.FC<MLAddonCardProps> = ({
         </p>
         
         {/* Metrics */}
-        {addon.successRate !== undefined && (
-          <div className="space-y-2">
-            <div className="flex justify-between text-xs text-muted-foreground">
+        {addon.successRate != null && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-xs">
               <span>성공률</span>
               <span>{(addon.successRate * 100).toFixed(1)}%</span>
             </div>
@@ -155,7 +155,7 @@ const MLAddonCard: React.FC<MLAddonCardProps> = ({
           </div>
         )}
 
-        {addon.avgLatencyMs !== undefined && (
+        {addon.avgLatencyMs != null && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Clock className="h-3 w-3" />
             <span>평균 응답: {addon.avgLatencyMs.toFixed(0)}ms</span>
@@ -175,7 +175,7 @@ const MLAddonCard: React.FC<MLAddonCardProps> = ({
             </Label>
           </div>
           
-          {addon.priority !== undefined && (
+          {addon.priority != null && (
             <Badge variant="outline" className="text-xs">
               우선순위: {addon.priority}
             </Badge>
@@ -404,14 +404,18 @@ const MLAddons = () => {
               </div>
               {status && (
                 <>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <TrendingUp className="h-4 w-4" />
-                    오늘 실행: {status.totalExecutionsToday.toLocaleString()}회
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <BarChart3 className="h-4 w-4" />
-                    성공률: {(status.successRate * 100).toFixed(1)}%
-                  </div>
+                  {status.totalExecutionsToday != null && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <TrendingUp className="h-4 w-4" />
+                      오늘 실행: {status.totalExecutionsToday.toLocaleString()}회
+                    </div>
+                  )}
+                  {status.successRate != null && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <BarChart3 className="h-4 w-4" />
+                      성공률: {status.successRate.toFixed(1)}%
+                    </div>
+                  )}
                 </>
               )}
             </div>

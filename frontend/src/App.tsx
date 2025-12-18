@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { BackgroundTaskProvider } from "@/contexts/BackgroundTaskContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
@@ -22,6 +22,7 @@ import LiveDashboard from "./pages/LiveDashboard";
 import Operations from "./pages/Operations";
 import AiJobs from "./pages/AiJobs";
 import CollectedDataPage from "./pages/CollectedDataPage";
+import ParallelSearch from "./pages/ParallelSearch";
 
 // New Pages
 import NewHome from "./pages/NewHome";
@@ -36,6 +37,11 @@ import AdminLogin from "./pages/admin/AdminLogin";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 const queryClient = new QueryClient();
+
+const RedirectWithState = ({ to }: { to: string }) => {
+  const location = useLocation();
+  return <Navigate to={to} replace state={location.state} />;
+};
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -66,6 +72,7 @@ const App = () => (
                 <Route path="/ml-addons" element={<MLAddons />} />
                 <Route path="/ai-agent" element={<BrowserAgent />} />
                 <Route path="/ai-jobs" element={<AiJobs />} />
+                <Route path="/parallel-search" element={<ParallelSearch />} />
                 
                 {/* Workspace Section */}
                 <Route path="/workspace" element={<WorkspaceHub />} />
@@ -74,9 +81,9 @@ const App = () => (
                 <Route path="/url-collections" element={<UrlCollections />} />
 
                 {/* Backward compatibility redirects */}
-                <Route path="/smart-search" element={<Navigate to="/search" replace />} />
-                <Route path="/deep-search" element={<Navigate to="/search?mode=deep" replace />} />
-                <Route path="/fact-check" element={<Navigate to="/search?mode=factcheck" replace />} />
+                <Route path="/smart-search" element={<RedirectWithState to="/search" />} />
+                <Route path="/deep-search" element={<RedirectWithState to="/search?mode=deep" />} />
+                <Route path="/fact-check" element={<RedirectWithState to="/search?mode=factcheck" />} />
                 
                 {/* Admin Routes */}
                 <Route path="/admin/login" element={<AdminLogin />} />

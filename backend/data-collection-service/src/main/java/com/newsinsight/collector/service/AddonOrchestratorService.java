@@ -108,10 +108,75 @@ public class AddonOrchestratorService {
         // 결과를 ArticleAnalysis에 저장
         saveAnalysisResults(articleId, results);
 
+        saveDiscussionResults(articleId, results);
+
         log.info("Article analysis completed: articleId={}, batchId={}, addonsExecuted={}", 
                 articleId, batchId, results.size());
 
         return CompletableFuture.completedFuture(batchId);
+    }
+
+    @Transactional
+    public void saveDiscussionResults(Long articleId, Map<String, AddonResponse> results) {
+        ArticleDiscussion discussion = discussionRepository.findByArticleId(articleId)
+                .orElse(ArticleDiscussion.builder().articleId(articleId).build());
+
+        List<String> analyzedBy = discussion.getAnalyzedBy() != null
+                ? new ArrayList<>(discussion.getAnalyzedBy())
+                : new ArrayList<>();
+
+        boolean updated = false;
+
+        for (Map.Entry<String, AddonResponse> entry : results.entrySet()) {
+            String addonKey = entry.getKey();
+            AddonResponse response = entry.getValue();
+
+            if (response == null || response.getResults() == null) continue;
+
+            AddonResponse.AnalysisResults r = response.getResults();
+            if (r.getDiscussion() == null) continue;
+
+            AddonResponse.DiscussionResult d = r.getDiscussion();
+
+            if (d.getOverallSentiment() != null) discussion.setOverallSentiment(d.getOverallSentiment());
+            if (d.getSentimentDistribution() != null) discussion.setSentimentDistribution(d.getSentimentDistribution());
+            if (d.getStanceDistribution() != null) discussion.setStanceDistribution(d.getStanceDistribution());
+            if (d.getToxicityScore() != null) discussion.setToxicityScore(d.getToxicityScore());
+            if (d.getTopKeywords() != null) discussion.setTopKeywords(d.getTopKeywords());
+            if (d.getTimeSeries() != null) discussion.setTimeSeries(d.getTimeSeries());
+
+            if (d.getBotLikelihood() != null) {
+                discussion.setBotLikelihoodScore(d.getBotLikelihood());
+                discussion.setSuspiciousPatternDetected(d.getBotLikelihood() >= 0.7);
+            }
+
+            if (r.getRaw() != null) {
+                Object totalObj = r.getRaw().get("total");
+                if (totalObj instanceof Number n) {
+                    discussion.setTotalCommentCount(n.intValue());
+                    discussion.setAnalyzedCount(n.intValue());
+                }
+
+                Object reasonsObj = r.getRaw().get("detection_reasons");
+                if (reasonsObj instanceof List<?> list) {
+                    List<String> reasons = list.stream()
+                            .filter(Objects::nonNull)
+                            .map(Object::toString)
+                            .collect(Collectors.toList());
+                    discussion.setSuspiciousPatterns(reasons);
+                }
+            }
+
+            analyzedBy.add(addonKey);
+            updated = true;
+        }
+
+        if (!updated) return;
+
+        discussion.setAnalyzedBy(analyzedBy.stream().distinct().collect(Collectors.toList()));
+        ArticleDiscussion savedDiscussion = discussionRepository.save(discussion);
+
+        analysisEventService.publishDiscussionComplete(articleId, savedDiscussion);
     }
 
     /**
@@ -425,6 +490,95 @@ public class AddonOrchestratorService {
             } catch (Exception e) {
                 log.error("Health check error for addon: {}", addon.getAddonKey(), e);
             }
+        }
+    }
+
+    /**
+     * 특정 Add-on으로 직접 분석 실행 (커스텀 입력, 기사 ID 없이).
+     * 프론트엔드에서 직접 호출 시 사용.
+     * 
+     * @param addon 실행할 Add-on
+     * @param articleData 기사 데이터 (title, content, url 등)
+     * @param requestId 요청 ID
+     * @param importance 중요도
+     * @return 분석 결과
+     */
+    public AddonResponse executeAddonDirect(
+            MlAddon addon,
+            Map<String, Object> articleData,
+            String requestId,
+            String importance
+    ) {
+        log.info("Direct addon execution: addon={}, requestId={}", addon.getAddonKey(), requestId);
+        
+        // 요청 페이로드 생성
+        AddonRequest request = AddonRequest.builder()
+                .requestId(requestId)
+                .addonId(addon.getAddonKey())
+                .task("direct_analysis")
+                .inputSchemaVersion(addon.getInputSchemaVersion())
+                .article(AddonRequest.ArticleInput.builder()
+                        .id(articleData.get("id") != null ? Long.parseLong(articleData.get("id").toString()) : null)
+                        .title((String) articleData.get("title"))
+                        .content((String) articleData.get("content"))
+                        .url((String) articleData.get("url"))
+                        .source((String) articleData.get("source"))
+                        .publishedAt((String) articleData.get("publishedAt"))
+                        .build())
+                .context(AddonRequest.AnalysisContext.builder()
+                        .language("ko")
+                        .country("KR")
+                        .build())
+                .options(AddonRequest.ExecutionOptions.builder()
+                        .importance(importance)
+                        .timeoutMs(addon.getTimeoutMs())
+                        .build())
+                .build();
+        
+        // 실행 기록 생성
+        MlAddonExecution execution = MlAddonExecution.builder()
+                .requestId(requestId)
+                .batchId(null)
+                .addon(addon)
+                .articleId(articleData.get("id") != null ? Long.parseLong(articleData.get("id").toString()) : null)
+                .importance(importance)
+                .status(ExecutionStatus.PENDING)
+                .build();
+        executionRepository.save(execution);
+        
+        execution.markStarted();
+        executionRepository.save(execution);
+        
+        try {
+            // Add-on 호출 (동기)
+            AddonResponse response = callAddon(addon, request)
+                    .block(Duration.ofMillis(addon.getTimeoutMs() + 5000));
+            
+            if (response != null && "success".equals(response.getStatus())) {
+                execution.markSuccess(
+                        response.getResults() != null ? Map.of("results", response.getResults()) : null,
+                        response.getMeta() != null ? response.getMeta().getModelVersion() : null
+                );
+                addon.incrementSuccess(execution.getLatencyMs());
+            } else {
+                String errorMsg = response != null && response.getError() != null 
+                        ? response.getError().getMessage() 
+                        : "Unknown error";
+                execution.markFailed("ADDON_ERROR", errorMsg);
+                addon.incrementFailure();
+            }
+            
+            executionRepository.save(execution);
+            addonRepository.save(addon);
+            
+            return response;
+        } catch (Exception e) {
+            execution.markFailed("EXECUTION_ERROR", e.getMessage());
+            addon.incrementFailure();
+            executionRepository.save(execution);
+            addonRepository.save(addon);
+            log.error("Direct addon execution failed: addon={}, error={}", addon.getAddonKey(), e.getMessage());
+            throw new RuntimeException("Addon execution failed: " + e.getMessage(), e);
         }
     }
 }

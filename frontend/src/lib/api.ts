@@ -499,6 +499,7 @@ export interface BrowseRequest {
   headless?: boolean;
   enable_human_intervention?: boolean;
   auto_request_intervention?: boolean;
+  use_proxy_rotation?: boolean;
 }
 
 export interface BrowseResponse {
@@ -1269,7 +1270,11 @@ export interface ClaimExtractionRequest {
  */
 export const extractClaimsFromUrl = async (request: ClaimExtractionRequest): Promise<ClaimExtractionResponse> => {
   const client = await getApiClient();
-  const response = await client.post<ClaimExtractionResponse>('/api/v1/analysis/extract-claims', request);
+  const response = await client.post<ClaimExtractionResponse>(
+    '/api/v1/analysis/extract-claims',
+    request,
+    { timeout: 120000 },
+  );
   return response.data;
 };
 
@@ -1810,3 +1815,278 @@ export const analyzeWithMLAddon = async (
 };
 
 
+// ============================================
+// AI Provider Models API
+// ============================================
+
+export type LLMProviderType = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'ollama' | 'azure' | 'custom';
+
+export interface ProviderModel {
+  id: string;
+  name: string;
+  owned_by?: string;
+  context_length?: number;
+  pricing?: {
+    prompt?: string;
+    completion?: string;
+  };
+  size?: number;
+  modified_at?: string;
+}
+
+export interface ProviderModelsResponse {
+  provider: LLMProviderType;
+  models: ProviderModel[];
+  source: 'api' | 'static';
+  total?: number;
+  message?: string;
+  error?: string;
+  ollama_url?: string;
+  base_url?: string;
+}
+
+/**
+ * Fetch available models for a specific LLM provider.
+ * 
+ * For OpenAI, OpenRouter, and Ollama: fetches from their respective APIs.
+ * For Anthropic, Google, Azure, Custom: returns static model lists.
+ * 
+ * @param provider - The LLM provider type
+ * @param apiKey - Optional API key (uses environment variables if not provided)
+ * @param baseUrl - Optional base URL (for Ollama or Custom providers)
+ */
+export const fetchProviderModels = async (
+  provider: LLMProviderType,
+  apiKey?: string,
+  baseUrl?: string,
+): Promise<ProviderModelsResponse> => {
+  const params = new URLSearchParams();
+  if (apiKey) params.append('api_key', apiKey);
+  if (baseUrl) params.append('base_url', baseUrl);
+  
+  const queryString = params.toString();
+  const url = `/api/v1/crawler/providers/${provider}/models${queryString ? `?${queryString}` : ''}`;
+  
+  try {
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      // Return static fallback on error
+      return {
+        provider,
+        models: getStaticModels(provider),
+        source: 'static',
+        error: `API error: ${response.status}`,
+      };
+    }
+    
+    const data = await response.json();
+    // Ensure models is always an array
+    return {
+      ...data,
+      provider: data.provider || provider,
+      models: Array.isArray(data.models) ? data.models : getStaticModels(provider),
+      source: data.source || 'api',
+    };
+  } catch (error) {
+    // Return static fallback on any error (network, JSON parse, etc.)
+    console.error(`Failed to fetch models for ${provider}:`, error);
+    return {
+      provider,
+      models: getStaticModels(provider),
+      source: 'static',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+};
+
+/**
+ * Static model lists as fallback when API is unavailable
+ */
+export const getStaticModels = (provider: LLMProviderType): ProviderModel[] => {
+  const staticModels: Record<LLMProviderType, ProviderModel[]> = {
+    openai: [
+      { id: 'gpt-4o', name: 'GPT-4o (추천)' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (빠름)' },
+      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo (저렴)' },
+      { id: 'o1-preview', name: 'o1-preview (추론)' },
+      { id: 'o1-mini', name: 'o1-mini (추론, 빠름)' },
+    ],
+    anthropic: [
+      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (추천)' },
+      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (빠름)' },
+      { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus (강력)' },
+    ],
+    google: [
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (추천)' },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (빠름)' },
+      { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (실험)' },
+    ],
+    openrouter: [
+      { id: 'openai/gpt-4o', name: 'GPT-4o (OpenAI)' },
+      { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
+      { id: 'google/gemini-pro-1.5', name: 'Gemini 1.5 Pro' },
+      { id: 'meta-llama/llama-3.1-405b-instruct', name: 'Llama 3.1 405B' },
+      { id: 'meta-llama/llama-3.1-70b-instruct', name: 'Llama 3.1 70B' },
+      { id: 'mistralai/mixtral-8x22b-instruct', name: 'Mixtral 8x22B' },
+      { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' },
+      { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B' },
+    ],
+    ollama: [
+      { id: 'llama3.1', name: 'Llama 3.1 (추천)' },
+      { id: 'llama3.1:70b', name: 'Llama 3.1 70B' },
+      { id: 'mistral', name: 'Mistral' },
+      { id: 'mixtral', name: 'Mixtral' },
+      { id: 'codellama', name: 'Code Llama' },
+      { id: 'qwen2.5', name: 'Qwen 2.5' },
+      { id: 'gemma2', name: 'Gemma 2' },
+    ],
+    azure: [
+      { id: 'gpt-4o', name: 'GPT-4o' },
+      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+      { id: 'gpt-35-turbo', name: 'GPT-3.5 Turbo' },
+    ],
+    custom: [
+      { id: 'default', name: '기본 모델' },
+    ],
+  };
+  
+  return staticModels[provider] || [];
+};
+
+/**
+ * Test LLM provider connection
+ */
+export const testLLMProviderConnection = async (
+  provider: LLMProviderType,
+  model?: string,
+): Promise<{
+  status: 'success' | 'failed';
+  provider: LLMProviderType;
+  model: string;
+  message: string;
+  latency_ms?: number;
+  error?: string;
+}> => {
+  const params = new URLSearchParams({ provider });
+  if (model) params.append('model', model);
+  
+  const response = await fetch(`/api/v1/crawler/providers/test?${params}`, {
+    method: 'POST',
+  });
+  
+  return response.json();
+};
+
+// ============================================
+// Analysis Stream APIs (Search Result Analysis)
+// Backend: /api/v1/search/analysis
+// ============================================
+
+/**
+ * Subscribe to analysis updates for specific articles via SSE
+ * GET /api/v1/search/analysis/stream
+ * 
+ * @param articleIds - Comma-separated article IDs to watch
+ * @param onEvent - Callback for each SSE event
+ * @param onError - Callback for errors
+ * @returns Cleanup function to close the connection
+ */
+export const subscribeToAnalysisUpdates = (
+  articleIds: number[],
+  onEvent: (event: {
+    eventType: string;
+    articleId?: number;
+    addonKey?: string;
+    data?: Record<string, unknown>;
+  }) => void,
+  onError?: (error: Event) => void
+): (() => void) => {
+  const baseUrl = resolveInitialBaseUrl();
+  const params = articleIds.length > 0 ? `?articleIds=${articleIds.join(',')}` : '';
+  const url = `${baseUrl}/api/v1/search/analysis/stream${params}`;
+  
+  const eventSource = new EventSource(url, { withCredentials: true });
+  
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      onEvent(data);
+    } catch (e) {
+      console.error('Failed to parse analysis event:', e);
+    }
+  };
+  
+  // Named event handlers
+  eventSource.addEventListener('analysis_started', (event: MessageEvent) => {
+    try {
+      onEvent({ eventType: 'analysis_started', ...JSON.parse(event.data) });
+    } catch (e) {
+      console.error('Failed to parse analysis_started event:', e);
+    }
+  });
+  
+  eventSource.addEventListener('partial_result', (event: MessageEvent) => {
+    try {
+      onEvent({ eventType: 'partial_result', ...JSON.parse(event.data) });
+    } catch (e) {
+      console.error('Failed to parse partial_result event:', e);
+    }
+  });
+  
+  eventSource.addEventListener('analysis_complete', (event: MessageEvent) => {
+    try {
+      onEvent({ eventType: 'analysis_complete', ...JSON.parse(event.data) });
+    } catch (e) {
+      console.error('Failed to parse analysis_complete event:', e);
+    }
+  });
+  
+  eventSource.addEventListener('analysis_error', (event: MessageEvent) => {
+    try {
+      onEvent({ eventType: 'analysis_error', ...JSON.parse(event.data) });
+    } catch (e) {
+      console.error('Failed to parse analysis_error event:', e);
+    }
+  });
+  
+  eventSource.onerror = (error) => {
+    console.error('Analysis stream error:', error);
+    onError?.(error);
+  };
+  
+  return () => {
+    eventSource.close();
+  };
+};
+
+/**
+ * Add articles to the analysis watch list
+ * POST /api/v1/search/analysis/watch
+ * 
+ * @param articleIds - Article IDs to watch
+ */
+export const watchArticlesForAnalysis = async (
+  articleIds: number[]
+): Promise<{
+  message: string;
+  watchedCount: number;
+}> => {
+  const client = await getApiClient();
+  const response = await client.post('/api/v1/search/analysis/watch', articleIds);
+  return response.data;
+};
+
+/**
+ * Get analysis stream status
+ * GET /api/v1/search/analysis/stream/status
+ */
+export const getAnalysisStreamStatus = async (): Promise<{
+  subscriberCount: number;
+  watchedArticleCount: number;
+}> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/search/analysis/stream/status');
+  return response.data;
+};

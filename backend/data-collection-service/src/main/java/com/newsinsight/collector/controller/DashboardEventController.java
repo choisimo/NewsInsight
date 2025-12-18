@@ -41,8 +41,17 @@ public class DashboardEventController {
     public Flux<ServerSentEvent<DashboardEventDto>> streamEvents() {
         log.info("New SSE client connected to dashboard event stream");
 
-        // 하트비트 스트림 (30초마다)
-        Flux<ServerSentEvent<DashboardEventDto>> heartbeat = Flux.interval(Duration.ofSeconds(30))
+        // 연결 확인 이벤트 (즉시 전송)
+        Flux<ServerSentEvent<DashboardEventDto>> connected = Flux.just(
+                ServerSentEvent.<DashboardEventDto>builder()
+                        .event("connected")
+                        .data(DashboardEventDto.heartbeat())
+                        .build()
+        );
+
+        // 하트비트 스트림 (즉시 시작, 30초마다)
+        Flux<ServerSentEvent<DashboardEventDto>> heartbeat = Flux.interval(Duration.ZERO, Duration.ofSeconds(30))
+                .skip(1) // 첫 번째는 connected 이벤트로 대체
                 .map(tick -> ServerSentEvent.<DashboardEventDto>builder()
                         .event("heartbeat")
                         .data(DashboardEventDto.heartbeat())
@@ -55,8 +64,8 @@ public class DashboardEventController {
                         .data(event)
                         .build());
 
-        // 두 스트림 병합
-        return Flux.merge(heartbeat, events)
+        // 세 스트림 병합 (connected 먼저, 그 다음 heartbeat + events)
+        return Flux.concat(connected, Flux.merge(heartbeat, events))
                 .doOnCancel(() -> log.info("SSE client disconnected from dashboard event stream"))
                 .doOnError(e -> log.error("SSE stream error", e));
     }

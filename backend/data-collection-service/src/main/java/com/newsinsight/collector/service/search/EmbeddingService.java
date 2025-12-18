@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -148,10 +149,10 @@ public class EmbeddingService {
                 .retrieve()
                 .bodyToMono(float[][].class)
                 .timeout(Duration.ofSeconds(timeoutSeconds * 2))
-                .map(result -> result != null ? List.of(result) : List.of())
+                .map(result -> result != null ? List.of(result) : List.<float[]>of())
                 .doOnError(e -> log.error("Batch embedding failed for {} texts: {}", 
                         texts.size(), e.getMessage()))
-                .onErrorReturn(List.of());
+                .onErrorResume(e -> Mono.just(List.<float[]>of()));
     }
 
     /**

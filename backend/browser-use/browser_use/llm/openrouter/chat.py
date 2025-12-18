@@ -183,20 +183,31 @@ class ChatOpenRouter(BaseChatModel):
 					**(self.extra_body or {}),
 				)
 
-				if response.choices[0].message.content is None:
-					raise ModelProviderError(
-						message='Failed to parse structured output from model response',
-						status_code=500,
-						model=self.name,
-					)
-				usage = self._get_usage(response)
-
-				parsed = output_format.model_validate_json(response.choices[0].message.content)
-
-				return ChatInvokeCompletion(
-					completion=parsed,
-					usage=usage,
+			if response.choices[0].message.content is None:
+				raise ModelProviderError(
+					message='Failed to parse structured output from model response',
+					status_code=500,
+					model=self.name,
 				)
+			usage = self._get_usage(response)
+
+			# Strip markdown code blocks if present (some models wrap JSON in ```json ... ```)
+			content = response.choices[0].message.content.strip()
+			if content.startswith('```'):
+				# Remove opening fence (```json or ```)
+				first_newline = content.find('\n')
+				if first_newline != -1:
+					content = content[first_newline + 1 :]
+				# Remove closing fence
+				if content.endswith('```'):
+					content = content[:-3].rstrip()
+
+			parsed = output_format.model_validate_json(content)
+
+			return ChatInvokeCompletion(
+				completion=parsed,
+				usage=usage,
+			)
 
 		except RateLimitError as e:
 			raise ModelRateLimitError(message=e.message, model=self.name) from e

@@ -36,7 +36,7 @@ export function TrendingTopics({
   maxItems = 5,
   showRefresh = true,
 }: TrendingTopicsProps) {
-  const { topics, isLoading, error, refresh } = useTrendingTopics();
+  const { topics, personalizedTopics, isLoading, error, refresh, hasTrendingApi } = useTrendingTopics();
 
   // 로딩 상태
   if (isLoading) {
@@ -68,7 +68,9 @@ export function TrendingTopics({
     );
   }
 
-  const displayTopics = topics.slice(0, maxItems);
+  // 트렌딩 API가 없을 때 개인화 토픽 또는 빈 상태 표시
+  const displayTopics = topics.length > 0 ? topics.slice(0, maxItems) : personalizedTopics.slice(0, maxItems);
+  const isPersonalized = topics.length === 0 && personalizedTopics.length > 0;
 
   return (
     <Card className={className}>
@@ -76,7 +78,7 @@ export function TrendingTopics({
         <div className="flex items-center justify-between">
           <CardTitle className="text-base flex items-center gap-2">
             <TrendingUp className="h-4 w-4 text-orange-500" />
-            오늘의 트렌드
+            {isPersonalized ? '내 관심 주제' : '오늘의 트렌드'}
           </CardTitle>
           {showRefresh && (
             <Button
@@ -91,13 +93,21 @@ export function TrendingTopics({
         </div>
       </CardHeader>
       <CardContent className="space-y-2">
-        {displayTopics.map((topic, index) => (
-          <TrendingTopicItem
-            key={topic.id}
-            topic={topic}
-            rank={index + 1}
-          />
-        ))}
+        {displayTopics.length > 0 ? (
+          displayTopics.map((topic, index) => (
+            <TrendingTopicItem
+              key={topic.id}
+              topic={topic}
+              rank={index + 1}
+            />
+          ))
+        ) : (
+          <div className="text-center py-6 text-muted-foreground">
+            <TrendingUp className="h-8 w-8 mx-auto mb-2 opacity-50" />
+            <p className="text-sm">아직 검색 기록이 없습니다</p>
+            <p className="text-xs mt-1">검색을 시작하면 관심 주제가 표시됩니다</p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -197,20 +207,46 @@ function TrendingTopicItem({ topic, rank }: TrendingTopicItemProps) {
 interface TrendingTopicsCompactProps {
   className?: string;
   maxItems?: number;
+  topics?: TrendingTopic[];
+  onTopicClick?: (keyword: string) => void;
 }
 
 export function TrendingTopicsCompact({
   className,
   maxItems = 5,
+  topics: externalTopics,
+  onTopicClick,
 }: TrendingTopicsCompactProps) {
-  const { topics, isLoading } = useTrendingTopics();
+  const { topics: internalTopics, personalizedTopics, isLoading } = useTrendingTopics();
+  
+  // 외부에서 제공된 topics가 있으면 사용, 없으면 내부 hook 사용
+  // 트렌딩 토픽이 없으면 개인화 토픽으로 대체
+  const topics = externalTopics 
+    || (internalTopics.length > 0 ? internalTopics : personalizedTopics);
 
-  if (isLoading) {
+  if (!externalTopics && isLoading) {
     return (
       <div className={cn('space-y-2', className)}>
         {[1, 2, 3].map(i => (
           <Skeleton key={i} className="h-8 w-full" />
         ))}
+      </div>
+    );
+  }
+
+  const handleClick = (topic: TrendingTopic, e: React.MouseEvent) => {
+    if (onTopicClick) {
+      e.preventDefault();
+      onTopicClick(topic.title);
+    }
+  };
+
+  // 토픽이 없을 때 빈 상태 표시
+  if (topics.length === 0) {
+    return (
+      <div className={cn('text-center py-4 text-muted-foreground', className)}>
+        <p className="text-sm">아직 트렌드 데이터가 없습니다</p>
+        <p className="text-xs mt-1">검색을 시작해 보세요</p>
       </div>
     );
   }
@@ -221,6 +257,7 @@ export function TrendingTopicsCompact({
         <Link
           key={topic.id}
           to={topic.searchUrl}
+          onClick={(e) => handleClick(topic, e)}
           className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted transition-colors"
         >
           <span

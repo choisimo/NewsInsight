@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -48,8 +49,18 @@ public class RssFeedService {
             log.info("Fetching RSS feed from: {}", source.getUrl());
             
             URL feedUrl = new URL(source.getUrl());
+            
+            // User-Agent를 설정하여 봇 차단 우회
+            HttpURLConnection connection = (HttpURLConnection) feedUrl.openConnection();
+            connection.setRequestProperty("User-Agent", 
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            connection.setRequestProperty("Accept", "application/rss+xml, application/xml, text/xml, */*");
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(30000);
+            connection.setInstanceFollowRedirects(true);
+            
             SyndFeedInput input = new SyndFeedInput();
-            SyndFeed feed = input.build(new XmlReader(feedUrl));
+            SyndFeed feed = input.build(new XmlReader(connection.getInputStream()));
             
             log.info("Found {} entries in feed: {}", feed.getEntries().size(), source.getName());
             

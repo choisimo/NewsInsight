@@ -1,7 +1,7 @@
 {
   "$schema": "./services.schema.json",
-  "version": "1.0.0",
-  "description": "NewsInsight service configuration profiles",
+  "version": "1.1.0",
+  "description": "NewsInsight service configuration profiles with Consul service discovery",
   
   "services": {
     "api-gateway": {
@@ -9,7 +9,13 @@
       "description": "Spring Boot API Gateway service",
       "port": 8000,
       "healthcheck": "/actuator/health",
+      "hostname": "api-gateway",
       "dependencies": ["postgres", "mongo", "redis", "consul", "redpanda"],
+      "consul": {
+        "register": true,
+        "service_name": "api-gateway",
+        "tags": ["gateway", "api", "spring-boot"]
+      },
       "profiles": {
         "development": {
           "replicas": 1,
@@ -55,7 +61,13 @@
       "description": "News data collection and processing service",
       "port": 8081,
       "healthcheck": "/actuator/health",
+      "hostname": "collector-service",
       "dependencies": ["postgres", "mongo", "redis", "consul", "redpanda"],
+      "consul": {
+        "register": true,
+        "service_name": "collector-service",
+        "tags": ["collector", "data", "spring-boot"]
+      },
       "profiles": {
         "development": {
           "replicas": 1,
@@ -101,7 +113,13 @@
       "description": "AI-powered browser automation service",
       "port": 8500,
       "healthcheck": "/health",
+      "hostname": "browser-use-api",
       "dependencies": [],
+      "consul": {
+        "register": true,
+        "service_name": "browser-use-api",
+        "tags": ["browser", "automation", "python"]
+      },
       "profiles": {
         "development": {
           "replicas": 1,
@@ -143,8 +161,15 @@
       "name": "Autonomous Crawler",
       "description": "Autonomous web crawling and data extraction service",
       "port": 9090,
+      "api_port": 8030,
       "healthcheck": "/health",
+      "hostname": "autonomous-crawler",
       "dependencies": ["postgres", "mongo", "redis", "browser-use-api", "web-crawler"],
+      "consul": {
+        "register": true,
+        "service_name": "autonomous-crawler",
+        "tags": ["crawler", "autonomous", "python"]
+      },
       "profiles": {
         "development": {
           "replicas": 1,
@@ -153,7 +178,16 @@
             "cpu": "250m"
           },
           "env": {
-            "LOG_LEVEL": "DEBUG"
+            "LOG_LEVEL": "DEBUG",
+            "LLM_PROVIDER": "openrouter",
+            "LLM_OPENAI_MODEL": "gpt-4o",
+            "LLM_ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022",
+            "LLM_OPENROUTER_MODEL": "anthropic/claude-3.5-sonnet",
+            "LLM_OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+            "LLM_OLLAMA_MODEL": "llama3.1",
+            "LLM_OLLAMA_BASE_URL": "http://localhost:11434",
+            "LLM_AZURE_API_VERSION": "2024-02-15-preview",
+            "LLM_CUSTOM_RESPONSE_PATH": "reply"
           }
         },
         "staging": {
@@ -163,7 +197,16 @@
             "cpu": "500m"
           },
           "env": {
-            "LOG_LEVEL": "DEBUG"
+            "LOG_LEVEL": "DEBUG",
+            "LLM_PROVIDER": "openrouter",
+            "LLM_OPENAI_MODEL": "gpt-4o",
+            "LLM_ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022",
+            "LLM_OPENROUTER_MODEL": "anthropic/claude-3.5-sonnet",
+            "LLM_OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+            "LLM_OLLAMA_MODEL": "llama3.1",
+            "LLM_OLLAMA_BASE_URL": "http://localhost:11434",
+            "LLM_AZURE_API_VERSION": "2024-02-15-preview",
+            "LLM_CUSTOM_RESPONSE_PATH": "reply"
           }
         },
         "production": {
@@ -173,8 +216,97 @@
             "cpu": "1000m"
           },
           "env": {
-            "LOG_LEVEL": "INFO"
+            "LOG_LEVEL": "INFO",
+            "LLM_PROVIDER": "openrouter",
+            "LLM_OPENAI_MODEL": "gpt-4o",
+            "LLM_ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022",
+            "LLM_OPENROUTER_MODEL": "anthropic/claude-3.5-sonnet",
+            "LLM_OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+            "LLM_OLLAMA_MODEL": "llama3.1",
+            "LLM_OLLAMA_BASE_URL": "http://localhost:11434",
+            "LLM_AZURE_API_VERSION": "2024-02-15-preview",
+            "LLM_CUSTOM_RESPONSE_PATH": "reply"
           }
+        }
+      }
+    },
+    
+    "web-crawler": {
+      "name": "Web Crawler",
+      "description": "Crawl4AI web crawling service",
+      "port": 11235,
+      "healthcheck": "/health",
+      "hostname": "web-crawler",
+      "dependencies": [],
+      "consul": {
+        "register": true,
+        "service_name": "web-crawler",
+        "tags": ["crawler", "crawl4ai"]
+      },
+      "profiles": {
+        "development": {
+          "replicas": 1,
+          "resources": {
+            "memory": "1Gi",
+            "cpu": "500m"
+          },
+          "env": {}
+        },
+        "staging": {
+          "replicas": 1,
+          "resources": {
+            "memory": "2Gi",
+            "cpu": "1000m"
+          },
+          "env": {}
+        },
+        "production": {
+          "replicas": 1,
+          "resources": {
+            "memory": "2Gi",
+            "cpu": "1000m"
+          },
+          "env": {}
+        }
+      }
+    },
+    
+    "admin-dashboard": {
+      "name": "Admin Dashboard",
+      "description": "Administration dashboard API",
+      "port": 8888,
+      "healthcheck": "/health",
+      "hostname": "admin-dashboard",
+      "dependencies": ["postgres", "mongo"],
+      "consul": {
+        "register": true,
+        "service_name": "admin-dashboard",
+        "tags": ["admin", "dashboard", "python"]
+      },
+      "profiles": {
+        "development": {
+          "replicas": 1,
+          "resources": {
+            "memory": "256Mi",
+            "cpu": "100m"
+          },
+          "env": {}
+        },
+        "staging": {
+          "replicas": 1,
+          "resources": {
+            "memory": "512Mi",
+            "cpu": "250m"
+          },
+          "env": {}
+        },
+        "production": {
+          "replicas": 1,
+          "resources": {
+            "memory": "512Mi",
+            "cpu": "250m"
+          },
+          "env": {}
         }
       }
     },
@@ -184,7 +316,13 @@
       "description": "React/Vite frontend application",
       "port": 8080,
       "healthcheck": "/health",
+      "hostname": "frontend",
       "dependencies": ["api-gateway"],
+      "consul": {
+        "register": false,
+        "service_name": "frontend",
+        "tags": ["frontend", "react", "nginx"]
+      },
       "profiles": {
         "development": {
           "replicas": 1,
@@ -212,6 +350,19 @@
         }
       }
     }
+  },
+  
+  "service_urls": {
+    "_comment": "Direct service URLs for API Gateway routing (used when Consul service discovery is unavailable)",
+    "collector-service": "http://collector-service:8081",
+    "browser-use-api": "http://browser-use-api:8500",
+    "autonomous-crawler": "http://autonomous-crawler:8030",
+    "web-crawler": "http://web-crawler:11235",
+    "admin-dashboard": "http://admin-dashboard:8888",
+    "sentiment-addon": "http://sentiment-addon:8100",
+    "factcheck-addon": "http://factcheck-addon:8101",
+    "bias-addon": "http://bias-addon:8102",
+    "bot-detector": "http://bot-detector:8041"
   },
   
   "ml-addons": {

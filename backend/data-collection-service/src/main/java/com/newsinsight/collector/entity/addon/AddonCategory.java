@@ -30,6 +30,8 @@ public enum AddonCategory {
      * 출처 신뢰도/편향도 분석
      */
     SOURCE_QUALITY,
+
+    BIAS,
     
     /**
      * 개체명 인식 (NER)
@@ -47,9 +49,13 @@ public enum AddonCategory {
     TOPIC_CLASSIFICATION,
     
     /**
-     * 독성/혐오 탐지
+     * 독성 댓글 탐지
      */
     TOXICITY,
+    
+    BOT_DETECTION,
+    
+    NER,
     
     /**
      * 허위정보 탐지
@@ -57,7 +63,7 @@ public enum AddonCategory {
     MISINFORMATION,
     
     /**
-     * 기타/커스텀
+     * 기타 범주
      */
-    CUSTOM
+    OTHER
 }

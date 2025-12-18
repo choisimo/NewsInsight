@@ -1,0 +1,67 @@
+# ============================================================================
+# KEDA ScaledObject - AI Agent Worker Service
+# ============================================================================
+# 
+# Kafka 토픽의 메시지 lag을 기반으로 ai-agent-worker 파드를 자동 스케일링합니다.
+# 
+# 동작 방식:
+#   - newsinsight.ai.requests 토픽의 consumer lag을 모니터링
+#   - lag이 lagThreshold(5)를 초과하면 파드 수를 증가
+#   - AI 처리는 비용이 높으므로 보수적으로 스케일링
+#
+# 적용:
+#   kubectl apply -f ai-agent-worker-scaledobject.yaml
+# ============================================================================
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: ai-agent-worker-scaler
+  namespace: newsinsight
+  labels:
+    app: ai-agent-worker
+    component: scaler
+spec:
+  # 스케일 대상 Deployment
+  scaleTargetRef:
+    name: ai-agent-worker
+    kind: Deployment
+  
+  # 스케일링 범위 (AI 비용 고려해서 보수적으로)
+  minReplicaCount: 1    # 최소 1개 파드 유지
+  maxReplicaCount: 3    # 최대 3개 파드 (비용 제한)
+  
+  # 스케일 다운 안정화
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 600  # 10분간 안정화 후 스케일 다운
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 120  # 2분에 1개씩만 감소
+        scaleUp:
+          stabilizationWindowSeconds: 30   # 30초 후 스케일 업
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60  # 1분에 1개씩 증가
+  
+  # 쿨다운 기간
+  cooldownPeriod: 120
+  
+  # 폴링 간격
+  pollingInterval: 30
+  
+  # 트리거 정의
+  triggers:
+    # Kafka Consumer Lag 기반 트리거
+    - type: kafka
+      metadata:
+        bootstrapServers: redpanda.newsinsight.svc.cluster.local:9092
+        consumerGroup: ai-agent-worker
+        topic: newsinsight.ai.requests
+        # AI 처리는 느리므로 낮은 임계값
+        lagThreshold: "5"
+        offsetResetPolicy: earliest

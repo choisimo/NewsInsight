@@ -241,7 +241,7 @@ CREATE INDEX IF NOT EXISTS idx_addon_invoke_type ON ml_addon (invoke_type);
 -- Ensure addon category values
 ALTER TABLE ml_addon
     ADD CONSTRAINT ml_addon_category_check
-    CHECK (category IN ('SENTIMENT', 'FACTCHECK', 'BIAS', 'SUMMARIZATION', 'NER', 'TOPIC', 'TOXICITY', 'DISCUSSION', 'CUSTOM'));
+    CHECK (category IN ('SENTIMENT', 'FACTCHECK', 'BIAS', 'SUMMARIZATION', 'NER', 'TOPIC', 'TOXICITY', 'DISCUSSION', 'BOT_DETECTION', 'CUSTOM'));
 
 -- Ensure addon invoke type values
 ALTER TABLE ml_addon
@@ -438,6 +438,17 @@ VALUES
      'http://bias-addon:8102/health',
      TRUE, 30, 
      '{"model": "bias-ko-heuristic-v1", "spectrum": "korean_media", "batch_endpoint": "/batch"}',
+     30000),
+
+    ('bot-detector-v1',
+     'Bot Detector',
+     'AI/봇 텍스트 탐지 및 패턴 기반 조작 탐지.',
+     'BOT_DETECTION',
+     'HTTP_SYNC',
+     'http://bot-detector:8040/analyze',
+     'http://bot-detector:8040/health',
+     TRUE, 25,
+     '{"threshold": 0.7}',
      30000),
     
     -- NER Add-on (placeholder - 향후 구현)

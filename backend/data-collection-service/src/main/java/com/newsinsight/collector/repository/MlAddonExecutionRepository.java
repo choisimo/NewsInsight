@@ -4,6 +4,7 @@ import com.newsinsight.collector.entity.addon.ExecutionStatus;
 import com.newsinsight.collector.entity.addon.MlAddonExecution;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -19,15 +20,22 @@ public interface MlAddonExecutionRepository extends JpaRepository<MlAddonExecuti
 
     Optional<MlAddonExecution> findByRequestId(String requestId);
 
+    @EntityGraph(attributePaths = {"addon"})
     List<MlAddonExecution> findByArticleId(Long articleId);
 
     List<MlAddonExecution> findByBatchId(String batchId);
 
     List<MlAddonExecution> findByStatus(ExecutionStatus status);
 
+    @EntityGraph(attributePaths = {"addon"})
     Page<MlAddonExecution> findByStatus(ExecutionStatus status, Pageable pageable);
 
+    @EntityGraph(attributePaths = {"addon"})
     Page<MlAddonExecution> findByAddonId(Long addonId, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"addon"})
+    @Override
+    Page<MlAddonExecution> findAll(Pageable pageable);
 
     @Query("SELECT e FROM MlAddonExecution e WHERE e.articleId = :articleId AND e.addon.addonKey = :addonKey")
     Optional<MlAddonExecution> findByArticleIdAndAddonKey(@Param("articleId") Long articleId, @Param("addonKey") String addonKey);
@@ -48,4 +56,9 @@ public interface MlAddonExecutionRepository extends JpaRepository<MlAddonExecuti
     @Modifying
     @Query("DELETE FROM MlAddonExecution e WHERE e.createdAt < :cutoff")
     int deleteOldExecutions(@Param("cutoff") LocalDateTime cutoff);
+
+    /**
+     * 특정 시간 이후의 모든 실행 기록 조회 (오늘의 통계 계산용)
+     */
+    List<MlAddonExecution> findByCreatedAtAfter(LocalDateTime since);
 }

@@ -28,6 +28,8 @@ export interface UseCollectedDataOptions {
   sourceId?: number;
   /** 처리 상태 필터 */
   processed?: boolean;
+  /** 검색어 */
+  query?: string;
   /** 자동 새로고침 활성화 */
   autoRefresh?: boolean;
   /** 새로고침 간격 (ms) */
@@ -61,6 +63,7 @@ export function useCollectedData(options: UseCollectedDataOptions = {}): UseColl
     size = 20,
     sourceId,
     processed,
+    query,
     autoRefresh = false,
     refreshInterval = 10000,
   } = options;
@@ -76,7 +79,7 @@ export function useCollectedData(options: UseCollectedDataOptions = {}): UseColl
     try {
       setLoading(true);
       setError(null);
-      const result = await listCollectedData(currentPage, size, sourceId, processed);
+      const result = await listCollectedData(currentPage, size, sourceId, processed, query);
       setData(result.content);
       setTotal(result.totalElements);
       setTotalPages(result.totalPages);
@@ -85,7 +88,7 @@ export function useCollectedData(options: UseCollectedDataOptions = {}): UseColl
     } finally {
       setLoading(false);
     }
-  }, [currentPage, size, sourceId, processed]);
+  }, [currentPage, size, sourceId, processed, query]);
 
   const markAsProcessedAction = useCallback(
     async (id: number) => {

@@ -15,11 +15,8 @@ Supports:
 """
 
 import asyncio
-import os
 import random
-import sys
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 import structlog

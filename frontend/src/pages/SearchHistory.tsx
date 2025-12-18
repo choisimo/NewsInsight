@@ -22,6 +22,7 @@ export default function SearchHistory() {
   // Discovered URLs state
   const [discoveredUrls, setDiscoveredUrls] = useState<string[]>([]);
   const [urlsLoading, setUrlsLoading] = useState(false);
+  const [urlsError, setUrlsError] = useState<string | null>(null);
   const [showDiscoveredUrls, setShowDiscoveredUrls] = useState(false);
   const [urlsDays, setUrlsDays] = useState(7);
 
@@ -29,11 +30,13 @@ export default function SearchHistory() {
   useEffect(() => {
     if (showDiscoveredUrls) {
       setUrlsLoading(true);
+      setUrlsError(null);
       getDiscoveredUrls(urlsDays, 100)
         .then(setDiscoveredUrls)
         .catch((err) => {
           console.error('Failed to load discovered URLs:', err);
           setDiscoveredUrls([]);
+          setUrlsError('URL 목록을 불러오는데 실패했습니다.');
         })
         .finally(() => setUrlsLoading(false));
     }
@@ -43,7 +46,7 @@ export default function SearchHistory() {
   const getSearchPagePath = (searchType: SearchHistoryType): string => {
     switch (searchType) {
       case 'UNIFIED':
-        return '/';
+        return '/search';
       case 'DEEP_SEARCH':
         return '/deep-search';
       case 'FACT_CHECK':
@@ -126,6 +129,30 @@ export default function SearchHistory() {
             {urlsLoading ? (
               <div className="flex items-center justify-center py-4">
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+              </div>
+            ) : urlsError ? (
+              <div className="flex items-center gap-2 py-4 px-3 bg-red-50 dark:bg-red-900/20 rounded text-sm text-red-600 dark:text-red-400">
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{urlsError}</span>
+                <button
+                  onClick={() => {
+                    setUrlsError(null);
+                    setUrlsLoading(true);
+                    getDiscoveredUrls(urlsDays, 100)
+                      .then(setDiscoveredUrls)
+                      .catch((err) => {
+                        console.error('Failed to load discovered URLs:', err);
+                        setDiscoveredUrls([]);
+                        setUrlsError('URL 목록을 불러오는데 실패했습니다.');
+                      })
+                      .finally(() => setUrlsLoading(false));
+                  }}
+                  className="ml-auto text-blue-600 dark:text-blue-400 hover:underline text-xs"
+                >
+                  다시 시도
+                </button>
               </div>
             ) : discoveredUrls.length === 0 ? (
               <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">

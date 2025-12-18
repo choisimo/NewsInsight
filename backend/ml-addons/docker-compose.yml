@@ -25,26 +25,53 @@ services:
       - "addon.type=sentiment"
       - "addon.version=1.0.0"
 
-  # 팩트체크 Add-on
+  # 팩트체크 Add-on (ML Enhanced)
   factcheck-addon:
     build:
       context: ./factcheck-addon
       dockerfile: Dockerfile
+      args:
+        ENABLE_GPU: ${ENABLE_GPU:-false}
+        PRELOAD_MODELS: ${PRELOAD_MODELS:-false}
     container_name: newsinsight-factcheck-addon
     ports:
       - "8101:8101"
     restart: unless-stopped
+    environment:
+      # ML Model Configuration
+      - ENABLE_ML_MODELS=${ENABLE_ML_MODELS:-true}
+      - CLAIM_MODEL=${CLAIM_MODEL:-monologg/koelectra-base-v3-discriminator}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      - NER_MODEL=${NER_MODEL:-klue/bert-base}
+      - SENTIMENT_MODEL=${SENTIMENT_MODEL:-klue/roberta-base}
+      # External API Keys (optional)
+      - GOOGLE_FACTCHECK_API_KEY=${GOOGLE_FACTCHECK_API_KEY:-}
+      - SNU_FACTCHECK_API_URL=${SNU_FACTCHECK_API_URL:-}
+      # Cache Configuration
+      - HF_HOME=/app/.cache/huggingface
+      - TRANSFORMERS_CACHE=/app/.cache/huggingface/transformers
+      - TORCH_HOME=/app/.cache/torch
+    volumes:
+      # Persist model cache to speed up restarts
+      - factcheck-model-cache:/app/.cache
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 30s
       retries: 3
-      start_period: 10s
+      start_period: 120s  # Longer start period for model loading
     networks:
       - ml-addons-network
     labels:
       - "addon.type=factcheck"
-      - "addon.version=1.0.0"
+      - "addon.version=2.0.0"
+      - "addon.ml_enabled=true"
+    deploy:
+      resources:
+        limits:
+          memory: 4G  # ML models require more memory
+        reservations:
+          memory: 2G
 
   # 편향도 분석 Add-on
   bias-addon:
@@ -66,6 +93,10 @@ services:
     labels:
       - "addon.type=bias"
       - "addon.version=1.0.0"
+
+volumes:
+  factcheck-model-cache:
+    name: newsinsight-factcheck-models
 
 networks:
   ml-addons-network:

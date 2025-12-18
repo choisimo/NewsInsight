@@ -50,6 +50,8 @@ import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
 import { useSearchRecordFromState, type PriorityUrl as SearchRecordPriorityUrl } from "@/hooks/useSearchRecord";
 import { UrlClaimExtractor } from "@/components/UrlClaimExtractor";
 import { PriorityUrlEditor, type PriorityUrl } from "@/components/PriorityUrlEditor";
+import { FactCheckAnalyticsPanel } from "@/components/FactCheckAnalyticsPanel";
+import { useFactCheckAnalytics } from "@/hooks/useFactCheckAnalytics";
 import {
   openDeepAnalysisStream,
   checkUnifiedSearchHealth,
@@ -411,6 +413,14 @@ const FactCheck = () => {
     exportToText,
   } = useFactCheckStorage();
 
+  // Fact check analytics hook for detailed statistics
+  const {
+    analytics: factCheckAnalytics,
+    isAnalyzing: isAnalyzingStats,
+    analyze: runAnalytics,
+    reset: resetAnalytics,
+  } = useFactCheckAnalytics();
+
   // Health check
   const { data: healthData } = useQuery({
     queryKey: ["unifiedSearch", "health"],
@@ -705,8 +715,21 @@ const FactCheck = () => {
         credibility?.overallScore,
         durationMs,
       );
+      
+      // Run analytics when verification completes
+      runAnalytics(
+        {
+          topic: topic.trim(),
+          sourceName: collectedEvidence.length > 0 
+            ? collectedEvidence[0].sourceName 
+            : undefined,
+          title: topic.trim(),
+          content: claims.filter(c => c.trim()).join(" "),
+        },
+        verificationResults
+      );
     }
-  }, [aiComplete, verificationResults, topic, credibility, searchStartTime, saveFactCheck]);
+  }, [aiComplete, verificationResults, topic, credibility, searchStartTime, saveFactCheck, runAnalytics, collectedEvidence, claims]);
 
   // Cleanup
   useEffect(() => {
@@ -725,7 +748,8 @@ const FactCheck = () => {
     setAiComplete(false);
     setCurrentPhase("");
     setPhaseMessage("");
-  }, []);
+    resetAnalytics();
+  }, [resetAnalytics]);
 
   const addClaim = useCallback(() => {
     setClaims((prev) => [...prev, ""]);
@@ -1218,6 +1242,14 @@ const FactCheck = () => {
             {/* Credibility Assessment */}
             {credibility && (
               <CredibilityMeter assessment={credibility} />
+            )}
+
+            {/* Detailed Analytics Panel */}
+            {aiComplete && (
+              <FactCheckAnalyticsPanel 
+                analytics={factCheckAnalytics}
+                isLoading={isAnalyzingStats}
+              />
             )}
 
             {/* Collected Evidence */}

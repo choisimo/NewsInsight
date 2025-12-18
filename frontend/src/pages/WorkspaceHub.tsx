@@ -2,8 +2,7 @@
  * WorkspaceHub - 내 작업 허브 페이지
  * 
  * 사용자의 모든 작업을 한눈에 보여줍니다.
- * - 프로젝트
- * - 검색 기록
+ * - 검색 기록 (백엔드 API 연동)
  * - URL 컬렉션
  * - 최근 분석 결과
  */
@@ -13,20 +12,23 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   FolderOpen,
   History,
   Globe,
   Clock,
   ArrowRight,
-  Plus,
   FileText,
   Star,
   TrendingUp,
   Calendar,
+  AlertCircle,
 } from 'lucide-react';
 import { useContinueWork } from '@/hooks/useContinueWork';
 import { useUsageStreak } from '@/hooks/useUsageStreak';
+import { useEffect, useState } from 'react';
+import { getSearchStatistics, listSearchHistory, getBookmarkedSearches } from '@/lib/api';
 import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
 
@@ -37,9 +39,10 @@ interface QuickAccessCardProps {
   description: string;
   count?: number;
   lastUpdated?: Date;
+  isLoading?: boolean;
 }
 
-function QuickAccessCard({ to, icon, title, description, count, lastUpdated }: QuickAccessCardProps) {
+function QuickAccessCard({ to, icon, title, description, count, lastUpdated, isLoading }: QuickAccessCardProps) {
   return (
     <Link to={to} className="block group">
       <Card className="h-full transition-all hover:shadow-md hover:border-primary/50">
@@ -55,8 +58,10 @@ function QuickAccessCard({ to, icon, title, description, count, lastUpdated }: Q
           <h3 className="font-semibold mb-1">{title}</h3>
           <p className="text-sm text-muted-foreground mb-3">{description}</p>
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            {count !== undefined && (
-              <span>{count}개 항목</span>
+            {isLoading ? (
+              <Skeleton className="h-4 w-16" />
+            ) : (
+              count !== undefined && <span>{count}개 항목</span>
             )}
             {lastUpdated && (
               <span className="flex items-center gap-1">
@@ -71,17 +76,59 @@ function QuickAccessCard({ to, icon, title, description, count, lastUpdated }: Q
   );
 }
 
-export function WorkspaceHub() {
-  const { recentWorks, lastWork } = useContinueWork();
-  const { streak, weeklyStats, totalSearches } = useUsageStreak();
+interface WorkspaceStats {
+  searchHistoryCount: number;
+  bookmarkedCount: number;
+  recentSearchDate?: Date;
+  isLoading: boolean;
+  error: string | null;
+}
 
-  // Mock data - 실제로는 API에서 가져옴
-  const stats = {
-    projectCount: 5,
-    searchHistoryCount: 24,
-    urlCollectionCount: 12,
-    savedAnalysisCount: 8,
-  };
+export function WorkspaceHub() {
+  const { recentWorks } = useContinueWork();
+  const { streak, weeklyStats, totalSearches } = useUsageStreak();
+  
+  const [stats, setStats] = useState<WorkspaceStats>({
+    searchHistoryCount: 0,
+    bookmarkedCount: 0,
+    isLoading: true,
+    error: null,
+  });
+
+  // 백엔드에서 실제 통계 로드
+  useEffect(() => {
+    const loadStats = async () => {
+      try {
+        const [historyResponse, bookmarkedResponse] = await Promise.all([
+          listSearchHistory(0, 1), // 총 개수만 확인
+          getBookmarkedSearches(0, 1),
+        ]);
+        
+        // 가장 최근 검색 날짜
+        let recentDate: Date | undefined;
+        if (historyResponse.content.length > 0) {
+          recentDate = new Date(historyResponse.content[0].createdAt);
+        }
+        
+        setStats({
+          searchHistoryCount: historyResponse.totalElements || 0,
+          bookmarkedCount: bookmarkedResponse.totalElements || 0,
+          recentSearchDate: recentDate,
+          isLoading: false,
+          error: null,
+        });
+      } catch (error) {
+        console.error('Failed to load workspace stats:', error);
+        setStats(prev => ({
+          ...prev,
+          isLoading: false,
+          error: '통계를 불러오는데 실패했습니다',
+        }));
+      }
+    };
+    
+    loadStats();
+  }, []);
 
   return (
     <div className="container py-8 px-4 max-w-7xl mx-auto">
@@ -90,34 +137,20 @@ export function WorkspaceHub() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight mb-2">내 작업</h1>
           <p className="text-muted-foreground">
-            프로젝트, 검색 기록, 저장된 분석을 관리하세요
+            검색 기록, 저장된 분석을 관리하세요
           </p>
         </div>
         <div className="flex gap-2">
-          <Link to="/projects">
+          <Link to="/search">
             <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              새 프로젝트
+              새 검색 시작
             </Button>
           </Link>
         </div>
       </div>
 
-      {/* Stats Overview */}
+      {/* Stats Overview - 백엔드 데이터 기반 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-blue-500/10">
-                <FolderOpen className="h-5 w-5 text-blue-500" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.projectCount}</p>
-                <p className="text-xs text-muted-foreground">프로젝트</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
@@ -125,8 +158,29 @@ export function WorkspaceHub() {
                 <History className="h-5 w-5 text-green-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{stats.searchHistoryCount}</p>
+                {stats.isLoading ? (
+                  <Skeleton className="h-8 w-12" />
+                ) : (
+                  <p className="text-2xl font-bold">{stats.searchHistoryCount}</p>
+                )}
                 <p className="text-xs text-muted-foreground">검색 기록</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-yellow-500/10">
+                <Star className="h-5 w-5 text-yellow-500" />
+              </div>
+              <div>
+                {stats.isLoading ? (
+                  <Skeleton className="h-8 w-12" />
+                ) : (
+                  <p className="text-2xl font-bold">{stats.bookmarkedCount}</p>
+                )}
+                <p className="text-xs text-muted-foreground">북마크</p>
               </div>
             </div>
           </CardContent>
@@ -138,8 +192,8 @@ export function WorkspaceHub() {
                 <Globe className="h-5 w-5 text-purple-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{stats.urlCollectionCount}</p>
-                <p className="text-xs text-muted-foreground">URL 컬렉션</p>
+                <p className="text-2xl font-bold">{totalSearches}</p>
+                <p className="text-xs text-muted-foreground">이번 주 검색</p>
               </div>
             </div>
           </CardContent>
@@ -147,17 +201,29 @@ export function WorkspaceHub() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-amber-500/10">
-                <FileText className="h-5 w-5 text-amber-500" />
+              <div className="p-2 rounded-lg bg-blue-500/10">
+                <TrendingUp className="h-5 w-5 text-blue-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{stats.savedAnalysisCount}</p>
-                <p className="text-xs text-muted-foreground">저장된 분석</p>
+                <p className="text-2xl font-bold">{streak}일</p>
+                <p className="text-xs text-muted-foreground">연속 사용</p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Error Message */}
+      {stats.error && (
+        <Card className="mb-6 border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="py-4">
+            <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <AlertCircle className="h-4 w-4" />
+              <span className="text-sm">{stats.error}</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Content */}
@@ -167,34 +233,31 @@ export function WorkspaceHub() {
             <h2 className="text-lg font-semibold mb-4">빠른 접근</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <QuickAccessCard
-                to="/projects"
-                icon={<FolderOpen className="h-5 w-5" />}
-                title="프로젝트"
-                description="저장된 분석 프로젝트"
-                count={stats.projectCount}
-                lastUpdated={new Date(Date.now() - 2 * 60 * 60 * 1000)}
-              />
-              <QuickAccessCard
                 to="/history"
                 icon={<History className="h-5 w-5" />}
                 title="검색 기록"
                 description="최근 검색 내역"
                 count={stats.searchHistoryCount}
-                lastUpdated={new Date(Date.now() - 30 * 60 * 1000)}
+                lastUpdated={stats.recentSearchDate}
+                isLoading={stats.isLoading}
               />
               <QuickAccessCard
                 to="/url-collections"
                 icon={<Globe className="h-5 w-5" />}
                 title="URL 컬렉션"
                 description="저장된 URL 원천"
-                count={stats.urlCollectionCount}
               />
               <QuickAccessCard
                 to="/ai-jobs"
                 icon={<FileText className="h-5 w-5" />}
-                title="분석 결과"
-                description="AI 분석 결과 히스토리"
-                count={stats.savedAnalysisCount}
+                title="AI 분석 작업"
+                description="AI 분석 작업 히스토리"
+              />
+              <QuickAccessCard
+                to="/projects"
+                icon={<FolderOpen className="h-5 w-5" />}
+                title="프로젝트"
+                description="분석 프로젝트 (준비 중)"
               />
             </div>
           </div>
@@ -302,35 +365,61 @@ export function WorkspaceHub() {
             </CardContent>
           </Card>
 
-          {/* Favorites */}
+          {/* Bookmarks */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 <Star className="h-4 w-4" />
-                즐겨찾기
+                북마크
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-4 text-muted-foreground">
-                <Star className="h-6 w-6 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">즐겨찾기한 항목이 없습니다</p>
-              </div>
+              {stats.isLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-3/4" />
+                </div>
+              ) : stats.bookmarkedCount > 0 ? (
+                <div className="text-center py-2">
+                  <p className="text-sm text-muted-foreground mb-2">
+                    {stats.bookmarkedCount}개의 북마크
+                  </p>
+                  <Link to="/history?bookmarked=true">
+                    <Button variant="outline" size="sm">
+                      북마크 보기
+                    </Button>
+                  </Link>
+                </div>
+              ) : (
+                <div className="text-center py-4 text-muted-foreground">
+                  <Star className="h-6 w-6 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">북마크한 검색이 없습니다</p>
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          {/* Upcoming */}
+          {/* Quick Actions */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 <Calendar className="h-4 w-4" />
-                예정된 작업
+                빠른 작업
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-center py-4 text-muted-foreground">
-                <Calendar className="h-6 w-6 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">예정된 작업이 없습니다</p>
-              </div>
+            <CardContent className="space-y-2">
+              <Link to="/search" className="block">
+                <Button variant="outline" className="w-full justify-start">
+                  <History className="h-4 w-4 mr-2" />
+                  새 검색 시작
+                </Button>
+              </Link>
+              <Link to="/smart-search" className="block">
+                <Button variant="outline" className="w-full justify-start">
+                  <FileText className="h-4 w-4 mr-2" />
+                  스마트 검색
+                </Button>
+              </Link>
             </CardContent>
           </Card>
         </div>

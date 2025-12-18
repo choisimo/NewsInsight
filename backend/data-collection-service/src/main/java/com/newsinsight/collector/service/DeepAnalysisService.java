@@ -14,6 +14,7 @@ import com.newsinsight.collector.repository.CrawlJobRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationContext;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -51,6 +52,7 @@ public class DeepAnalysisService {
     private final CrawlEvidenceRepository crawlEvidenceRepository;
     private final DeepSearchEventService deepSearchEventService;
     private final IntegratedCrawlerService integratedCrawlerService;
+    private final ApplicationContext applicationContext;
 
     @Value("${collector.deep-search.timeout-minutes:30}")
     private int timeoutMinutes;
@@ -92,62 +94,76 @@ public class DeepAnalysisService {
         deepSearchEventService.publishStatusUpdate(jobId, "PENDING", "Job created, starting search...");
 
         // Start integrated crawler
-        triggerIntegratedSearchAsync(jobId, topic, baseUrl);
+        applicationContext.getBean(DeepAnalysisService.class)
+                .triggerIntegratedSearchAsync(jobId, topic, baseUrl);
 
         return toJobDto(job);
     }
 
     /**
-     * Async method to trigger search using IntegratedCrawlerService
+     * Async method to trigger search using IntegratedCrawlerService.
+     * 
+     * IMPORTANT: This method uses reactive subscribe() instead of block() to ensure
+     * truly non-blocking execution. The @Async annotation ensures this runs in a
+     * separate thread pool, and subscribe() ensures we don't block that thread.
      */
     @Async
     public void triggerIntegratedSearchAsync(String jobId, String topic, String baseUrl) {
-        try {
-            log.info("Starting integrated crawl: jobId={}, topic={}", jobId, topic);
-            
-            // Publish progress update
-            deepSearchEventService.publishProgressUpdate(jobId, 10, "Starting integrated crawler...");
-            updateJobStatus(jobId, CrawlJobStatus.IN_PROGRESS);
-            deepSearchEventService.publishStatusUpdate(jobId, "IN_PROGRESS", "Integrated crawl in progress...");
+        log.info("Starting integrated crawl: jobId={}, topic={}", jobId, topic);
+        
+        // Publish progress update immediately
+        deepSearchEventService.publishProgressUpdate(jobId, 10, "Starting integrated crawler...");
+        updateJobStatus(jobId, CrawlJobStatus.IN_PROGRESS);
+        deepSearchEventService.publishStatusUpdate(jobId, "IN_PROGRESS", "Integrated crawl in progress...");
 
-            // Build crawl request
-            IntegratedCrawlerService.CrawlRequest request;
-            if (baseUrl != null && !baseUrl.isBlank()) {
-                request = IntegratedCrawlerService.CrawlRequest.forUrl(topic, baseUrl);
-            } else {
-                request = IntegratedCrawlerService.CrawlRequest.forTopic(topic);
+        // Build crawl request
+        IntegratedCrawlerService.CrawlRequest request;
+        if (baseUrl != null && !baseUrl.isBlank()) {
+            request = IntegratedCrawlerService.CrawlRequest.forUrl(topic, baseUrl);
+        } else {
+            request = IntegratedCrawlerService.CrawlRequest.forTopic(topic);
+        }
+
+        // Create progress callback
+        IntegratedCrawlerService.CrawlProgressCallback callback = new IntegratedCrawlerService.CrawlProgressCallback() {
+            @Override
+            public void onProgress(int current, int total, String message) {
+                // Scale progress from 10-90%
+                int scaledProgress = 10 + (int)((current / (double) Math.max(total, 1)) * 80);
+                deepSearchEventService.publishProgressUpdate(jobId, scaledProgress, message);
             }
 
-            // Create progress callback
-            IntegratedCrawlerService.CrawlProgressCallback callback = new IntegratedCrawlerService.CrawlProgressCallback() {
-                @Override
-                public void onProgress(int current, int total, String message) {
-                    // Scale progress from 10-90%
-                    int scaledProgress = 10 + (int)((current / (double) Math.max(total, 1)) * 80);
-                    deepSearchEventService.publishProgressUpdate(jobId, scaledProgress, message);
-                }
+            @Override
+            public void onPageCrawled(com.newsinsight.collector.dto.CrawledPage page) {
+                log.debug("Page crawled for job {}: {}", jobId, page.url());
+            }
 
-                @Override
-                public void onPageCrawled(com.newsinsight.collector.dto.CrawledPage page) {
-                    log.debug("Page crawled for job {}: {}", jobId, page.url());
-                }
+            @Override
+            public void onEvidenceFound(EvidenceDto evidence) {
+                deepSearchEventService.publishEvidence(jobId, evidence);
+            }
 
-                @Override
-                public void onEvidenceFound(EvidenceDto evidence) {
-                    deepSearchEventService.publishEvidence(jobId, evidence);
-                }
+            @Override
+            public void onError(String url, String error) {
+                log.warn("Crawl error for job {} at {}: {}", jobId, url, error);
+            }
+        };
 
-                @Override
-                public void onError(String url, String error) {
-                    log.warn("Crawl error for job {} at {}: {}", jobId, url, error);
-                }
-            };
+        // Execute crawl reactively - DO NOT use .block() as it defeats async execution!
+        // Use subscribe() to process results when they arrive without blocking.
+        integratedCrawlerService
+                .crawl(request, callback)
+                .subscribe(
+                        result -> handleCrawlSuccess(jobId, result),
+                        error -> handleCrawlError(jobId, error)
+                );
+    }
 
-            // Execute crawl
-            IntegratedCrawlerService.CrawlResult result = integratedCrawlerService
-                    .crawl(request, callback)
-                    .block();
-
+    /**
+     * Handle successful crawl completion
+     */
+    private void handleCrawlSuccess(String jobId, IntegratedCrawlerService.CrawlResult result) {
+        try {
             if (result != null && !result.evidence().isEmpty()) {
                 // Save evidence to database
                 List<CrawlEvidence> evidenceEntities = result.evidence().stream()
@@ -186,12 +202,20 @@ public class DeepAnalysisService {
                 log.info("Integrated crawl completed with no evidence: jobId={}", jobId);
             }
         } catch (Exception e) {
-            log.error("Integrated crawl failed: jobId={}, error={}", jobId, e.getMessage(), e);
-            CrawlFailureReason failureReason = CrawlFailureReason.fromException(e);
-            String errorMsg = "Crawl failed: " + e.getMessage() + " [" + failureReason.getCode() + "]";
-            updateJobStatusWithReason(jobId, CrawlJobStatus.FAILED, errorMsg, failureReason);
-            deepSearchEventService.publishError(jobId, errorMsg, failureReason);
+            log.error("Error handling crawl success for jobId={}: {}", jobId, e.getMessage(), e);
+            handleCrawlError(jobId, e);
         }
+    }
+
+    /**
+     * Handle crawl error
+     */
+    private void handleCrawlError(String jobId, Throwable e) {
+        log.error("Integrated crawl failed: jobId={}, error={}", jobId, e.getMessage(), e);
+        CrawlFailureReason failureReason = CrawlFailureReason.fromException(e);
+        String errorMsg = "Crawl failed: " + e.getMessage() + " [" + failureReason.getCode() + "]";
+        updateJobStatusWithReason(jobId, CrawlJobStatus.FAILED, errorMsg, failureReason);
+        deepSearchEventService.publishError(jobId, errorMsg, failureReason);
     }
 
     /**

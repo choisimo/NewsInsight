@@ -275,7 +275,11 @@ load_json_config() {
     version=$(jq -r '.version' "$JSON_CONFIG_FILE")
     if consul_kv_put "config/version" "$version"; then
         log_success "✓ config/version = $version"
+        ((successful_keys++))
+    else
+        ((failed_keys++))
     fi
+    ((total_keys++))
     
     # -------------------------------------------------------------------------
     # Load Service Configurations
@@ -348,6 +352,94 @@ load_json_config() {
         
         echo ""
     done
+    
+    # -------------------------------------------------------------------------
+    # Register Services with Consul Service Discovery
+    # -------------------------------------------------------------------------
+    log_info "Registering services with Consul service discovery..."
+    
+    for service in $services; do
+        # Check if service should be registered
+        local should_register
+        should_register=$(jq -r ".services[\"$service\"].consul.register // false" "$JSON_CONFIG_FILE")
+        
+        if [[ "$should_register" == "true" ]]; then
+            local service_name hostname port healthcheck tags
+            service_name=$(jq -r ".services[\"$service\"].consul.service_name // \"$service\"" "$JSON_CONFIG_FILE")
+            hostname=$(jq -r ".services[\"$service\"].hostname // \"$service\"" "$JSON_CONFIG_FILE")
+            port=$(jq -r ".services[\"$service\"].port" "$JSON_CONFIG_FILE")
+            healthcheck=$(jq -r ".services[\"$service\"].healthcheck" "$JSON_CONFIG_FILE")
+            tags=$(jq -c ".services[\"$service\"].consul.tags // []" "$JSON_CONFIG_FILE")
+            
+            # Create service registration JSON
+            local service_json
+            service_json=$(cat <<EOF
+{
+  "ID": "${service_name}",
+  "Name": "${service_name}",
+  "Address": "${hostname}",
+  "Port": ${port},
+  "Tags": ${tags},
+  "Check": {
+    "HTTP": "http://${hostname}:${port}${healthcheck}",
+    "Interval": "10s",
+    "Timeout": "5s",
+    "DeregisterCriticalServiceAfter": "1m"
+  }
+}
+EOF
+)
+            
+            # Register service with Consul
+            local headers=(-H "Content-Type: application/json")
+            if [[ -n "$CONSUL_TOKEN" ]]; then
+                headers+=(-H "X-Consul-Token: $CONSUL_TOKEN")
+            fi
+            
+            local response
+            response=$(curl -sf -X PUT \
+                "${headers[@]}" \
+                -d "$service_json" \
+                "${CONSUL_ADDR}/v1/agent/service/register" 2>&1)
+            
+            if [[ $? -eq 0 ]]; then
+                log_success "✓ Registered service: ${service_name} (${hostname}:${port})"
+                ((successful_keys++))
+            else
+                log_error "✗ Failed to register service: ${service_name} - $response"
+                ((failed_keys++))
+            fi
+            ((total_keys++))
+        fi
+    done
+    
+    echo ""
+    
+    # -------------------------------------------------------------------------
+    # Store Service URLs in Consul KV for API Gateway
+    # -------------------------------------------------------------------------
+    log_info "Storing service URLs in Consul KV..."
+    
+    local service_urls
+    service_urls=$(jq -r '.service_urls // {} | keys[]' "$JSON_CONFIG_FILE" 2>/dev/null || echo "")
+    
+    for url_key in $service_urls; do
+        if [[ "$url_key" != "_comment" ]]; then
+            local url_value
+            url_value=$(jq -r ".service_urls[\"$url_key\"]" "$JSON_CONFIG_FILE")
+            
+            if consul_kv_put "config/service-urls/${url_key}" "$url_value"; then
+                log_success "✓ config/service-urls/${url_key} = $url_value"
+                ((successful_keys++))
+            else
+                log_error "✗ Failed to set config/service-urls/${url_key}"
+                ((failed_keys++))
+            fi
+            ((total_keys++))
+        fi
+    done
+    
+    echo ""
     
     # -------------------------------------------------------------------------
     # Load ML Addons Configuration

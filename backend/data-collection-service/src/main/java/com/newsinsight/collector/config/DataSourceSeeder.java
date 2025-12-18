@@ -2,6 +2,7 @@ package com.newsinsight.collector.config;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.newsinsight.collector.entity.BrowserAgentConfig;
 import com.newsinsight.collector.entity.DataSource;
 import com.newsinsight.collector.entity.SourceType;
 import com.newsinsight.collector.repository.DataSourceRepository;
@@ -48,12 +49,6 @@ public class DataSourceSeeder implements ApplicationRunner {
             return;
         }
 
-        long existingCount = dataSourceRepository.count();
-        if (existingCount > 0) {
-            log.info("DataSource table already has {} entries, skipping seed.", existingCount);
-            return;
-        }
-
         log.info("Seeding data sources...");
         
         List<DataSource> sources;
@@ -68,10 +63,29 @@ public class DataSourceSeeder implements ApplicationRunner {
             log.info("No external configuration found, using default Korean news sources.");
             sources = createDefaultSources();
         }
-        
-        dataSourceRepository.saveAll(sources);
-        
-        log.info("Successfully seeded {} data sources.", sources.size());
+
+        int created = 0;
+        int skipped = 0;
+        for (DataSource desired : sources) {
+            DataSource existing = dataSourceRepository
+                    .findByUrl(desired.getUrl())
+                    .or(() -> dataSourceRepository.findByName(desired.getName()))
+                    .orElse(null);
+
+            if (existing == null) {
+                dataSourceRepository.save(desired);
+                created++;
+                continue;
+            }
+            skipped++;
+        }
+
+        log.info(
+                "Successfully seeded data sources. created={}, skipped={}, totalDesired={}",
+                created,
+                skipped,
+                sources.size()
+        );
     }
 
     /**
@@ -277,6 +291,73 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .isActive(true)
                 .collectionFrequency(1800)
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"medium\",\"category\":\"news_agency\"}")
+                .build(),
+                
+            // ========== BROWSER_AGENT Sources (AI-based crawling) ==========
+            // 네이버 뉴스 (Browser Agent)
+            DataSource.builder()
+                .name("네이버 뉴스 (Browser Agent)")
+                .url("https://news.naver.com/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(1800) // 30 min
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"high\",\"category\":\"portal\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // 다음 뉴스 (Browser Agent)
+            DataSource.builder()
+                .name("다음 뉴스 (Browser Agent)")
+                .url("https://news.daum.net/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(1800)
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"high\",\"category\":\"portal\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // 구글 뉴스 한국 (Browser Agent)
+            DataSource.builder()
+                .name("구글 뉴스 한국 (Browser Agent)")
+                .url("https://news.google.com/home?hl=ko&gl=KR&ceid=KR:ko")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(3600)
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"high\",\"category\":\"aggregator\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // 네이버 실시간 검색어 트렌드 (Browser Agent - Breaking News)
+            DataSource.builder()
+                .name("네이버 트렌드 (Browser Agent)")
+                .url("https://datalab.naver.com/keyword/realtimeList.naver")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(900) // 15 min - 트렌드는 자주 확인
+                .browserAgentConfig(BrowserAgentConfig.forBreakingNews())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"high\",\"category\":\"trending\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // 조선일보 (Browser Agent - Archive mode for non-RSS content)
+            DataSource.builder()
+                .name("조선일보 (Browser Agent)")
+                .url("https://www.chosun.com/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(false) // RSS가 있으므로 기본 비활성
+                .collectionFrequency(7200)
+                .browserAgentConfig(BrowserAgentConfig.forNewsArchive())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"medium\",\"category\":\"newspaper\",\"crawler\":\"browser_agent\",\"stance\":\"conservative\"}")
+                .build(),
+                
+            // 한겨레 (Browser Agent)
+            DataSource.builder()
+                .name("한겨레 (Browser Agent)")
+                .url("https://www.hani.co.kr/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(false) // RSS가 있으므로 기본 비활성
+                .collectionFrequency(7200)
+                .browserAgentConfig(BrowserAgentConfig.forNewsArchive())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"medium\",\"category\":\"newspaper\",\"crawler\":\"browser_agent\",\"stance\":\"progressive\"}")
                 .build()
         );
     }
