@@ -99,7 +99,7 @@ services:
       start_period: 60s
     networks:
       - default
-      - capstone-net
+      - newsinsight-shared-net
 
   frontend:
     image: node:20-alpine
@@ -191,17 +191,17 @@ services:
       - DB_USER=${DB_USER:-postgres}
       - DB_PASSWORD=${DB_PASSWORD:-postgres}
       - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
-      # Kafka configuration - connecting to redpanda-dev on capstone-net
+      # Kafka configuration - connecting to redpanda-dev on newsinsight-shared-net
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-redpanda-dev:9092}
       # Service port
       - SERVER_PORT=${COLLECTOR_PORT:-8081}
-      # Force Consul to register with newsinsight-net IP (not capstone-net IP)
+      # Force Consul to register with newsinsight-net IP (not newsinsight-shared-net IP)
       - SPRING_CLOUD_INETUTILS_PREFERRED_NETWORKS=172.20
     expose:
       - "8081"
     networks:
       - default
-      - capstone-net
+      - newsinsight-shared-net
 
   # Crawl4AI web-crawler service
   web-crawler:
@@ -275,7 +275,7 @@ services:
       - "19644:9644"
     networks:
       - default
-      - capstone-net
+      - newsinsight-shared-net
 
   # Redis for API Gateway rate limiting
   redis:
@@ -364,6 +364,13 @@ services:
       # Stealth/CAPTCHA settings
       - STEALTH_ENABLED=${STEALTH_ENABLED:-true}
       - CAPTCHA_ENABLED=${CAPTCHA_ENABLED:-true}
+      # Paid CAPTCHA solver API keys (for reliable search portal bypass)
+      # Get CapSolver key at: https://capsolver.com (recommended for Turnstile)
+      - CAPTCHA_CAPSOLVER_API_KEY=${CAPTCHA_CAPSOLVER_API_KEY:-}
+      # Get 2Captcha key at: https://2captcha.com
+      - CAPTCHA_TWOCAPTCHA_API_KEY=${CAPTCHA_TWOCAPTCHA_API_KEY:-}
+      - CAPTCHA_PREFER_PAID_SOLVER=${CAPTCHA_PREFER_PAID_SOLVER:-true}
+      - CAPTCHA_PAID_SOLVER_TIMEOUT=${CAPTCHA_PAID_SOLVER_TIMEOUT:-120}
       # Redis for task state persistence
       - REDIS_ENABLED=true
       - REDIS_URL=redis://redis:6379/4
@@ -392,7 +399,7 @@ services:
       start_period: 60s
     networks:
       - default
-      - capstone-net
+      - newsinsight-shared-net
 
   # Browser-Use API Server with AI Dove Integration
   browser-use-api:
@@ -419,7 +426,7 @@ services:
       retries: 3
     networks:
       - default
-      - capstone-net
+      - newsinsight-shared-net
 
   # ML Add-ons - 감정 분석 (Sentiment Analysis)
   sentiment-addon:
@@ -722,6 +729,32 @@ services:
     networks:
       - default
 
+  huggingface-mcp:
+    build:
+      context: ../../mcp/huggingface_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/huggingface-mcp:local
+    restart: unless-stopped
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - PORT=5011
+      - DATA_DIR=/app/data
+      - JOB_TIMEOUT=600
+    expose:
+      - "5011"
+    ports:
+      - "5011:5011"
+    volumes:
+      - huggingface-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5011/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
 volumes:
   postgres-data:
   redis-data:
@@ -729,10 +762,11 @@ volumes:
   mongo-data:
   ip-rotation-data:
   maigret-reports:
+  huggingface-data:
 
 networks:
   default:
     name: newsinsight-net
-  capstone-net:
-    name: compose_capstone-net
+  newsinsight-shared-net:
+    name: newsinsight-shared-net
     driver: bridge

@@ -8,7 +8,7 @@ import type {
   AuditLog,
   User,
   Token,
-  HealthCheck,
+  SetupStatus,
 } from '@/types/admin';
 
 // Auth
@@ -39,6 +39,12 @@ export const authApi = {
   changePassword: async (oldPassword: string, newPassword: string) => {
     const client = await getApiClient();
     const response = await client.post('/api/v1/admin/auth/change-password', { old_password: oldPassword, new_password: newPassword });
+    return response.data;
+  },
+  
+  getSetupStatus: async (): Promise<SetupStatus> => {
+    const client = await getApiClient();
+    const response = await client.get<SetupStatus>('/api/v1/admin/auth/setup-status');
     return response.data;
   },
 };

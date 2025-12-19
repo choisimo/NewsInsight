@@ -481,8 +481,9 @@ const DeepSearch = () => {
   const { data: fetchedResult } = useQuery({
     queryKey: ['deepSearch', 'result', currentJobId],
     queryFn: () => getDeepSearchResult(currentJobId!),
-    enabled: !!currentJobId && !sseResult && jobStatus === 'COMPLETED',
+    enabled: !!currentJobId && !sseResult,
     staleTime: Infinity,
+    retry: 2,
   });
 
   const result = sseResult || fetchedResult;

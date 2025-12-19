@@ -35,6 +35,7 @@ import AdminEnvironments from "./pages/admin/AdminEnvironments";
 import AdminScripts from "./pages/admin/AdminScripts";
 import AdminAuditLogs from "./pages/admin/AdminAuditLogs";
 import AdminLogin from "./pages/admin/AdminLogin";
+import AdminSetup from "./pages/admin/AdminSetup";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 const queryClient = new QueryClient();
@@ -89,6 +90,7 @@ const App = () => (
                 
                 {/* Admin Routes */}
                 <Route path="/admin/login" element={<AdminLogin />} />
+                <Route path="/admin/setup" element={<ProtectedRoute allowSetup><AdminSetup /></ProtectedRoute>} />
                 <Route path="/admin/sources" element={<ProtectedRoute><AdminSources /></ProtectedRoute>} />
                 <Route path="/admin/operations" element={<ProtectedRoute><Operations /></ProtectedRoute>} />
                 <Route path="/admin/environments" element={<ProtectedRoute requiredRole="operator"><AdminEnvironments /></ProtectedRoute>} />

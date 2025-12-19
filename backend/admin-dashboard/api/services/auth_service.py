@@ -1,6 +1,7 @@
 """
 Auth Service - 인증/권한 관리 서비스
 """
+
 import hashlib
 import secrets
 from datetime import datetime, timedelta
@@ -11,7 +12,7 @@ from uuid import uuid4
 import yaml
 from jose import JWTError, jwt
 
-from ..models.schemas import Token, TokenData, User, UserCreate, UserRole
+from ..models.schemas import Token, TokenData, User, UserCreate, UserRole, SetupStatus
 
 
 class AuthService:
@@ -59,6 +60,7 @@ class AuthService:
             "is_active": True,
             "created_at": now.isoformat(),
             "last_login": None,
+            "password_change_required": True,  # 초기 설정 시 비밀번호 변경 필요
         }
 
         self._save_users()
@@ -104,6 +106,9 @@ class AuthService:
                         last_login=datetime.fromisoformat(user_data["last_login"])
                         if user_data.get("last_login")
                         else None,
+                        password_change_required=user_data.get(
+                            "password_change_required", False
+                        ),
                     )
 
         return None
@@ -166,6 +171,7 @@ class AuthService:
             last_login=datetime.fromisoformat(user_data["last_login"])
             if user_data.get("last_login")
             else None,
+            password_change_required=user_data.get("password_change_required", False),
         )
 
     def get_user_by_username(self, username: str) -> Optional[User]:
@@ -193,6 +199,9 @@ class AuthService:
                     last_login=datetime.fromisoformat(user_data["last_login"])
                     if user_data.get("last_login")
                     else None,
+                    password_change_required=user_data.get(
+                        "password_change_required", False
+                    ),
                 )
             )
 
@@ -216,6 +225,7 @@ class AuthService:
             "is_active": data.is_active,
             "created_at": now.isoformat(),
             "last_login": None,
+            "password_change_required": False,  # 관리자가 생성한 계정은 변경 불필요
         }
 
         self._save_users()
@@ -228,6 +238,7 @@ class AuthService:
             is_active=data.is_active,
             created_at=now,
             last_login=None,
+            password_change_required=False,
         )
 
     def update_user(
@@ -264,6 +275,7 @@ class AuthService:
             return False
 
         user_data["password_hash"] = self._hash_password(new_password)
+        user_data["password_change_required"] = False  # 비밀번호 변경 후 플래그 해제
         self._save_users()
         return True
 
@@ -274,6 +286,7 @@ class AuthService:
             return False
 
         user_data["password_hash"] = self._hash_password(new_password)
+        user_data["password_change_required"] = True  # 초기화 후 변경 필요
         self._save_users()
         return True
 
@@ -285,9 +298,7 @@ class AuthService:
             return True
         return False
 
-    def check_permission(
-        self, user_role: UserRole, required_role: UserRole
-    ) -> bool:
+    def check_permission(self, user_role: UserRole, required_role: UserRole) -> bool:
         """권한 확인"""
         role_priority = {
             UserRole.VIEWER: 0,
@@ -299,3 +310,30 @@ class AuthService:
         required_level = role_priority.get(required_role, 0)
 
         return user_level >= required_level
+
+    def get_setup_status(self) -> SetupStatus:
+        """초기 설정 상태 확인"""
+        has_users = len(self.users) > 0
+
+        # 기본 관리자 계정만 존재하고, 비밀번호 변경이 필요한 경우
+        is_default_admin = False
+        setup_required = False
+
+        if has_users:
+            # admin 계정이 있고 password_change_required가 True인지 확인
+            for user_data in self.users.values():
+                if user_data.get("username") == "admin" and user_data.get(
+                    "password_change_required", False
+                ):
+                    is_default_admin = True
+                    setup_required = True
+                    break
+        else:
+            # 사용자가 없으면 설정이 필요
+            setup_required = True
+
+        return SetupStatus(
+            setup_required=setup_required,
+            has_users=has_users,
+            is_default_admin=is_default_admin,
+        )

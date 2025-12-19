@@ -5,10 +5,11 @@ import { Loader2 } from 'lucide-react';
 interface ProtectedRouteProps {
   children: React.ReactNode;
   requiredRole?: 'viewer' | 'operator' | 'admin';
+  allowSetup?: boolean; // Allow access even when password change is required (for setup page)
 }
 
-export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
-  const { isAuthenticated, isLoading, user } = useAuth();
+export function ProtectedRoute({ children, requiredRole, allowSetup = false }: ProtectedRouteProps) {
+  const { isAuthenticated, isLoading, user, passwordChangeRequired } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -22,6 +23,12 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
   if (!isAuthenticated) {
     // Redirect to login page, preserving the intended destination
     return <Navigate to="/admin/login" state={{ from: location }} replace />;
+  }
+
+  // Check if password change is required (initial setup)
+  if (passwordChangeRequired && !allowSetup) {
+    // Redirect to setup page
+    return <Navigate to="/admin/setup" replace />;
   }
 
   // Check role if required

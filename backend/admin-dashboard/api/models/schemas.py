@@ -2,6 +2,7 @@
 Admin Dashboard - Pydantic Schemas
 환경, 스크립트, 문서, 감사 로그 등의 데이터 모델 정의
 """
+
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
@@ -132,7 +133,9 @@ class EnvVariableHistory(BaseModel):
 # ============================================================================
 class ScriptParameter(BaseModel):
     name: str = Field(..., description="파라미터 이름")
-    param_type: str = Field("string", description="파라미터 타입 (string, boolean, number)")
+    param_type: str = Field(
+        "string", description="파라미터 타입 (string, boolean, number)"
+    )
     required: bool = Field(False, description="필수 여부")
     default: Optional[Any] = Field(None, description="기본값")
     description: Optional[str] = Field(None, description="파라미터 설명")
@@ -145,9 +148,13 @@ class ScriptBase(BaseModel):
     working_dir: Optional[str] = Field(None, description="작업 디렉토리")
     risk_level: RiskLevel = Field(RiskLevel.LOW, description="위험도")
     estimated_duration: Optional[int] = Field(None, description="예상 소요 시간(초)")
-    allowed_environments: list[str] = Field(default_factory=list, description="허용된 환경 목록")
+    allowed_environments: list[str] = Field(
+        default_factory=list, description="허용된 환경 목록"
+    )
     required_role: UserRole = Field(UserRole.OPERATOR, description="필요 권한")
-    parameters: list[ScriptParameter] = Field(default_factory=list, description="파라미터 스키마")
+    parameters: list[ScriptParameter] = Field(
+        default_factory=list, description="파라미터 스키마"
+    )
     pre_hooks: list[str] = Field(default_factory=list, description="실행 전 후크")
     post_hooks: list[str] = Field(default_factory=list, description="실행 후 후크")
     tags: list[str] = Field(default_factory=list, description="태그")
@@ -187,7 +194,9 @@ class Script(ScriptBase):
 class TaskExecutionRequest(BaseModel):
     script_id: str = Field(..., description="실행할 스크립트 ID")
     environment_id: str = Field(..., description="대상 환경 ID")
-    parameters: dict[str, Any] = Field(default_factory=dict, description="실행 파라미터")
+    parameters: dict[str, Any] = Field(
+        default_factory=dict, description="실행 파라미터"
+    )
 
 
 class TaskExecution(BaseModel):
@@ -251,8 +260,12 @@ class DocumentBase(BaseModel):
     file_path: str = Field(..., description="파일 경로")
     category: DocumentCategory = Field(DocumentCategory.GENERAL, description="카테고리")
     tags: list[str] = Field(default_factory=list, description="태그")
-    related_environments: list[str] = Field(default_factory=list, description="관련 환경")
-    related_scripts: list[str] = Field(default_factory=list, description="관련 스크립트")
+    related_environments: list[str] = Field(
+        default_factory=list, description="관련 환경"
+    )
+    related_scripts: list[str] = Field(
+        default_factory=list, description="관련 스크립트"
+    )
 
 
 class Document(DocumentBase):
@@ -325,9 +338,18 @@ class User(UserBase):
     id: str
     created_at: datetime
     last_login: Optional[datetime] = None
+    password_change_required: bool = Field(False, description="비밀번호 변경 필요 여부")
 
     class Config:
         from_attributes = True
+
+
+class SetupStatus(BaseModel):
+    """초기 설정 상태"""
+
+    setup_required: bool = Field(..., description="초기 설정 필요 여부")
+    has_users: bool = Field(..., description="사용자 존재 여부")
+    is_default_admin: bool = Field(False, description="기본 관리자 계정 사용 여부")
 
 
 class Token(BaseModel):

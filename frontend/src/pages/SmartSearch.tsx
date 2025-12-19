@@ -250,9 +250,13 @@ const UnifiedResultCard = ({ result, isSelected, onSelect, onViewDetail }: Unifi
               )}
             </div>
             <h4 className="font-semibold text-sm mb-1 line-clamp-2">{result.title}</h4>
-            {result.snippet && (
+            {result.snippet && result.source === 'ai' ? (
+              <div className="text-sm text-muted-foreground">
+                <MarkdownRenderer content={result.snippet} isStreaming={false} />
+              </div>
+            ) : result.snippet ? (
               <p className="text-sm text-muted-foreground line-clamp-2">{result.snippet}</p>
-            )}
+            ) : null}
           </div>
           <div className="flex flex-col gap-1">
             <TooltipProvider>

@@ -757,9 +757,21 @@ class AutonomousCrawlerAgent:
         return self._rrf_search_orchestrator
 
     def _get_captcha_solver(self) -> CaptchaSolverOrchestrator:
-        """Get or create the CAPTCHA solver orchestrator."""
+        """Get or create the CAPTCHA solver orchestrator with paid solver support."""
         if self._captcha_solver is None:
-            self._captcha_solver = CaptchaSolverOrchestrator()
+            # Get paid solver API keys from settings
+            captcha_settings = getattr(self.settings, "captcha", None)
+            capsolver_key = getattr(captcha_settings, "capsolver_api_key", "") if captcha_settings else ""
+            twocaptcha_key = getattr(captcha_settings, "twocaptcha_api_key", "") if captcha_settings else ""
+            prefer_paid = getattr(captcha_settings, "prefer_paid_solver", True) if captcha_settings else True
+            paid_timeout = getattr(captcha_settings, "paid_solver_timeout", 120.0) if captcha_settings else 120.0
+            
+            self._captcha_solver = CaptchaSolverOrchestrator(
+                capsolver_api_key=capsolver_key,
+                twocaptcha_api_key=twocaptcha_key,
+                prefer_paid=prefer_paid,
+                paid_timeout=paid_timeout,
+            )
         return self._captcha_solver
 
     async def _get_browser_session(self, force_new: bool = False) -> BrowserSession:

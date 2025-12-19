@@ -743,15 +743,35 @@ public class UnifiedSearchService {
         List<String> urls = new ArrayList<>();
         String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
 
-        // 네이버 뉴스
-        urls.add("https://search.naver.com/search.naver?where=news&query=" + encodedQuery);
+        // 1. 먼저 DB에서 활성화된 웹 검색 소스를 조회
+        List<DataSource> webSearchSources = dataSourceRepository.findActiveWebSearchSources();
+        
+        if (!webSearchSources.isEmpty()) {
+            log.info("Found {} active web search sources from database", webSearchSources.size());
+            for (DataSource source : webSearchSources) {
+                String searchUrl = source.buildSearchUrl(encodedQuery);
+                if (searchUrl != null) {
+                    urls.add(searchUrl);
+                    log.debug("Added search URL from source '{}': {}", source.getName(), searchUrl);
+                }
+            }
+        }
+        
+        // 2. DB에 등록된 소스가 없으면 기본 포털 사용 (폴백)
+        if (urls.isEmpty()) {
+            log.info("No web search sources in database, using default portals");
+            
+            // 네이버 뉴스
+            urls.add("https://search.naver.com/search.naver?where=news&query=" + encodedQuery);
 
-        // 다음 뉴스
-        urls.add("https://search.daum.net/search?w=news&q=" + encodedQuery);
+            // 다음 뉴스
+            urls.add("https://search.daum.net/search?w=news&q=" + encodedQuery);
 
-        // 구글 뉴스 (한국)
-        urls.add("https://news.google.com/search?q=" + encodedQuery + "&hl=ko&gl=KR");
+            // 구글 뉴스 (한국)
+            urls.add("https://news.google.com/search?q=" + encodedQuery + "&hl=ko&gl=KR");
+        }
 
+        log.info("Generated {} search URLs for query: '{}'", urls.size(), query);
         return urls;
     }
 

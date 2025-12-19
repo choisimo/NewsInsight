@@ -118,6 +118,13 @@ export interface User {
   is_active: boolean;
   created_at: string;
   last_login?: string;
+  password_change_required?: boolean;
+}
+
+export interface SetupStatus {
+  setup_required: boolean;
+  has_users: boolean;
+  is_default_admin: boolean;
 }
 
 export interface Token {

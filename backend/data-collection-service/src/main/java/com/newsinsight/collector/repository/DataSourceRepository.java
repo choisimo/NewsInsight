@@ -19,6 +19,16 @@ public interface DataSourceRepository extends JpaRepository<DataSource, Long> {
 
     List<DataSource> findByIsActiveTrueAndSourceType(SourceType sourceType);
 
+    /**
+     * Find active web search sources ordered by priority.
+     * Lower priority number = higher priority.
+     */
+    @Query("SELECT ds FROM DataSource ds WHERE ds.isActive = true " +
+           "AND ds.sourceType = 'WEB_SEARCH' " +
+           "AND ds.searchUrlTemplate IS NOT NULL " +
+           "ORDER BY ds.searchPriority ASC")
+    List<DataSource> findActiveWebSearchSources();
+
     Optional<DataSource> findByName(String name);
 
     Optional<DataSource> findByUrl(String url);

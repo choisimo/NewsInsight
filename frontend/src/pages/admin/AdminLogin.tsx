@@ -11,7 +11,7 @@ import { Loader2, Shield, AlertCircle } from 'lucide-react';
 export default function AdminLogin() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { login, isAuthenticated, isLoading: authLoading, passwordChangeRequired } = useAuth();
   
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -23,9 +23,14 @@ export default function AdminLogin() {
 
   useEffect(() => {
     if (isAuthenticated && !authLoading) {
-      navigate(from, { replace: true });
+      // If password change is required, redirect to setup page
+      if (passwordChangeRequired) {
+        navigate('/admin/setup', { replace: true });
+      } else {
+        navigate(from, { replace: true });
+      }
     }
-  }, [isAuthenticated, authLoading, navigate, from]);
+  }, [isAuthenticated, authLoading, passwordChangeRequired, navigate, from]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,7 +39,7 @@ export default function AdminLogin() {
 
     try {
       await login(username, password);
-      navigate(from, { replace: true });
+      // Navigation will be handled by the useEffect above
     } catch (err) {
       console.error('Login failed:', err);
       if (err instanceof Error) {
