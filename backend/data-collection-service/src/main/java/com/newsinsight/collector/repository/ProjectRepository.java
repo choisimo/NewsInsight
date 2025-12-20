@@ -42,12 +42,7 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
     /**
      * Find active projects with auto-collect enabled
      */
-    @Query("""
-            SELECT p FROM Project p 
-            WHERE p.status = 'ACTIVE' 
-            AND p.settings IS NOT NULL
-            AND JSON_EXTRACT_PATH_TEXT(CAST(p.settings AS text), 'autoCollect') = 'true'
-            """)
+    @Query(value = "SELECT * FROM projects p WHERE p.status = 'ACTIVE' AND p.settings IS NOT NULL AND p.settings->>'autoCollect' = 'true'", nativeQuery = true)
     List<Project> findAutoCollectEnabledProjects();
 
     /**
@@ -135,11 +130,6 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
     /**
      * Find inactive projects (for cleanup suggestions)
      */
-    @Query("""
-            SELECT p FROM Project p 
-            WHERE p.status = 'ACTIVE' 
-            AND p.lastActivityAt < :inactiveSince
-            ORDER BY p.lastActivityAt ASC
-            """)
+    @Query("SELECT p FROM Project p WHERE p.status = com.newsinsight.collector.entity.project.Project$ProjectStatus.ACTIVE AND p.lastActivityAt < :inactiveSince ORDER BY p.lastActivityAt ASC")
     List<Project> findInactiveProjects(@Param("inactiveSince") LocalDateTime inactiveSince, Pageable pageable);
 }

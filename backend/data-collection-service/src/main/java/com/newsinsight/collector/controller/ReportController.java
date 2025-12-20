@@ -163,7 +163,7 @@ public class ReportController {
         
         log.info("DeepSearch report export requested: jobId={}", jobId);
         
-        // TODO: DeepSearch 전용 보고서 생성 로직 구현
+        // TODO: DeepSearch 전용 보고서 생성 로직 구현 필요
         // 현재는 통합 검색 보고서로 대체
         
         try {

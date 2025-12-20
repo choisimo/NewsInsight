@@ -46,7 +46,7 @@ import {
   Link as LinkIcon,
   FileText,
   Eye,
-  ChevronUpDown,
+  ChevronsUpDown,
   Check,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1496,7 +1496,7 @@ export default function SmartSearch() {
                     프로젝트 선택
                   </span>
                 )}
-                <ChevronUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-[250px] p-0" align="end">

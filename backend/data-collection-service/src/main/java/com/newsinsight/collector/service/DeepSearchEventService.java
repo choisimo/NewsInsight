@@ -25,6 +25,7 @@ public class DeepSearchEventService {
     private final Map<String, Sinks.Many<ServerSentEvent<Object>>> jobSinks = new ConcurrentHashMap<>();
     
     // Timeout for inactive sinks (30 minutes)
+    // @CHECK 싱크 타임아웃 설정이 필요할 것 같음
     private static final Duration SINK_TIMEOUT = Duration.ofMinutes(30);
 
     /**

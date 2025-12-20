@@ -33,6 +33,38 @@ services:
       "
     restart: "no"
 
+  # Admin Dashboard API - 관리자 인증/환경 관리
+  admin-dashboard:
+    build:
+      context: ../../backend/admin-dashboard
+      dockerfile: Dockerfile
+    image: newsinsight/admin-dashboard:local
+    restart: unless-stopped
+    environment:
+      - PORT=8888
+      - PROJECT_ROOT=/workspace
+      - ADMIN_CONFIG_DIR=/app/config
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:8810,http://frontend:8080
+    volumes:
+      # Docker socket for environment management (docker-compose operations)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Project root for accessing docker-compose files
+      - ../../:/workspace:ro
+      # Persist admin config (users, etc.)
+      - admin-config:/app/config
+    expose:
+      - "8888"
+    ports:
+      - "8888:8888"  # Direct access for debugging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - default
+
   api-gateway:
     build:
       context: ../../
@@ -55,6 +87,12 @@ services:
         condition: service_started
       bot-detector:
         condition: service_started
+      admin-dashboard:
+        condition: service_started
+      ml-trainer:
+        condition: service_started
+      autonomous-crawler:
+        condition: service_started
     environment:
       # Consul access for config loading in the app
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -65,6 +103,8 @@ services:
       - REDIS_PORT=${REDIS_PORT:-6379}
       # Service port
       - PORT=${API_GATEWAY_PORT:-8000}
+      # Admin Dashboard URL (for routing)
+      - ADMIN_DASHBOARD_URL=http://admin-dashboard:8888
       # Browser-Use API URLs (for routing)
       - BROWSER_USE_URL=http://browser-use-api:8500
       - BROWSER_USE_WS_URL=ws://browser-use-api:8500
@@ -73,6 +113,7 @@ services:
       - ML_ADDON_FACTCHECK_URL=http://factcheck-addon:8101
       - ML_ADDON_BIAS_URL=http://bias-addon:8102
       - ML_ADDON_BOT_DETECTOR_URL=http://bot-detector:8041
+      - ML_TRAINER_URL=http://ml-trainer:8090
     ports:
       - "8112:8000"  # keep gateway reachable from host
     networks:
@@ -142,8 +183,10 @@ services:
         condition: service_started
       redpanda-dev:
         condition: service_started
+      # Use service_started to avoid blocking on autonomous-crawler healthcheck
+      # collector-service will retry connections internally
       autonomous-crawler:
-        condition: service_healthy
+        condition: service_started
     environment:
       # Consul configuration
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -307,15 +350,26 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
-      # MCP servers for analysis
+      # MCP servers - use service_started to avoid long dependency chains
+      # MCP healthchecks will retry internally if services aren't ready
       newsinsight-mcp:
-        condition: service_healthy
+        condition: service_started
       bias-mcp:
-        condition: service_healthy
+        condition: service_started
       factcheck-mcp:
-        condition: service_healthy
+        condition: service_started
       topic-mcp:
-        condition: service_healthy
+        condition: service_started
+      aiagent-mcp:
+        condition: service_started
+      huggingface-mcp:
+        condition: service_started
+      kaggle-mcp:
+        condition: service_started
+      mltraining-mcp:
+        condition: service_started
+      roboflow-mcp:
+        condition: service_started
     environment:
       # Consul configuration
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -385,6 +439,10 @@ services:
       - TOPIC_MCP_URL=http://topic-mcp:5003
       - NEWSINSIGHT_MCP_URL=http://newsinsight-mcp:5000
       - HUGGINGFACE_MCP_URL=http://huggingface-mcp:5011
+      - KAGGLE_MCP_URL=http://kaggle-mcp:5012
+      - MLTRAINING_MCP_URL=http://mltraining-mcp:5013
+      - ROBOFLOW_MCP_URL=http://roboflow-mcp:5014
+      - AIAGENT_MCP_URL=http://aiagent-mcp:5004
     expose:
       - "9090"
     ports:
@@ -392,7 +450,8 @@ services:
       - "8030:8030"  # REST API
     shm_size: 2g  # Shared memory for browser
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/metrics"]
+      # Use python socket check instead of curl (curl not installed in container)
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 9090)); s.close()"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -543,7 +602,8 @@ services:
       ip-rotation:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      # Use wget instead of curl (wget available in slim images via playwright deps)
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8040/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -576,7 +636,8 @@ services:
       ip-rotation:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8020/health"]
+      # Use python urllib instead of curl (curl may not be available)
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8020/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -755,6 +816,136 @@ services:
     networks:
       - default
 
+  kaggle-mcp:
+    build:
+      context: ../../mcp/kaggle_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/kaggle-mcp:local
+    restart: unless-stopped
+    environment:
+      - KAGGLE_USERNAME=${KAGGLE_USERNAME:-}
+      - KAGGLE_KEY=${KAGGLE_KEY:-}
+      - PORT=5012
+      - DATA_DIR=/app/data
+    expose:
+      - "5012"
+    ports:
+      - "5012:5012"
+    volumes:
+      - kaggle-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5012/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  mltraining-mcp:
+    build:
+      context: ../../mcp/mltraining_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/mltraining-mcp:local
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - PORT=5013
+      - DATA_DIR=/app/data
+    expose:
+      - "5013"
+    ports:
+      - "5013:5013"
+    volumes:
+      - mltraining-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5013/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  roboflow-mcp:
+    build:
+      context: ../../mcp/roboflow_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/roboflow-mcp:local
+    restart: unless-stopped
+    environment:
+      - ROBOFLOW_API_KEY=${ROBOFLOW_API_KEY:-}
+      - PORT=5014
+      - DATA_DIR=/app/data
+    expose:
+      - "5014"
+    ports:
+      - "5014:5014"
+    volumes:
+      - roboflow-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5014/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  # ============================================================================
+  # ML Trainer Service - Model Training and Management
+  # ============================================================================
+  ml-trainer:
+    build:
+      context: ../../backend/ml-addons/ml-trainer
+      dockerfile: Dockerfile
+    image: newsinsight/ml-trainer:local
+    restart: unless-stopped
+    environment:
+      - PORT=8090
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - REDIS_URL=redis://redis:6379/5
+      - HF_TOKEN=${HF_TOKEN:-}
+      - KAGGLE_USERNAME=${KAGGLE_USERNAME:-}
+      - KAGGLE_KEY=${KAGGLE_KEY:-}
+      - ROBOFLOW_API_KEY=${ROBOFLOW_API_KEY:-}
+      - MODEL_STORAGE_PATH=/app/models
+      - TRAINING_DATA_PATH=/app/data
+    expose:
+      - "8090"
+    ports:
+      - "8090:8090"
+    volumes:
+      - ml-trainer-models:/app/models
+      - ml-trainer-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kaggle-mcp:
+        condition: service_started
+      mltraining-mcp:
+        condition: service_started
+      roboflow-mcp:
+        condition: service_started
+      huggingface-mcp:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - default
+
 volumes:
   postgres-data:
   redis-data:
@@ -763,6 +954,12 @@ volumes:
   ip-rotation-data:
   maigret-reports:
   huggingface-data:
+  admin-config:
+  kaggle-data:
+  mltraining-data:
+  roboflow-data:
+  ml-trainer-models:
+  ml-trainer-data:
 
 networks:
   default:

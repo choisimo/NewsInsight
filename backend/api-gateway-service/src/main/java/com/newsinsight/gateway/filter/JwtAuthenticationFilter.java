@@ -51,6 +51,8 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         "/api/v1/events",        // SSE 이벤트 스트림 (EventSource는 헤더 전송 불가)
         "/api/v1/search-history",
         "/api/v1/search-templates",
+        "/api/v1/jobs",          // Search Jobs API (SSE 스트림 포함)
+        "/api/v1/ai",
         "/api/v1/ml",
         "/api/v1/admin",         // Admin Dashboard (자체 인증 처리)
         "/api/v1/crawler",       // Autonomous Crawler API

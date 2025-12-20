@@ -33,14 +33,14 @@ public interface ProjectNotificationRepository extends JpaRepository<ProjectNoti
      */
     @Modifying
     @Query("UPDATE ProjectNotification n SET n.isRead = true WHERE n.id = :id")
-    void markAsRead(@Param("id") Long id, @Param("readAt") LocalDateTime readAt);
+    void markAsRead(@Param("id") Long id);
 
     /**
      * Mark all notifications as read for a user
      */
     @Modifying
     @Query("UPDATE ProjectNotification n SET n.isRead = true WHERE n.userId = :userId AND n.isRead = false")
-    void markAllAsRead(@Param("userId") String userId, @Param("readAt") LocalDateTime readAt);
+    void markAllAsRead(@Param("userId") String userId);
 
     /**
      * Find by project ID

@@ -51,11 +51,11 @@ public class FrontendConfigController {
             settings.entrySet().stream()
                 .map(entry -> {
                     String key = "config/autonomous-crawler/" + entry.getKey();
-                    String value = entry.getValue();
+                    Object value = entry.getValue();
                     // Consul expects base64 encoded value for PUT
                     return webClient.put()
                         .uri(consulUrl + "/v1/kv/" + key)
-                        .bodyValue(value)
+                        .bodyValue(value.toString().isEmpty() ? "" : value)
                         .retrieve()
                         .bodyToMono(Boolean.class)
                         .onErrorReturn(false);

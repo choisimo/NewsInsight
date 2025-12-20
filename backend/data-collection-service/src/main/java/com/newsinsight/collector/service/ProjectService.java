@@ -608,7 +608,7 @@ public class ProjectService {
      */
     @Transactional
     public void markNotificationAsRead(Long notificationId) {
-        notificationRepository.markAsRead(notificationId, LocalDateTime.now());
+        notificationRepository.markAsRead(notificationId);
     }
 
     /**
@@ -616,7 +616,7 @@ public class ProjectService {
      */
     @Transactional
     public void markAllNotificationsAsRead(String userId) {
-        notificationRepository.markAllAsRead(userId, LocalDateTime.now());
+        notificationRepository.markAllAsRead(userId);
     }
 
     // ============================================

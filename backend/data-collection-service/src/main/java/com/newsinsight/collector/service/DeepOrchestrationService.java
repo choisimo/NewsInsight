@@ -404,7 +404,7 @@ public class DeepOrchestrationService {
         
         long total = subTasks.size();
         long completed = subTasks.stream().filter(t -> t.getStatus() == AiTaskStatus.COMPLETED).count();
-        long failed = subTasks.stream().filter(t -> t.getStatus() == AiTaskStatus.FAILED).count();
+        // long failed = subTasks.stream().filter(t -> t.getStatus() == AiTaskStatus.FAILED).count();
         long timeout = subTasks.stream().filter(t -> t.getStatus() == AiTaskStatus.TIMEOUT).count();
         long pending = subTasks.stream().filter(t -> 
                 t.getStatus() == AiTaskStatus.PENDING || t.getStatus() == AiTaskStatus.IN_PROGRESS).count();

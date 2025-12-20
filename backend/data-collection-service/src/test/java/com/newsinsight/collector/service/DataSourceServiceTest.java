@@ -1,7 +1,9 @@
 package com.newsinsight.collector.service;
 
+import com.newsinsight.collector.dto.DataSourceDTO;
 import com.newsinsight.collector.entity.DataSource;
 import com.newsinsight.collector.entity.SourceType;
+import com.newsinsight.collector.mapper.EntityMapper;
 import com.newsinsight.collector.repository.DataSourceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -27,6 +29,9 @@ class DataSourceServiceTest {
     @Mock
     private DataSourceRepository dataSourceRepository;
 
+    @Mock
+    private EntityMapper entityMapper;
+
     @InjectMocks
     private DataSourceService dataSourceService;
 
@@ -37,24 +42,39 @@ class DataSourceServiceTest {
         testSource = new DataSource();
         testSource.setId(1L);
         testSource.setName("테스트 소스");
-        testSource.setType(SourceType.NEWS);
-        testSource.setBaseUrl("https://example.com");
-        testSource.setActive(true);
+        testSource.setSourceType(SourceType.RSS);
+        testSource.setUrl("https://example.com");
+        testSource.setIsActive(true);
     }
 
     @Test
     @DisplayName("활성화된 소스 목록 조회")
     void findActiveSources() {
         // given
-        when(dataSourceRepository.findByActiveTrue()).thenReturn(List.of(testSource));
+        DataSourceDTO dto = new DataSourceDTO(
+            1L,
+            "테스트 소스",
+            "https://example.com",
+            SourceType.RSS,
+            true,
+            null,
+            3600,
+            null,
+            null,
+            null,
+            null
+        );
+        
+        when(dataSourceRepository.findByIsActiveTrue()).thenReturn(List.of(testSource));
+        when(entityMapper.toDTO(testSource)).thenReturn(dto);
 
         // when
-        List<DataSource> result = dataSourceService.getActiveSources();
+        List<DataSourceDTO> result = dataSourceService.getActiveSources();
 
         // then
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getName()).isEqualTo("테스트 소스");
-        verify(dataSourceRepository, times(1)).findByActiveTrue();
+        assertThat(result.get(0).name()).isEqualTo("테스트 소스");
+        verify(dataSourceRepository, times(1)).findByIsActiveTrue();
     }
 
     @Test

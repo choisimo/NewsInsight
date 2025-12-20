@@ -241,7 +241,7 @@ CREATE INDEX IF NOT EXISTS idx_addon_invoke_type ON ml_addon (invoke_type);
 -- Ensure addon category values
 ALTER TABLE ml_addon
     ADD CONSTRAINT ml_addon_category_check
-    CHECK (category IN ('SENTIMENT', 'FACTCHECK', 'BIAS', 'SUMMARIZATION', 'NER', 'TOPIC', 'TOXICITY', 'DISCUSSION', 'BOT_DETECTION', 'CUSTOM'));
+    CHECK (category IN ('SENTIMENT', 'FACTCHECK', 'BIAS', 'SUMMARIZATION', 'NER', 'TOPIC', 'TOXICITY', 'DISCUSSION', 'BOT_DETECTION', 'SOURCE_QUALITY', 'TOPIC_CLASSIFICATION', 'CUSTOM'));
 
 -- Ensure addon invoke type values
 ALTER TABLE ml_addon

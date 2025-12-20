@@ -49,9 +49,9 @@ class DataSourceRepositoryIT {
         // given
         DataSource source = new DataSource();
         source.setName("테스트 뉴스 소스");
-        source.setType(SourceType.NEWS);
-        source.setBaseUrl("https://news.example.com");
-        source.setActive(true);
+        source.setSourceType(SourceType.RSS);
+        source.setUrl("https://news.example.com");
+        source.setIsActive(true);
 
         // when
         DataSource saved = dataSourceRepository.save(source);
@@ -67,21 +67,21 @@ class DataSourceRepositoryIT {
         // given
         DataSource activeSource = new DataSource();
         activeSource.setName("활성 소스");
-        activeSource.setType(SourceType.NEWS);
-        activeSource.setBaseUrl("https://active.example.com");
-        activeSource.setActive(true);
+        activeSource.setSourceType(SourceType.RSS);
+        activeSource.setUrl("https://active.example.com");
+        activeSource.setIsActive(true);
 
         DataSource inactiveSource = new DataSource();
         inactiveSource.setName("비활성 소스");
-        inactiveSource.setType(SourceType.NEWS);
-        inactiveSource.setBaseUrl("https://inactive.example.com");
-        inactiveSource.setActive(false);
+        inactiveSource.setSourceType(SourceType.RSS);
+        inactiveSource.setUrl("https://inactive.example.com");
+        inactiveSource.setIsActive(false);
 
         dataSourceRepository.save(activeSource);
         dataSourceRepository.save(inactiveSource);
 
         // when
-        List<DataSource> activeSources = dataSourceRepository.findByActiveTrue();
+        List<DataSource> activeSources = dataSourceRepository.findByIsActiveTrue();
 
         // then
         assertThat(activeSources).hasSize(1);
@@ -94,24 +94,24 @@ class DataSourceRepositoryIT {
         // given
         DataSource newsSource = new DataSource();
         newsSource.setName("뉴스 소스");
-        newsSource.setType(SourceType.NEWS);
-        newsSource.setBaseUrl("https://news.example.com");
-        newsSource.setActive(true);
+        newsSource.setSourceType(SourceType.RSS);
+        newsSource.setUrl("https://news.example.com");
+        newsSource.setIsActive(true);
 
         DataSource socialSource = new DataSource();
         socialSource.setName("소셜 소스");
-        socialSource.setType(SourceType.SOCIAL);
-        socialSource.setBaseUrl("https://social.example.com");
-        socialSource.setActive(true);
+        socialSource.setSourceType(SourceType.WEB);
+        socialSource.setUrl("https://social.example.com");
+        socialSource.setIsActive(true);
 
         dataSourceRepository.save(newsSource);
         dataSourceRepository.save(socialSource);
 
         // when
-        List<DataSource> newsSources = dataSourceRepository.findByType(SourceType.NEWS);
+        List<DataSource> newsSources = dataSourceRepository.findBySourceType(SourceType.RSS);
 
         // then
         assertThat(newsSources).hasSize(1);
-        assertThat(newsSources.get(0).getType()).isEqualTo(SourceType.NEWS);
+        assertThat(newsSources.get(0).getSourceType()).isEqualTo(SourceType.RSS);
     }
 }

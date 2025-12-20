@@ -110,6 +110,16 @@ spring:
           predicates:
             - Path=/api/v1/search-templates/**
 
+        # Search Jobs API - 검색 작업 관리 (SearchJobController)
+        # SSE 스트리밍 지원: /api/v1/jobs/stream, /api/v1/jobs/{jobId}/stream
+        - id: search-jobs
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/jobs,/api/v1/jobs/**
+          metadata:
+            # SSE 스트림 연결을 위한 긴 타임아웃 (5분)
+            response-timeout: 300000
+
         # AutoCrawl API - 자동 크롤링 관리 (AutoCrawlController)
         - id: autocrawl
           uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
@@ -206,7 +216,7 @@ spring:
 
         # Fact Check Chat - 팩트체크 챗봇
         - id: factcheck-chat
-          uri: ${COLLECTOR_SERVICE_URL:http://data-collection-service:8080}
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/factcheck-chat/**
           filters:

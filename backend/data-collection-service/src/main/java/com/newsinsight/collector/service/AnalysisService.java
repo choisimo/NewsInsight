@@ -164,6 +164,8 @@ public class AnalysisService {
                 if (STOP_WORDS.contains(token)) continue;
                 if (query != null && token.equalsIgnoreCase(query)) continue;
 
+                // @CHECK 
+                // token이 null이 될 수 있음 
                 freq.merge(token, 1, Integer::sum);
             }
         }

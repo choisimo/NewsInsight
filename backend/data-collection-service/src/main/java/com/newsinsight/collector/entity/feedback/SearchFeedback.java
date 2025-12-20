@@ -182,6 +182,8 @@ public class SearchFeedback {
         if (accuracyRating != null) { sum += accuracyRating; count++; }
         if (relevanceRating != null) { sum += relevanceRating; count++; }
         
-        return count > 0 ? (double) sum / count : (rating != null ? rating.doubleValue() : null);
+        // @CHECK 
+        // 평균 평가점수 계산 - 평가점수가 하나라도 있는 경우 평균 평가점수를 반환, 그렇지 않으면 0을 반환
+        return count > 0 ? (double) sum / count : (rating != null ? rating.doubleValue() : (double) 0);
     }
 }
