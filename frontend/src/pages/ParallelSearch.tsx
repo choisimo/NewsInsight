@@ -26,6 +26,7 @@ import {
   FileText,
 } from "lucide-react";
 import { ExportButton } from "@/components/ExportButton";
+import { ReportExportButton } from "@/components/ReportExportButton";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1505,32 +1506,43 @@ const ParallelSearch = () => {
                       '{query}'에 대한 검색 결과입니다.
                     </CardDescription>
                   </div>
-                  <ExportButton
-                    data={results.map(r => ({
-                      id: r.id,
-                      title: r.title,
-                      snippet: r.snippet,
-                      content: r.content,
-                      url: r.url,
-                      source: r.source,
-                      publishedAt: r.publishedAt,
-                      reliabilityScore: r.reliabilityScore,
-                      sentimentLabel: r.sentimentLabel,
-                    }))}
-                    options={{
-                      filename: `newsinsight-search-${query.replace(/\s+/g, '-')}`,
-                      title: `"${query}" 검색 결과`,
-                      metadata: {
-                        검색어: query,
-                        총결과: results.length,
-                        DB결과: sourceStatus.database.count,
-                        웹결과: sourceStatus.web.count,
-                        AI분석: aiContent ? '포함됨' : '없음',
-                        ...(aiContent && { AI분석내용: aiContent }),
-                      },
-                    }}
-                    disabled={results.length === 0}
-                  />
+                  <div className="flex items-center gap-2">
+                    <ReportExportButton
+                      jobId={currentJobId || ''}
+                      query={query}
+                      timeWindow="7d"
+                      reportType="UNIFIED_SEARCH"
+                      variant="outline"
+                      size="default"
+                      disabled={!currentJobId || results.length === 0}
+                    />
+                    <ExportButton
+                      data={results.map(r => ({
+                        id: r.id,
+                        title: r.title,
+                        snippet: r.snippet,
+                        content: r.content,
+                        url: r.url,
+                        source: r.source,
+                        publishedAt: r.publishedAt,
+                        reliabilityScore: r.reliabilityScore,
+                        sentimentLabel: r.sentimentLabel,
+                      }))}
+                      options={{
+                        filename: `newsinsight-search-${query.replace(/\s+/g, '-')}`,
+                        title: `"${query}" 검색 결과`,
+                        metadata: {
+                          검색어: query,
+                          총결과: results.length,
+                          DB결과: sourceStatus.database.count,
+                          웹결과: sourceStatus.web.count,
+                          AI분석: aiContent ? '포함됨' : '없음',
+                          ...(aiContent && { AI분석내용: aiContent }),
+                        },
+                      }}
+                      disabled={results.length === 0}
+                    />
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>

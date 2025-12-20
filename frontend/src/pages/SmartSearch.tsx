@@ -10,8 +10,8 @@
  * 각 탭에서 결과를 카드로 표시하고, 선택한 결과들을 "검색 템플릿"으로 저장 가능
  */
 
-import { useState, useCallback, useRef, useEffect } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useLocation, useSearchParams, useNavigate } from "react-router-dom";
 import {
   Search,
   Brain,
@@ -27,6 +27,7 @@ import {
   Clock,
   X,
   FolderOpen,
+  FolderPlus,
   Zap,
   Database,
   Globe,
@@ -45,6 +46,8 @@ import {
   Link as LinkIcon,
   FileText,
   Eye,
+  ChevronUpDown,
+  Check,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -77,7 +80,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+import { useProjects, type Project, type ProjectItemType, ITEM_TYPE_LABELS } from "@/hooks/useProjects";
 import { useToast } from "@/hooks/use-toast";
 import {
   startUnifiedSearchJob,
@@ -227,9 +244,11 @@ interface UnifiedResultCardProps {
   isSelected: boolean;
   onSelect: () => void;
   onViewDetail: () => void;
+  onAddToProject?: () => void;
+  hasProject?: boolean;
 }
 
-const UnifiedResultCard = ({ result, isSelected, onSelect, onViewDetail }: UnifiedResultCardProps) => {
+const UnifiedResultCard = ({ result, isSelected, onSelect, onViewDetail, onAddToProject, hasProject }: UnifiedResultCardProps) => {
   const sourceConfig = SOURCE_CONFIG[result.source] || SOURCE_CONFIG.web;
   const SourceIcon = sourceConfig.icon;
 
@@ -291,6 +310,21 @@ const UnifiedResultCard = ({ result, isSelected, onSelect, onViewDetail }: Unifi
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
+            {hasProject && onAddToProject && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={onAddToProject}
+                      className="p-2 rounded-md hover:bg-muted text-muted-foreground hover:text-green-600 transition-colors"
+                    >
+                      <FolderPlus className="h-4 w-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>프로젝트에 추가</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
             {result.url && (
               <a
                 href={result.url}
@@ -313,9 +347,11 @@ interface EvidenceCardProps {
   isSelected: boolean;
   onSelect: () => void;
   onViewDetail: () => void;
+  onAddToProject?: () => void;
+  hasProject?: boolean;
 }
 
-const EvidenceCard = ({ evidence, isSelected, onSelect, onViewDetail }: EvidenceCardProps) => {
+const EvidenceCard = ({ evidence, isSelected, onSelect, onViewDetail, onAddToProject, hasProject }: EvidenceCardProps) => {
   const stanceConfig = STANCE_CONFIG[evidence.stance] || STANCE_CONFIG.neutral;
   const StanceIcon = stanceConfig.icon;
 
@@ -371,6 +407,21 @@ const EvidenceCard = ({ evidence, isSelected, onSelect, onViewDetail }: Evidence
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
+            {hasProject && onAddToProject && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={onAddToProject}
+                      className="p-2 rounded-md hover:bg-muted text-muted-foreground hover:text-green-600 transition-colors"
+                    >
+                      <FolderPlus className="h-4 w-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>프로젝트에 추가</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
             {evidence.url && (
               <a
                 href={evidence.url}
@@ -393,9 +444,11 @@ interface VerificationCardProps {
   isSelected: boolean;
   onSelect: () => void;
   onViewDetail: () => void;
+  onAddToProject?: () => void;
+  hasProject?: boolean;
 }
 
-const VerificationCard = ({ result, isSelected, onSelect, onViewDetail }: VerificationCardProps) => {
+const VerificationCard = ({ result, isSelected, onSelect, onViewDetail, onAddToProject, hasProject }: VerificationCardProps) => {
   const config = VERIFICATION_CONFIG[result.status] || VERIFICATION_CONFIG.UNVERIFIED;
   const StatusIcon = config.icon;
   const [expanded, setExpanded] = useState(false);
@@ -451,6 +504,21 @@ const VerificationCard = ({ result, isSelected, onSelect, onViewDetail }: Verifi
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
+              {hasProject && onAddToProject && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={onAddToProject}
+                        className="p-2 rounded-md hover:bg-muted text-muted-foreground hover:text-green-600 transition-colors"
+                      >
+                        <FolderPlus className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>프로젝트에 추가</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
               {(result.supportingEvidence.length > 0 || result.contradictingEvidence.length > 0) && (
                 <CollapsibleTrigger asChild>
                   <button className="p-2 rounded-md hover:bg-muted transition-colors">
@@ -593,6 +661,7 @@ const SelectionPanel = ({ selectedItems, onRemove, onClear, onSaveTemplate }: Se
 export default function SmartSearch() {
   const { toast } = useToast();
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Get initial mode from URL params (for backward compatibility redirects)
@@ -603,6 +672,37 @@ export default function SmartSearch() {
     }
     return "unified";
   };
+
+  // Project state
+  const [projectSelectorOpen, setProjectSelectorOpen] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const { 
+    projects, 
+    loading: projectsLoading, 
+    loadProjects,
+    addItem: addProjectItem,
+    selectProject,
+    currentProject,
+  } = useProjects({ userId: DEFAULT_USER_ID, autoLoad: true });
+
+  // Get selected project object
+  const selectedProject = useMemo(() => {
+    if (!selectedProjectId) return null;
+    return projects.find(p => p.id === selectedProjectId) || currentProject;
+  }, [selectedProjectId, projects, currentProject]);
+
+  // Read projectId from URL params on mount
+  useEffect(() => {
+    const projectIdParam = searchParams.get("projectId");
+    if (projectIdParam) {
+      const projectId = parseInt(projectIdParam, 10);
+      if (!isNaN(projectId)) {
+        setSelectedProjectId(projectId);
+        // Load the project details
+        selectProject(projectId).catch(console.error);
+      }
+    }
+  }, [searchParams, selectProject]);
 
   // State
   const [activeTab, setActiveTab] = useState<SearchMode>(getInitialMode);
@@ -909,6 +1009,116 @@ export default function SmartSearch() {
       console.error("Failed to toggle favorite:", e);
     }
   }, []);
+
+  // ============================================
+  // Project Functions
+  // ============================================
+
+  // Add item to selected project
+  const handleAddToProject = useCallback(async (
+    itemType: ProjectItemType,
+    title: string,
+    content?: string,
+    sourceUrl?: string,
+    metadata?: Record<string, unknown>
+  ) => {
+    if (!selectedProjectId) {
+      toast({
+        title: "프로젝트를 선택해주세요",
+        description: "항목을 추가할 프로젝트를 먼저 선택해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await addProjectItem(selectedProjectId, {
+        itemType,
+        title,
+        content,
+        sourceUrl,
+        metadata,
+        isRead: false,
+        isBookmarked: false,
+      });
+      toast({
+        title: "프로젝트에 추가됨",
+        description: `"${title.slice(0, 30)}${title.length > 30 ? '...' : ''}"이(가) 프로젝트에 추가되었습니다.`,
+      });
+    } catch (e) {
+      console.error("Failed to add item to project:", e);
+      toast({
+        title: "추가 실패",
+        description: e instanceof Error ? e.message : "프로젝트에 항목을 추가하는데 실패했습니다.",
+        variant: "destructive",
+      });
+    }
+  }, [selectedProjectId, addProjectItem, toast]);
+
+  // Add unified result to project
+  const handleAddUnifiedToProject = useCallback((result: UnifiedSearchResult) => {
+    const itemType: ProjectItemType = result.source === 'database' ? 'ARTICLE' : 
+                                      result.source === 'ai' ? 'DOCUMENT' : 'SEARCH_RESULT';
+    handleAddToProject(
+      itemType,
+      result.title,
+      result.snippet || result.content,
+      result.url,
+      {
+        source: result.source,
+        sourceLabel: result.sourceLabel,
+        publishedAt: result.publishedAt,
+        searchQuery: query,
+      }
+    );
+  }, [handleAddToProject, query]);
+
+  // Add evidence to project
+  const handleAddEvidenceToProject = useCallback((evidence: Evidence) => {
+    handleAddToProject(
+      'EVIDENCE',
+      evidence.title || evidence.snippet.slice(0, 50),
+      evidence.snippet,
+      evidence.url,
+      {
+        stance: evidence.stance,
+        source: evidence.source,
+        searchQuery: query,
+      }
+    );
+  }, [handleAddToProject, query]);
+
+  // Add verification result to project
+  const handleAddVerificationToProject = useCallback((result: VerificationResult) => {
+    handleAddToProject(
+      'DOCUMENT',
+      `[팩트체크] ${result.originalClaim.slice(0, 40)}${result.originalClaim.length > 40 ? '...' : ''}`,
+      `## 원본 주장\n${result.originalClaim}\n\n## 검증 결과\n상태: ${result.status}\n신뢰도: ${Math.round(result.confidenceScore * 100)}%\n\n## 요약\n${result.verificationSummary}`,
+      undefined,
+      {
+        verificationStatus: result.status,
+        confidenceScore: result.confidenceScore,
+        supportingEvidenceCount: result.supportingEvidence.length,
+        contradictingEvidenceCount: result.contradictingEvidence.length,
+        searchQuery: query,
+      }
+    );
+  }, [handleAddToProject, query]);
+
+  // Handle project selection change
+  const handleProjectSelect = useCallback((projectId: number | null) => {
+    setSelectedProjectId(projectId);
+    setProjectSelectorOpen(false);
+    
+    // Update URL params
+    const newParams = new URLSearchParams(searchParams);
+    if (projectId) {
+      newParams.set("projectId", String(projectId));
+    } else {
+      newParams.delete("projectId");
+    }
+    setSearchParams(newParams, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // ============================================
   // Search Functions
@@ -1264,10 +1474,69 @@ export default function SmartSearch() {
             통합 검색, Deep Search, 팩트체크, URL 분석을 한 곳에서
           </p>
         </div>
-        <Sheet open={showTemplates} onOpenChange={setShowTemplates}>
-          <SheetTrigger asChild>
-            <Button variant="outline" size="sm">
-              <FolderOpen className="h-4 w-4 mr-1" />
+        <div className="flex items-center gap-2">
+          {/* Project Selector */}
+          <Popover open={projectSelectorOpen} onOpenChange={setProjectSelectorOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                role="combobox"
+                aria-expanded={projectSelectorOpen}
+                className="min-w-[180px] justify-between"
+              >
+                {selectedProject ? (
+                  <span className="flex items-center gap-2 truncate">
+                    <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
+                    <span className="truncate">{selectedProject.name}</span>
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2 text-muted-foreground">
+                    <FolderOpen className="h-4 w-4 shrink-0" />
+                    프로젝트 선택
+                  </span>
+                )}
+                <ChevronUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[250px] p-0" align="end">
+              <Command>
+                <CommandInput placeholder="프로젝트 검색..." />
+                <CommandList>
+                  <CommandEmpty>프로젝트를 찾을 수 없습니다.</CommandEmpty>
+                  <CommandGroup>
+                    <CommandItem
+                      value="none"
+                      onSelect={() => handleProjectSelect(null)}
+                    >
+                      <span className="text-muted-foreground">프로젝트 없음</span>
+                      {!selectedProjectId && (
+                        <Check className="ml-auto h-4 w-4" />
+                      )}
+                    </CommandItem>
+                    {projects.map((project) => (
+                      <CommandItem
+                        key={project.id}
+                        value={project.name}
+                        onSelect={() => handleProjectSelect(project.id)}
+                      >
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        <span className="truncate">{project.name}</span>
+                        {selectedProjectId === project.id && (
+                          <Check className="ml-auto h-4 w-4" />
+                        )}
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+
+          <Sheet open={showTemplates} onOpenChange={setShowTemplates}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="sm">
+                <FolderOpen className="h-4 w-4 mr-1" />
               템플릿 ({templates.length})
             </Button>
           </SheetTrigger>
@@ -1422,6 +1691,7 @@ export default function SmartSearch() {
             </ScrollArea>
           </SheetContent>
         </Sheet>
+        </div>
       </div>
 
       {/* Selection Panel */}
@@ -1537,6 +1807,8 @@ export default function SmartSearch() {
                     setDetailItem({ type: "unified", data: result });
                     setDetailDialogOpen(true);
                   }}
+                  hasProject={!!selectedProjectId}
+                  onAddToProject={() => handleAddUnifiedToProject(result)}
                 />
               ))}
               {!unifiedLoading && unifiedResults.length === 0 && !unifiedError && (
@@ -1626,6 +1898,8 @@ export default function SmartSearch() {
                     setDetailItem({ type: "evidence", data: evidence });
                     setDetailDialogOpen(true);
                   }}
+                  hasProject={!!selectedProjectId}
+                  onAddToProject={() => handleAddEvidenceToProject(evidence)}
                 />
               ))}
               {!deepLoading && (!deepResults || deepResults.evidence?.length === 0) && !deepError && (
@@ -1706,6 +1980,8 @@ export default function SmartSearch() {
                     setDetailItem({ type: "verification", data: result });
                     setDetailDialogOpen(true);
                   }}
+                  hasProject={!!selectedProjectId}
+                  onAddToProject={() => handleAddVerificationToProject(result)}
                 />
               ))}
               {!factCheckLoading && factCheckResults.length === 0 && !factCheckError && (

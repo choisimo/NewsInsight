@@ -1,1421 +1,840 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { MarkdownRenderer } from "@/components/MarkdownRenderer";
-import { useQuery } from "@tanstack/react-query";
+/**
+ * FactCheck - 팩트체크 전용 페이지
+ * 
+ * ML 기반 뉴스 기사 팩트체크 및 신뢰도 분석 페이지
+ * - 주장 추출 및 검증
+ * - 출처 신뢰도 분석
+ * - 클릭베이트/허위정보 탐지
+ * - 상세 분석 결과 시각화
+ */
+
+import { useState, useCallback, useEffect } from "react";
+import { useLocation, useSearchParams } from "react-router-dom";
 import {
+  Shield,
   Search,
   Loader2,
-  AlertCircle,
   CheckCircle2,
   XCircle,
-  HelpCircle,
   AlertTriangle,
+  HelpCircle,
   Scale,
-  Shield,
-  BookOpen,
-  Brain,
   ExternalLink,
-  ArrowLeft,
-  Plus,
-  X,
+  FileText,
+  Link as LinkIcon,
+  Brain,
+  Sparkles,
+  BarChart3,
+  Copy,
+  Download,
+  RefreshCw,
+  Info,
   ChevronDown,
   ChevronUp,
-  Save,
-  Download,
-  FileJson,
-  FileText,
-  History,
-  Trash2,
-  Microscope,
+  Clock,
+  Target,
+  Layers,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Label } from "@/components/ui/label";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { useFactCheckStorage, SavedFactCheckResult } from "@/hooks/useFactCheckStorage";
-import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
-import { useSearchRecordFromState, type PriorityUrl as SearchRecordPriorityUrl } from "@/hooks/useSearchRecord";
-import { UrlClaimExtractor } from "@/components/UrlClaimExtractor";
-import { PriorityUrlEditor, type PriorityUrl } from "@/components/PriorityUrlEditor";
-import { FactCheckAnalyticsPanel } from "@/components/FactCheckAnalyticsPanel";
-import { useFactCheckAnalytics } from "@/hooks/useFactCheckAnalytics";
-import {
-  openDeepAnalysisStream,
-  checkUnifiedSearchHealth,
-} from "@/lib/api";
+import { FactCheckAnalyticsPanel, type FactCheckAnalytics } from "@/components/FactCheckAnalyticsPanel";
+import { useFactCheckAnalytics, generateMockAnalytics } from "@/hooks/useFactCheckAnalytics";
+import { useFactCheckChat } from "@/hooks/useFactCheckChat";
+import { useFactCheckStorage } from "@/hooks/useFactCheckStorage";
+import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+import { extractClaimsFromUrl, API_BASE_URL } from "@/lib/api";
 
-const FACTCHECK_PRIORITY_URLS_KEY = "factCheck_priorityUrls";
-
-// Verification status configuration
-const STATUS_CONFIG = {
-  VERIFIED: {
-    label: "검증됨",
-    icon: CheckCircle2,
-    color: "text-green-600",
-    bgColor: "bg-green-100 dark:bg-green-900/30",
-    borderColor: "border-green-500",
-  },
-  PARTIALLY_VERIFIED: {
-    label: "부분 검증",
-    icon: AlertTriangle,
-    color: "text-yellow-600",
-    bgColor: "bg-yellow-100 dark:bg-yellow-900/30",
-    borderColor: "border-yellow-500",
-  },
-  UNVERIFIED: {
-    label: "검증 불가",
-    icon: HelpCircle,
-    color: "text-gray-600",
-    bgColor: "bg-gray-100 dark:bg-gray-800",
-    borderColor: "border-gray-400",
-  },
-  DISPUTED: {
-    label: "논쟁 중",
-    icon: Scale,
-    color: "text-orange-600",
-    bgColor: "bg-orange-100 dark:bg-orange-900/30",
-    borderColor: "border-orange-500",
-  },
-  FALSE: {
-    label: "거짓",
-    icon: XCircle,
-    color: "text-red-600",
-    bgColor: "bg-red-100 dark:bg-red-900/30",
-    borderColor: "border-red-500",
-  },
-} as const;
-
-type VerificationStatus = keyof typeof STATUS_CONFIG;
-
-// Risk level configuration
-const RISK_CONFIG = {
-  low: { label: "낮음", color: "text-green-600", bgColor: "bg-green-500" },
-  medium: { label: "주의", color: "text-yellow-600", bgColor: "bg-yellow-500" },
-  high: { label: "높음", color: "text-red-600", bgColor: "bg-red-500" },
-} as const;
-
+// ============================================
 // Types
-interface SourceEvidence {
-  sourceType: string;
-  sourceName: string;
-  url: string;
-  excerpt: string;
-  relevanceScore?: number;
-  stance?: string;
+// ============================================
+
+interface Claim {
+  id: string;
+  text: string;
+  source?: string;
+  confidence: number;
 }
 
 interface VerificationResult {
   claimId: string;
-  originalClaim: string;
-  status: VerificationStatus;
-  confidenceScore: number;
-  supportingEvidence: SourceEvidence[];
-  contradictingEvidence: SourceEvidence[];
-  verificationSummary: string;
-  relatedConcepts: string[];
+  claim: string;
+  verdict: "verified" | "false" | "unverified" | "misleading" | "partially_true";
+  confidence: number;
+  evidence: Evidence[];
+  explanation: string;
 }
 
-interface CredibilityAssessment {
-  overallScore: number;
-  verifiedCount: number;
-  totalClaims: number;
-  riskLevel: "low" | "medium" | "high";
-  warnings: string[];
+interface Evidence {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+  stance: "supporting" | "contradicting" | "neutral";
+  relevanceScore: number;
 }
 
-interface DeepAnalysisEvent {
-  eventType: "status" | "evidence" | "verification" | "assessment" | "ai_synthesis" | "complete" | "error";
-  phase: string;
-  message?: string;
-  evidence?: SourceEvidence[];
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp: number;
+  phase?: string;
+  evidence?: Evidence[];
   verificationResult?: VerificationResult;
-  credibility?: CredibilityAssessment;
-  finalConclusion?: string;
 }
 
-// Components
-interface EvidenceCardProps {
-  evidence: SourceEvidence;
-  stance: "support" | "contradict" | "neutral";
-}
+// ============================================
+// Helper Components
+// ============================================
 
-const EvidenceCard = ({ evidence, stance }: EvidenceCardProps) => {
-  const stanceStyles = {
-    support: "border-l-green-500 bg-green-50 dark:bg-green-900/20",
-    contradict: "border-l-red-500 bg-red-50 dark:bg-red-900/20",
-    neutral: "border-l-gray-400 bg-gray-50 dark:bg-gray-800/50",
+const VerdictBadge = ({ verdict }: { verdict: VerificationResult["verdict"] }) => {
+  const config = {
+    verified: { 
+      icon: CheckCircle2, 
+      label: "검증됨", 
+      class: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" 
+    },
+    false: { 
+      icon: XCircle, 
+      label: "거짓", 
+      class: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400" 
+    },
+    unverified: { 
+      icon: HelpCircle, 
+      label: "검증 불가", 
+      class: "bg-gray-100 text-gray-800 dark:bg-gray-800/50 dark:text-gray-400" 
+    },
+    misleading: { 
+      icon: AlertTriangle, 
+      label: "오해의 소지", 
+      class: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400" 
+    },
+    partially_true: { 
+      icon: Scale, 
+      label: "부분적 사실", 
+      class: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400" 
+    },
   };
-
+  
+  const { icon: Icon, label, class: className } = config[verdict];
+  
   return (
-    <div className={`border-l-4 p-3 rounded-r-lg ${stanceStyles[stance]}`}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <BookOpen className="h-4 w-4 text-muted-foreground" />
-            <span className="font-medium text-sm">{evidence.sourceName}</span>
-            {evidence.relevanceScore && (
-              <Badge variant="secondary" className="text-xs">
-                {Math.round(evidence.relevanceScore * 100)}% 관련
+    <Badge className={className}>
+      <Icon className="h-3 w-3 mr-1" />
+      {label}
+    </Badge>
+  );
+};
+
+const StanceBadge = ({ stance }: { stance: Evidence["stance"] }) => {
+  const config = {
+    supporting: { label: "지지", class: "bg-green-100 text-green-700" },
+    contradicting: { label: "반박", class: "bg-red-100 text-red-700" },
+    neutral: { label: "중립", class: "bg-gray-100 text-gray-700" },
+  };
+  
+  const { label, class: className } = config[stance];
+  return <Badge variant="outline" className={className}>{label}</Badge>;
+};
+
+// ============================================
+// Main Component
+// ============================================
+
+export default function FactCheck() {
+  const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  
+  // Input states
+  const [inputType, setInputType] = useState<"text" | "url">("text");
+  const [inputText, setInputText] = useState("");
+  const [inputUrl, setInputUrl] = useState("");
+  const [sourceName, setSourceName] = useState("");
+  
+  // Analysis states
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [claims, setClaims] = useState<Claim[]>([]);
+  const [verificationResults, setVerificationResults] = useState<VerificationResult[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [currentPhase, setCurrentPhase] = useState<string>("");
+  
+  // Analytics from hook
+  const { 
+    analytics, 
+    analyzeContent, 
+    analyzeFromBackend, 
+    isAnalyzing: isAnalyzingHook, 
+    error: analyticsError 
+  } = useFactCheckAnalytics();
+  
+  // FactCheck chat for streaming
+  const { 
+    sendMessage, 
+    isConnected, 
+    isStreaming, 
+    sessionId 
+  } = useFactCheckChat({
+    onMessage: (event) => {
+      const newMessage: ChatMessage = {
+        id: `${Date.now()}-${Math.random()}`,
+        role: event.role as ChatMessage["role"],
+        content: event.content,
+        timestamp: event.timestamp || Date.now(),
+        phase: event.phase,
+        evidence: event.evidence,
+        verificationResult: event.verificationResult,
+      };
+      
+      setChatMessages(prev => [...prev, newMessage]);
+      
+      if (event.phase) {
+        setCurrentPhase(event.phase);
+      }
+      
+      if (event.verificationResult) {
+        setVerificationResults(prev => [...prev, event.verificationResult as VerificationResult]);
+      }
+    },
+    onError: (error) => {
+      toast({
+        title: "오류 발생",
+        description: error,
+        variant: "destructive",
+      });
+      setIsAnalyzing(false);
+    },
+    onComplete: () => {
+      setIsAnalyzing(false);
+      setCurrentPhase("");
+    },
+  });
+  
+  // Storage hook for saving results
+  const { saveResult, savedResults } = useFactCheckStorage();
+  
+  // Handle URL from route state or params
+  useEffect(() => {
+    const urlParam = searchParams.get("url");
+    const textParam = searchParams.get("text");
+    
+    if (urlParam) {
+      setInputType("url");
+      setInputUrl(urlParam);
+    } else if (textParam) {
+      setInputType("text");
+      setInputText(textParam);
+    }
+    
+    // Check for state from navigation
+    if (location.state?.url) {
+      setInputType("url");
+      setInputUrl(location.state.url);
+    } else if (location.state?.text) {
+      setInputType("text");
+      setInputText(location.state.text);
+    }
+  }, [searchParams, location.state]);
+  
+  // Extract claims from URL
+  const handleExtractFromUrl = useCallback(async () => {
+    if (!inputUrl.trim()) {
+      toast({
+        title: "URL 필요",
+        description: "분석할 URL을 입력해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsAnalyzing(true);
+    setClaims([]);
+    setVerificationResults([]);
+    setChatMessages([]);
+    
+    try {
+      const result = await extractClaimsFromUrl(inputUrl);
+      
+      if (result.claims && result.claims.length > 0) {
+        const extractedClaims: Claim[] = result.claims.map((claim, idx) => ({
+          id: `claim-${idx}`,
+          text: typeof claim === "string" ? claim : claim.text || claim.claim,
+          source: result.source || inputUrl,
+          confidence: typeof claim === "object" ? claim.confidence || 0.8 : 0.8,
+        }));
+        
+        setClaims(extractedClaims);
+        setSourceName(result.source || new URL(inputUrl).hostname);
+        
+        toast({
+          title: "주장 추출 완료",
+          description: `${extractedClaims.length}개의 주장이 추출되었습니다.`,
+        });
+        
+        // Analyze content with backend
+        if (result.content) {
+          setInputText(result.content);
+          await analyzeContent({
+            topic: result.title || inputUrl,
+            sourceName: result.source,
+            content: result.content,
+            title: result.title,
+          });
+        }
+      } else {
+        toast({
+          title: "주장 추출 실패",
+          description: "URL에서 검증 가능한 주장을 찾지 못했습니다.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("URL claim extraction failed:", error);
+      toast({
+        title: "추출 실패",
+        description: error instanceof Error ? error.message : "URL에서 주장을 추출하는데 실패했습니다.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [inputUrl, toast, analyzeContent]);
+  
+  // Analyze text directly
+  const handleAnalyzeText = useCallback(async () => {
+    if (!inputText.trim()) {
+      toast({
+        title: "텍스트 필요",
+        description: "분석할 텍스트를 입력해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsAnalyzing(true);
+    setClaims([]);
+    setVerificationResults([]);
+    setChatMessages([]);
+    
+    try {
+      // Run frontend analytics
+      await analyzeContent({
+        topic: "직접 입력 텍스트",
+        sourceName: sourceName || undefined,
+        content: inputText,
+        title: inputText.slice(0, 100),
+      });
+      
+      // Try to extract claims from text using backend
+      const response = await fetch(`${API_BASE_URL}/api/ml-addons/factcheck/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          request_id: `fc-${Date.now()}`,
+          addon_id: "factcheck-v1",
+          task: "article_analysis",
+          article: {
+            title: inputText.slice(0, 100),
+            content: inputText,
+            source: sourceName || "직접 입력",
+          },
+          options: {
+            analysis_mode: "hybrid",
+            include_detailed_analytics: true,
+          },
+        }),
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        
+        if (result.results?.factcheck?.claims) {
+          const extractedClaims: Claim[] = result.results.factcheck.claims.map((claim: any, idx: number) => ({
+            id: `claim-${idx}`,
+            text: claim.text || claim.claim_text,
+            confidence: claim.confidence || 0.7,
+          }));
+          setClaims(extractedClaims);
+        }
+        
+        // Convert backend analytics if available
+        if (result.results?.factcheck?.detailed_analytics) {
+          await analyzeFromBackend(result);
+        }
+        
+        toast({
+          title: "분석 완료",
+          description: "팩트체크 분석이 완료되었습니다.",
+        });
+      }
+    } catch (error) {
+      console.error("Text analysis failed:", error);
+      // Still show the frontend analytics even if backend fails
+      toast({
+        title: "부분 분석 완료",
+        description: "일부 분석이 완료되었습니다. 백엔드 연결을 확인해주세요.",
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [inputText, sourceName, toast, analyzeContent, analyzeFromBackend]);
+  
+  // Verify a specific claim
+  const handleVerifyClaim = useCallback(async (claim: Claim) => {
+    if (!isConnected) {
+      toast({
+        title: "연결 안됨",
+        description: "팩트체크 서비스에 연결되지 않았습니다.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsAnalyzing(true);
+    
+    try {
+      await sendMessage(`다음 주장을 검증해주세요: "${claim.text}"`, [claim.text]);
+    } catch (error) {
+      console.error("Claim verification failed:", error);
+      toast({
+        title: "검증 실패",
+        description: "주장 검증에 실패했습니다.",
+        variant: "destructive",
+      });
+      setIsAnalyzing(false);
+    }
+  }, [isConnected, sendMessage, toast]);
+  
+  // Save current result
+  const handleSaveResult = useCallback(async () => {
+    if (!analytics && claims.length === 0) {
+      toast({
+        title: "저장할 결과 없음",
+        description: "먼저 분석을 실행해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    try {
+      await saveResult({
+        topic: inputUrl || inputText.slice(0, 100),
+        summary: analytics ? `신뢰도 등급: ${analytics.scoreBreakdown.grade}` : "분석 완료",
+        items: claims.map(c => ({
+          title: c.text,
+          url: inputUrl || undefined,
+          source: c.source,
+        })),
+        score: analytics?.scoreBreakdown.totalScore,
+      });
+      
+      toast({
+        title: "저장 완료",
+        description: "팩트체크 결과가 저장되었습니다.",
+      });
+    } catch (error) {
+      toast({
+        title: "저장 실패",
+        description: "결과 저장에 실패했습니다.",
+        variant: "destructive",
+      });
+    }
+  }, [analytics, claims, inputUrl, inputText, saveResult, toast]);
+  
+  // Copy results to clipboard
+  const handleCopyResults = useCallback(() => {
+    const text = [
+      `## 팩트체크 결과`,
+      ``,
+      `**분석 대상:** ${inputUrl || inputText.slice(0, 100)}`,
+      `**출처:** ${sourceName || "알 수 없음"}`,
+      ``,
+      analytics ? [
+        `### 신뢰도 분석`,
+        `- 종합 등급: ${analytics.scoreBreakdown.grade}`,
+        `- 종합 점수: ${analytics.scoreBreakdown.totalScore.toFixed(1)}점`,
+        `- 출처 신뢰도: ${Math.round(analytics.sourceAnalysis.trustScore * 100)}%`,
+        `- 클릭베이트 점수: ${Math.round(analytics.clickbaitAnalysis.score * 100)}%`,
+        ``,
+      ].join("\n") : "",
+      claims.length > 0 ? [
+        `### 추출된 주장 (${claims.length}개)`,
+        ...claims.map((c, i) => `${i + 1}. ${c.text}`),
+        ``,
+      ].join("\n") : "",
+      verificationResults.length > 0 ? [
+        `### 검증 결과`,
+        ...verificationResults.map(r => `- ${r.claim}: ${r.verdict}`),
+      ].join("\n") : "",
+    ].filter(Boolean).join("\n");
+    
+    navigator.clipboard.writeText(text);
+    toast({
+      title: "복사 완료",
+      description: "결과가 클립보드에 복사되었습니다.",
+    });
+  }, [inputUrl, inputText, sourceName, analytics, claims, verificationResults, toast]);
+  
+  return (
+    <TooltipProvider>
+      <div className="container mx-auto p-4 md:p-6 max-w-7xl space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <Shield className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">팩트체크</h1>
+              <p className="text-sm text-muted-foreground">
+                ML 기반 뉴스 신뢰도 분석 및 주장 검증
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <Badge variant={isConnected ? "default" : "secondary"}>
+              {isConnected ? "연결됨" : "연결 대기"}
+            </Badge>
+            {sessionId && (
+              <Badge variant="outline" className="text-xs">
+                세션: {sessionId.slice(0, 8)}...
               </Badge>
             )}
           </div>
-          <p className="text-sm text-muted-foreground line-clamp-3">{evidence.excerpt}</p>
         </div>
-        {evidence.url && (
-          <a
-            href={evidence.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 p-1 rounded hover:bg-muted transition-colors"
-          >
-            <ExternalLink className="h-4 w-4" />
-          </a>
-        )}
-      </div>
-    </div>
-  );
-};
-
-interface ClaimVerificationCardProps {
-  result: VerificationResult;
-  onDeepSearch?: (claim: string) => void;
-}
-
-const ClaimVerificationCard = ({ result, onDeepSearch }: ClaimVerificationCardProps) => {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const config = STATUS_CONFIG[result.status];
-  const StatusIcon = config.icon;
-
-  const hasEvidence = result.supportingEvidence.length > 0 || result.contradictingEvidence.length > 0;
-
-  return (
-    <Card className={`${config.bgColor} border-l-4 ${config.borderColor}`}>
-      <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-        <CardHeader className="pb-2">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-2">
-                <Badge className={`${config.bgColor} ${config.color} border-none`}>
-                  <StatusIcon className="h-3 w-3 mr-1" />
-                  {config.label}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  신뢰도: {Math.round(result.confidenceScore * 100)}%
-                </span>
-              </div>
-              <p className="font-medium text-sm">{result.originalClaim}</p>
-              <p className="text-sm text-muted-foreground mt-1">{result.verificationSummary}</p>
-            </div>
-            <div className="flex items-center gap-1">
-              {onDeepSearch && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onDeepSearch(result.originalClaim)}
-                  title="Deep Search로 심층 분석"
-                  className="text-purple-600 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/30"
-                >
-                  <Microscope className="h-4 w-4" />
-                </Button>
-              )}
-              {hasEvidence && (
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm">
-                    {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        
+        {/* Input Section */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Search className="h-5 w-5" />
+              분석 입력
+            </CardTitle>
+            <CardDescription>
+              URL 또는 텍스트를 입력하여 팩트체크를 시작하세요
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Input Type Selector */}
+            <Tabs value={inputType} onValueChange={(v) => setInputType(v as "text" | "url")}>
+              <TabsList className="grid w-full grid-cols-2 max-w-md">
+                <TabsTrigger value="url" className="flex items-center gap-2">
+                  <LinkIcon className="h-4 w-4" />
+                  URL 분석
+                </TabsTrigger>
+                <TabsTrigger value="text" className="flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  텍스트 분석
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="url" className="space-y-3 mt-4">
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="https://news.example.com/article/..."
+                    value={inputUrl}
+                    onChange={(e) => setInputUrl(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button 
+                    onClick={handleExtractFromUrl} 
+                    disabled={isAnalyzing || !inputUrl.trim()}
+                  >
+                    {isAnalyzing ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <Search className="h-4 w-4 mr-2" />
+                    )}
+                    분석
                   </Button>
-                </CollapsibleTrigger>
-              )}
-            </div>
-          </div>
-        </CardHeader>
-
-        {hasEvidence && (
-          <CollapsibleContent>
-            <CardContent className="pt-0 space-y-4">
-              {result.supportingEvidence.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-medium mb-2 text-green-600 flex items-center gap-1">
-                    <CheckCircle2 className="h-4 w-4" />
-                    지지 근거 ({result.supportingEvidence.length})
-                  </h4>
-                  <div className="space-y-2">
-                    {result.supportingEvidence.map((e, i) => (
-                      <EvidenceCard key={i} evidence={e} stance="support" />
-                    ))}
-                  </div>
                 </div>
-              )}
-
-              {result.contradictingEvidence.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-medium mb-2 text-red-600 flex items-center gap-1">
-                    <XCircle className="h-4 w-4" />
-                    반박 근거 ({result.contradictingEvidence.length})
-                  </h4>
-                  <div className="space-y-2">
-                    {result.contradictingEvidence.map((e, i) => (
-                      <EvidenceCard key={i} evidence={e} stance="contradict" />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {result.relatedConcepts.length > 0 && (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs text-muted-foreground">관련 개념:</span>
-                  {result.relatedConcepts.map((concept, i) => (
-                    <Badge key={i} variant="outline" className="text-xs">
-                      {concept}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </CollapsibleContent>
-        )}
-      </Collapsible>
-    </Card>
-  );
-};
-
-interface CredibilityMeterProps {
-  assessment: CredibilityAssessment;
-}
-
-const CredibilityMeter = ({ assessment }: CredibilityMeterProps) => {
-  const riskConfig = RISK_CONFIG[assessment.riskLevel];
-  const percentage = Math.round(assessment.overallScore * 100);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Shield className="h-5 w-5" />
-          신뢰도 평가
-        </CardTitle>
-        <CardDescription>
-          전체 {assessment.totalClaims}개 주장 중 {assessment.verifiedCount}개 검증됨
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="text-center">
-          <div className="relative inline-flex items-center justify-center">
-            <svg className="w-32 h-32 transform -rotate-90">
-              <circle
-                cx="64"
-                cy="64"
-                r="56"
-                stroke="currentColor"
-                strokeWidth="12"
-                fill="transparent"
-                className="text-muted"
-              />
-              <circle
-                cx="64"
-                cy="64"
-                r="56"
-                stroke="currentColor"
-                strokeWidth="12"
-                fill="transparent"
-                strokeDasharray={`${percentage * 3.52} 352`}
-                className={percentage >= 70 ? "text-green-500" : percentage >= 40 ? "text-yellow-500" : "text-red-500"}
-              />
-            </svg>
-            <span className="absolute text-3xl font-bold">{percentage}%</span>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-center gap-2">
-          <span className="text-sm text-muted-foreground">위험 수준:</span>
-          <Badge className={`${riskConfig.bgColor} text-white`}>
-            {riskConfig.label}
-          </Badge>
-        </div>
-
-        {assessment.warnings.length > 0 && (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>주의사항</AlertTitle>
-            <AlertDescription>
-              <ul className="list-disc list-inside text-sm mt-1">
-                {assessment.warnings.map((warning, i) => (
-                  <li key={i}>{warning}</li>
-                ))}
-              </ul>
-            </AlertDescription>
-          </Alert>
-        )}
-      </CardContent>
-    </Card>
-  );
-};
-
-// Main Component
-const FactCheck = () => {
-  const { toast } = useToast();
-  const location = useLocation();
-  const navigate = useNavigate();
-  const { saveFactCheck, saveFailedSearch } = useAutoSaveSearch();
-  
-  // Load priority URLs from parent search record (if navigating from SearchHistory)
-  const { 
-    priorityUrls: parentPriorityUrls, 
-    parentQuery,
-    isFromHistory,
-    loading: parentLoading,
-  } = useSearchRecordFromState(location.state);
-
-  const [topic, setTopic] = useState("");
-  const [claims, setClaims] = useState<string[]>([""]);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [currentPhase, setCurrentPhase] = useState("");
-  const [phaseMessage, setPhaseMessage] = useState("");
-  
-  // Track search start time for duration calculation
-  const [searchStartTime, setSearchStartTime] = useState<number | null>(null);
-  
-  // Priority URLs from URL Collections page
-  const [priorityUrls, setPriorityUrls] = useState<PriorityUrl[]>([]);
-  
-  // History panel toggle
-  const [showHistory, setShowHistory] = useState(false);
-
-  // Results
-  const [collectedEvidence, setCollectedEvidence] = useState<SourceEvidence[]>([]);
-  const [verificationResults, setVerificationResults] = useState<VerificationResult[]>([]);
-  const [credibility, setCredibility] = useState<CredibilityAssessment | null>(null);
-  const [aiConclusion, setAiConclusion] = useState("");
-  const [aiComplete, setAiComplete] = useState(false);
-
-  const abortControllerRef = useRef<AbortController | null>(null);
-  
-  // Fact check storage hook
-  const {
-    savedResults,
-    isLoaded: storageLoaded,
-    saveResult,
-    deleteResult,
-    exportToJson,
-    exportToMarkdown,
-    exportToText,
-  } = useFactCheckStorage();
-
-  // Fact check analytics hook for detailed statistics
-  const {
-    analytics: factCheckAnalytics,
-    isAnalyzing: isAnalyzingStats,
-    analyze: runAnalytics,
-    reset: resetAnalytics,
-  } = useFactCheckAnalytics();
-
-  // Health check
-  const { data: healthData } = useQuery({
-    queryKey: ["unifiedSearch", "health"],
-    queryFn: checkUnifiedSearchHealth,
-    staleTime: 60_000,
-    retry: 1,
-  });
-
-  const isHealthy = healthData?.features?.factVerification ?? false;
-  
-  // Load priority URLs from location state or sessionStorage
-  useEffect(() => {
-    const locationState = location.state as { priorityUrls?: PriorityUrl[] } | null;
-    if (locationState?.priorityUrls && locationState.priorityUrls.length > 0) {
-      setPriorityUrls(locationState.priorityUrls);
-      // Save to sessionStorage for persistence across page refreshes
-      sessionStorage.setItem(FACTCHECK_PRIORITY_URLS_KEY, JSON.stringify(locationState.priorityUrls));
-      // Clear the location state to prevent re-adding on refresh
-      window.history.replaceState({}, document.title);
-    } else {
-      // Try to load from sessionStorage
-      const stored = sessionStorage.getItem(FACTCHECK_PRIORITY_URLS_KEY);
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored) as PriorityUrl[];
-          setPriorityUrls(parsed);
-        } catch {
-          // Ignore parse errors
-        }
-      }
-    }
-  }, [location.state]);
-  
-  // Load priority URLs from parent search record (when navigating from SearchHistory with derive context)
-  useEffect(() => {
-    if (!parentLoading && isFromHistory && parentPriorityUrls.length > 0) {
-      // Merge with existing priority URLs, avoiding duplicates by URL
-      setPriorityUrls((prev) => {
-        const existingUrls = new Set(prev.map((p) => p.url));
-        const newUrls = parentPriorityUrls
-          .filter((p: SearchRecordPriorityUrl) => !existingUrls.has(p.url))
-          .map((p: SearchRecordPriorityUrl): PriorityUrl => ({
-            id: p.id,
-            url: p.url,
-            name: p.name,
-          }));
-        
-        if (newUrls.length === 0) return prev;
-        
-        const merged = [...prev, ...newUrls];
-        sessionStorage.setItem(FACTCHECK_PRIORITY_URLS_KEY, JSON.stringify(merged));
-        return merged;
-      });
-      
-      // Also set the topic from parent query if not already set
-      if (parentQuery && !topic) {
-        setTopic(parentQuery);
-      }
-      
-      toast({
-        title: "이전 검색에서 URL 불러옴",
-        description: `${parentPriorityUrls.length}개의 참고 URL이 추가되었습니다.`,
-      });
-    }
-  }, [parentLoading, isFromHistory, parentPriorityUrls, parentQuery, topic, toast]);
-
-  // Load query from location state (e.g., from Search History page)
-  useEffect(() => {
-    const locationState = location.state as { 
-      query?: string; 
-      fromHistory?: boolean; 
-      historyId?: number;
-      parentSearchId?: number;
-      deriveFrom?: number;
-      depthLevel?: number;
-    } | null;
-    
-    if (locationState?.query && !isAnalyzing) {
-      // Set the query as topic
-      setTopic(locationState.query);
-      
-      if (locationState.fromHistory) {
-        toast({
-          title: "검색 기록에서 연결됨",
-          description: `"${locationState.query}" 주제로 팩트체크를 시작할 수 있습니다.`,
-        });
-        // Clear the location state to prevent showing toast again
-        window.history.replaceState({}, document.title);
-      }
-      
-      if (locationState.deriveFrom) {
-        toast({
-          title: "파생 검색",
-          description: "이전 검색에서 파생된 팩트체크를 시작합니다.",
-        });
-        // Clear the location state
-        window.history.replaceState({}, document.title);
-      }
-    }
-  }, [location.state, isAnalyzing, toast]);
-
-  // Handler for PriorityUrlEditor changes
-  const handlePriorityUrlsChange = useCallback((newUrls: PriorityUrl[]) => {
-    setPriorityUrls(newUrls);
-  }, []);
-
-  // Save current result
-  const handleSaveResult = useCallback(() => {
-    if (!topic.trim() || verificationResults.length === 0) {
-      toast({
-        title: "저장할 결과가 없습니다",
-        description: "먼저 팩트체크를 실행해주세요.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Build evidence summary by source type
-    const bySource: Record<string, number> = {};
-    collectedEvidence.forEach((e) => {
-      const key = e.sourceType || "unknown";
-      bySource[key] = (bySource[key] || 0) + 1;
-    });
-
-    const resultToSave = {
-      topic: topic.trim(),
-      claims: claims.filter((c) => c.trim()),
-      priorityUrls: priorityUrls.map((p) => p.url),
-      verificationResults: verificationResults.map((v) => ({
-        claimId: v.claimId,
-        originalClaim: v.originalClaim,
-        status: v.status,
-        confidenceScore: v.confidenceScore,
-        verificationSummary: v.verificationSummary,
-        supportingCount: v.supportingEvidence.length,
-        contradictingCount: v.contradictingEvidence.length,
-      })),
-      evidenceSummary: {
-        total: collectedEvidence.length,
-        bySource,
-      },
-      credibility: credibility
-        ? {
-            overallScore: credibility.overallScore,
-            verifiedCount: credibility.verifiedCount,
-            totalClaims: credibility.totalClaims,
-            riskLevel: credibility.riskLevel,
-            warnings: credibility.warnings,
-          }
-        : undefined,
-      aiConclusion: aiComplete ? aiConclusion : undefined,
-    };
-
-    const savedId = saveResult(resultToSave);
-    toast({
-      title: "저장됨",
-      description: `팩트체크 결과가 저장되었습니다. (ID: ${savedId.slice(0, 8)}...)`,
-    });
-  }, [
-    topic,
-    claims,
-    priorityUrls,
-    verificationResults,
-    collectedEvidence,
-    credibility,
-    aiConclusion,
-    aiComplete,
-    saveResult,
-    toast,
-  ]);
-
-  // Load a saved result
-  const loadSavedResult = useCallback((saved: SavedFactCheckResult) => {
-    setTopic(saved.topic);
-    setClaims(saved.claims.length > 0 ? saved.claims : [""]);
-    
-    // Reconstruct verification results (simplified)
-    const reconstructed: VerificationResult[] = saved.verificationResults.map((v) => ({
-      claimId: v.claimId,
-      originalClaim: v.originalClaim,
-      status: v.status as VerificationStatus,
-      confidenceScore: v.confidenceScore,
-      verificationSummary: v.verificationSummary,
-      supportingEvidence: [], // Cannot reconstruct full evidence
-      contradictingEvidence: [],
-      relatedConcepts: [],
-    }));
-    setVerificationResults(reconstructed);
-    
-    if (saved.credibility) {
-      setCredibility(saved.credibility);
-    }
-    
-    if (saved.aiConclusion) {
-      setAiConclusion(saved.aiConclusion);
-      setAiComplete(true);
-    }
-    
-    setShowHistory(false);
-    toast({
-      title: "불러오기 완료",
-      description: `"${saved.topic}" 결과를 불러왔습니다.`,
-    });
-  }, [toast]);
-
-  // Handle export
-  const handleExport = useCallback((id: string, format: "json" | "markdown" | "txt") => {
-    let filename: string | null = null;
-    if (format === "json") {
-      filename = exportToJson(id);
-    } else if (format === "markdown") {
-      filename = exportToMarkdown(id);
-    } else if (format === "txt") {
-      filename = exportToText(id);
-    }
-    
-    if (filename) {
-      toast({
-        title: "내보내기 완료",
-        description: `${filename} 파일이 다운로드되었습니다.`,
-      });
-    }
-  }, [exportToJson, exportToMarkdown, exportToText, toast]);
-
-  // Handle delete
-  const handleDeleteResult = useCallback((id: string) => {
-    deleteResult(id);
-    toast({
-      title: "삭제됨",
-      description: "저장된 결과가 삭제되었습니다.",
-    });
-  }, [deleteResult, toast]);
-
-  // Navigate to Deep Search with topic and claims
-  const handleDeepSearchAnalysis = useCallback((searchTopic?: string, searchClaims?: string[]) => {
-    const topicToUse = searchTopic || topic;
-    const claimsToUse = searchClaims || claims.filter((c) => c.trim());
-    
-    if (!topicToUse.trim()) {
-      toast({
-        title: "주제가 필요합니다",
-        description: "Deep Search로 분석하려면 주제를 입력해주세요.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    // Build the query for Deep Search
-    // Combine topic and claims for comprehensive analysis
-    let query = topicToUse.trim();
-    if (claimsToUse.length > 0) {
-      query += `: ${claimsToUse.join("; ")}`;
-    }
-    
-    // Navigate to Deep Search with the query
-    navigate(`/deep-search?q=${encodeURIComponent(query)}&fromFactCheck=true`);
-    
-    toast({
-      title: "Deep Search로 이동",
-      description: "해당 주제에 대한 심층 분석을 시작합니다.",
-    });
-  }, [topic, claims, navigate, toast]);
-
-  // Navigate to Deep Search with a specific claim
-  const handleDeepSearchForClaim = useCallback((claim: string) => {
-    if (!claim.trim()) return;
-    
-    // Navigate to Deep Search with the specific claim
-    navigate(`/deep-search?q=${encodeURIComponent(claim.trim())}&fromFactCheck=true`);
-    
-    toast({
-      title: "Deep Search로 이동",
-      description: "해당 주장에 대한 심층 분석을 시작합니다.",
-    });
-  }, [navigate, toast]);
-
-  // Auto-save fact check results when analysis completes
-  useEffect(() => {
-    if (aiComplete && verificationResults.length > 0 && topic.trim()) {
-      const durationMs = searchStartTime ? Date.now() - searchStartTime : undefined;
-      saveFactCheck(
-        topic.trim(),
-        verificationResults.map((v) => ({
-          claimId: v.claimId,
-          originalClaim: v.originalClaim,
-          status: v.status,
-          confidenceScore: v.confidenceScore,
-          verificationSummary: v.verificationSummary,
-          supportingCount: v.supportingEvidence.length,
-          contradictingCount: v.contradictingEvidence.length,
-        })),
-        credibility?.overallScore,
-        durationMs,
-      );
-      
-      // Run analytics when verification completes
-      runAnalytics(
-        {
-          topic: topic.trim(),
-          sourceName: collectedEvidence.length > 0 
-            ? collectedEvidence[0].sourceName 
-            : undefined,
-          title: topic.trim(),
-          content: claims.filter(c => c.trim()).join(" "),
-        },
-        verificationResults
-      );
-    }
-  }, [aiComplete, verificationResults, topic, credibility, searchStartTime, saveFactCheck, runAnalytics, collectedEvidence, claims]);
-
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
-  }, []);
-
-  const resetResults = useCallback(() => {
-    setCollectedEvidence([]);
-    setVerificationResults([]);
-    setCredibility(null);
-    setAiConclusion("");
-    setAiComplete(false);
-    setCurrentPhase("");
-    setPhaseMessage("");
-    resetAnalytics();
-  }, [resetAnalytics]);
-
-  const addClaim = useCallback(() => {
-    setClaims((prev) => [...prev, ""]);
-  }, []);
-
-  const removeClaim = useCallback((index: number) => {
-    setClaims((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  const updateClaim = useCallback((index: number, value: string) => {
-    setClaims((prev) => prev.map((c, i) => (i === index ? value : c)));
-  }, []);
-
-  // URL에서 추출된 주장들 적용
-  const handleClaimsFromUrl = useCallback((extractedClaims: string[]) => {
-    // 기존 빈 주장 제거하고 추출된 주장 추가
-    setClaims((prev) => {
-      const nonEmpty = prev.filter((c) => c.trim());
-      return [...nonEmpty, ...extractedClaims];
-    });
-    
-    toast({
-      title: "주장 추출 완료",
-      description: `${extractedClaims.length}개의 주장이 추가되었습니다.`,
-    });
-  }, [toast]);
-
-  const handleAnalyze = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!topic.trim() || isAnalyzing) return;
-
-    const validClaims = claims.filter((c) => c.trim());
-    if (validClaims.length === 0) {
-      toast({
-        title: "주장을 입력하세요",
-        description: "검증할 주장을 최소 1개 이상 입력해주세요.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    resetResults();
-    setIsAnalyzing(true);
-    setSearchStartTime(Date.now()); // Track start time for duration
-
-    try {
-      abortControllerRef.current = new AbortController();
-      // Extract URLs from priority list for reference sources
-      const referenceUrlList = priorityUrls.map((p) => p.url);
-      const response = await openDeepAnalysisStream(
-        topic.trim(), 
-        validClaims,
-        referenceUrlList.length > 0 ? referenceUrlList : undefined
-      );
-
-      if (!response.body) {
-        throw new Error("Response body is null");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data:")) {
-            try {
-              const jsonStr = line.slice(5).trim();
-              if (jsonStr) {
-                const event: DeepAnalysisEvent = JSON.parse(jsonStr);
-                handleEvent(event);
-              }
-            } catch (parseErr) {
-              console.error("Failed to parse SSE event:", parseErr);
-            }
-          }
-        }
-      }
-
-      setIsAnalyzing(false);
-      toast({
-        title: "분석 완료",
-        description: "팩트체크 및 심층 분석이 완료되었습니다.",
-      });
-
-    } catch (error) {
-      console.error("Analysis failed:", error);
-      setIsAnalyzing(false);
-      
-      // Auto-save failed search
-      const durationMs = searchStartTime ? Date.now() - searchStartTime : undefined;
-      saveFailedSearch('FACT_CHECK', topic, error instanceof Error ? error.message : 'Unknown error', durationMs);
-      
-      toast({
-        title: "분석 오류",
-        description: "분석 중 오류가 발생했습니다. 다시 시도해주세요.",
-        variant: "destructive",
-      });
-    }
-  }, [topic, claims, priorityUrls, isAnalyzing, resetResults, toast, searchStartTime, saveFailedSearch]);
-
-  const handleEvent = useCallback((event: DeepAnalysisEvent) => {
-    setCurrentPhase(event.phase);
-
-    switch (event.eventType) {
-      case "status":
-        setPhaseMessage(event.message || "");
-        break;
-
-      case "evidence":
-        if (event.evidence) {
-          setCollectedEvidence((prev) => [...prev, ...event.evidence!]);
-        }
-        setPhaseMessage(event.message || "");
-        break;
-
-      case "verification":
-        if (event.verificationResult) {
-          setVerificationResults((prev) => [...prev, event.verificationResult!]);
-        }
-        setPhaseMessage(event.message || "");
-        break;
-
-      case "assessment":
-        if (event.credibility) {
-          setCredibility(event.credibility);
-        }
-        break;
-
-      case "ai_synthesis":
-        if (event.message) {
-          setAiConclusion((prev) => prev + event.message);
-        }
-        break;
-
-      case "complete":
-        if (event.finalConclusion) {
-          setAiConclusion(event.finalConclusion);
-        }
-        setAiComplete(true);
-        break;
-
-      case "error":
-        toast({
-          title: "오류",
-          description: event.message || "알 수 없는 오류가 발생했습니다.",
-          variant: "destructive",
-        });
-        break;
-    }
-  }, [toast]);
-
-  const handleCancel = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    setIsAnalyzing(false);
-    toast({
-      title: "취소됨",
-      description: "분석이 취소되었습니다.",
-    });
-  }, [toast]);
-
-  const getPhaseProgress = () => {
-    const phases = ["init", "concepts", "verification", "assessment", "synthesis", "complete"];
-    const index = phases.indexOf(currentPhase);
-    return index >= 0 ? ((index + 1) / phases.length) * 100 : 0;
-  };
-
-  return (
-    <div className="min-h-screen py-8">
-      <div className="container mx-auto px-4 max-w-5xl">
-        {/* Header */}
-        <header className="mb-8">
-          <Link
-            to="/"
-            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            메인으로 돌아가기
-          </Link>
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div>
-              <h1 className="text-3xl md:text-4xl font-bold mb-2 bg-gradient-to-r from-green-600 to-blue-600 bg-clip-text text-transparent">
-                팩트체크 & 심층분석
-              </h1>
-              <p className="text-muted-foreground flex items-center gap-2">
-                <Shield className="h-4 w-4" />
-                Wikipedia, 학술DB, Google Fact Check 등 신뢰할 수 있는 출처와 대조하여 주장의 타당성을 검증합니다.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {/* History Button */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowHistory(!showHistory)}
-                className="gap-1"
-              >
-                <History className="h-4 w-4" />
-                기록
-                {savedResults.length > 0 && (
-                  <Badge variant="secondary" className="ml-1 h-5 min-w-5 px-1">
-                    {savedResults.length}
-                  </Badge>
-                )}
-              </Button>
+              </TabsContent>
               
-              {/* Save/Export Button */}
-              {verificationResults.length > 0 && aiComplete && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="default" size="sm" className="gap-1">
-                      <Save className="h-4 w-4" />
-                      저장
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={handleSaveResult}>
-                      <Save className="h-4 w-4 mr-2" />
-                      결과 저장
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => {
-                      // Save first, then export
-                      handleSaveResult();
-                      const latest = savedResults[0];
-                      if (latest) {
-                        setTimeout(() => handleExport(latest.id, "json"), 100);
-                      }
-                    }}>
-                      <FileJson className="h-4 w-4 mr-2" />
-                      JSON으로 내보내기
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => {
-                      handleSaveResult();
-                      const latest = savedResults[0];
-                      if (latest) {
-                        setTimeout(() => handleExport(latest.id, "markdown"), 100);
-                      }
-                    }}>
-                      <FileText className="h-4 w-4 mr-2" />
-                      Markdown으로 내보내기
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-              
-              {isHealthy && (
-                <Badge variant="outline" className="text-green-600 border-green-600">
-                  <CheckCircle2 className="h-3 w-3 mr-1" />
-                  서비스 정상
-                </Badge>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {/* History Panel */}
-        {showHistory && storageLoaded && (
-          <Card className="mb-8">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <History className="h-5 w-5" />
-                  저장된 팩트체크 기록
-                </CardTitle>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowHistory(false)}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {savedResults.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  저장된 팩트체크 결과가 없습니다.
-                </p>
-              ) : (
-                <ScrollArea className="max-h-[300px]">
-                  <div className="space-y-2">
-                    {savedResults.map((result) => (
-                      <div
-                        key={result.id}
-                        className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
-                      >
-                        <div className="flex-1 min-w-0 mr-4">
-                          <h4 className="font-medium text-sm truncate">{result.topic}</h4>
-                          <p className="text-xs text-muted-foreground">
-                            {new Date(result.savedAt).toLocaleString("ko-KR")} · 
-                            {result.verificationResults.length}개 주장 검증
-                            {result.credibility && (
-                              <span className={
-                                result.credibility.riskLevel === "low" ? " text-green-600" :
-                                result.credibility.riskLevel === "medium" ? " text-yellow-600" :
-                                " text-red-600"
-                              }>
-                                {" · "}신뢰도 {Math.round(result.credibility.overallScore * 100)}%
-                              </span>
-                            )}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => loadSavedResult(result)}
-                            title="불러오기"
-                          >
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="sm" title="내보내기">
-                                <FileText className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleExport(result.id, "json")}>
-                                <FileJson className="h-4 w-4 mr-2" />
-                                JSON
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleExport(result.id, "markdown")}>
-                                <FileText className="h-4 w-4 mr-2" />
-                                Markdown
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleExport(result.id, "txt")}>
-                                <FileText className="h-4 w-4 mr-2" />
-                                텍스트
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDeleteResult(result.id)}
-                            className="text-destructive hover:text-destructive"
-                            title="삭제"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Priority URLs Editor */}
-        <PriorityUrlEditor
-          storageKey={FACTCHECK_PRIORITY_URLS_KEY}
-          urls={priorityUrls}
-          onUrlsChange={handlePriorityUrlsChange}
-          disabled={isAnalyzing}
-          maxUrls={10}
-          title="참고 URL"
-          description="팩트체크 시 우선적으로 참고할 URL을 추가하세요. 신뢰할 수 있는 출처를 추가하면 검증 품질이 향상됩니다."
-          defaultCollapsed={priorityUrls.length === 0}
-          className="mb-8"
-        />
-
-        {/* Input Form */}
-        <Card className="mb-8">
-          <CardContent className="pt-6">
-            <form onSubmit={handleAnalyze} className="space-y-6">
-              {/* Topic */}
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  주제 *
-                </label>
-                <Input
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  placeholder="예: 기후변화, 백신 효과, 경제 정책 등"
-                  disabled={isAnalyzing}
-                  className="text-lg"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  검증하고자 하는 전체 주제를 입력하세요.
-                </p>
-              </div>
-
-              {/* URL Claim Extractor */}
-              <UrlClaimExtractor
-                onClaimsExtracted={handleClaimsFromUrl}
-                disabled={isAnalyzing}
-              />
-
-              {/* Claims */}
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  검증할 주장 *
-                </label>
+              <TabsContent value="text" className="space-y-3 mt-4">
                 <div className="space-y-3">
-                  {claims.map((claim, index) => (
-                    <div key={index} className="flex gap-2">
-                      <Textarea
-                        value={claim}
-                        onChange={(e) => updateClaim(index, e.target.value)}
-                        placeholder={`주장 ${index + 1}: 예) "탄소 배출량이 지난 10년간 20% 증가했다"`}
-                        disabled={isAnalyzing}
-                        className="min-h-[60px]"
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <Label htmlFor="source-name">출처명 (선택)</Label>
+                      <Input
+                        id="source-name"
+                        placeholder="예: 연합뉴스, 조선일보 등"
+                        value={sourceName}
+                        onChange={(e) => setSourceName(e.target.value)}
+                        className="mt-1"
                       />
-                      {claims.length > 1 && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeClaim(index)}
-                          disabled={isAnalyzing}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
                     </div>
-                  ))}
+                  </div>
+                  <div>
+                    <Label htmlFor="content">분석할 내용</Label>
+                    <Textarea
+                      id="content"
+                      placeholder="뉴스 기사 본문 또는 검증하고 싶은 주장을 입력하세요..."
+                      value={inputText}
+                      onChange={(e) => setInputText(e.target.value)}
+                      rows={6}
+                      className="mt-1"
+                    />
+                  </div>
+                  <Button 
+                    onClick={handleAnalyzeText}
+                    disabled={isAnalyzing || !inputText.trim()}
+                    className="w-full sm:w-auto"
+                  >
+                    {isAnalyzing ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <Brain className="h-4 w-4 mr-2" />
+                    )}
+                    AI 분석 시작
+                  </Button>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={addClaim}
-                  disabled={isAnalyzing || claims.length >= 5}
-                  className="mt-2"
-                >
-                  <Plus className="h-4 w-4 mr-1" />
-                  주장 추가
-                </Button>
-                <p className="text-xs text-muted-foreground mt-1">
-                  사실 여부를 확인하고 싶은 구체적인 주장들을 입력하세요. (최대 5개)
-                </p>
+              </TabsContent>
+            </Tabs>
+            
+            {/* Progress Indicator */}
+            {isAnalyzing && currentPhase && (
+              <div className="flex items-center gap-3 p-3 bg-muted rounded-lg">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                <span className="text-sm">{currentPhase}</span>
               </div>
-
-              {/* Submit */}
-              <div className="flex gap-3">
-                {isAnalyzing ? (
-                  <Button type="button" variant="outline" onClick={handleCancel} className="flex-1">
-                    분석 취소
-                  </Button>
-                ) : (
-                  <Button type="submit" disabled={!topic.trim() || !isHealthy} className="flex-1">
-                    <Search className="h-4 w-4 mr-2" />
-                    팩트체크 시작
-                  </Button>
-                )}
-              </div>
-            </form>
+            )}
           </CardContent>
         </Card>
-
-        {/* Progress */}
-        {isAnalyzing && (
-          <Card className="mb-8">
-            <CardContent className="py-6 space-y-4">
-              <div className="flex items-center gap-4">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                <div className="flex-1">
-                  <h3 className="font-medium">심층 분석 진행 중...</h3>
-                  <p className="text-sm text-muted-foreground">{phaseMessage}</p>
-                </div>
-              </div>
-              <Progress value={getPhaseProgress()} className="h-2" />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>초기화</span>
-                <span>개념 수집</span>
-                <span>주장 검증</span>
-                <span>신뢰도 평가</span>
-                <span>AI 종합</span>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Results */}
-        {(verificationResults.length > 0 || credibility || aiConclusion) && (
-          <div className="space-y-6">
-            {/* Credibility Assessment */}
-            {credibility && (
-              <CredibilityMeter assessment={credibility} />
-            )}
-
-            {/* Detailed Analytics Panel */}
-            {aiComplete && (
-              <FactCheckAnalyticsPanel 
-                analytics={factCheckAnalytics}
-                isLoading={isAnalyzingStats}
-              />
-            )}
-
-            {/* Collected Evidence */}
-            {collectedEvidence.length > 0 && (
+        
+        {/* Results Section */}
+        <div className="grid gap-6 lg:grid-cols-3">
+          {/* Claims Panel */}
+          <div className="lg:col-span-1 space-y-4">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center justify-between text-lg">
+                  <span className="flex items-center gap-2">
+                    <Target className="h-5 w-5" />
+                    추출된 주장
+                  </span>
+                  <Badge variant="secondary">{claims.length}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {claims.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <HelpCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                    <p>분석을 시작하면 주장이 추출됩니다</p>
+                  </div>
+                ) : (
+                  <ScrollArea className="h-[400px]">
+                    <div className="space-y-3">
+                      {claims.map((claim, index) => (
+                        <Card key={claim.id} className="bg-muted/50">
+                          <CardContent className="p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1">
+                                <p className="text-sm font-medium mb-1">
+                                  {index + 1}. {claim.text}
+                                </p>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <Badge variant="outline" className="text-xs">
+                                    신뢰도: {Math.round(claim.confidence * 100)}%
+                                  </Badge>
+                                  {claim.source && (
+                                    <span className="truncate max-w-[150px]">{claim.source}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleVerifyClaim(claim)}
+                                disabled={isAnalyzing || !isConnected}
+                              >
+                                <Shield className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                )}
+              </CardContent>
+            </Card>
+            
+            {/* Verification Results */}
+            {verificationResults.length > 0 && (
               <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <BookOpen className="h-5 w-5" />
-                    수집된 참고 자료
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <CheckCircle2 className="h-5 w-5" />
+                    검증 결과
                   </CardTitle>
-                  <CardDescription>
-                    신뢰할 수 있는 출처에서 {collectedEvidence.length}개의 정보를 수집했습니다.
-                  </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ScrollArea className="max-h-[300px]">
+                  <ScrollArea className="h-[300px]">
                     <div className="space-y-3">
-                      {collectedEvidence.map((e, i) => (
-                        <EvidenceCard key={i} evidence={e} stance="neutral" />
+                      {verificationResults.map((result) => (
+                        <Card key={result.claimId} className="bg-muted/50">
+                          <CardContent className="p-3">
+                            <div className="space-y-2">
+                              <div className="flex items-start justify-between">
+                                <p className="text-sm font-medium flex-1">{result.claim}</p>
+                                <VerdictBadge verdict={result.verdict} />
+                              </div>
+                              <p className="text-xs text-muted-foreground">{result.explanation}</p>
+                              <Progress value={result.confidence * 100} className="h-1" />
+                              <span className="text-xs text-muted-foreground">
+                                신뢰도: {Math.round(result.confidence * 100)}%
+                              </span>
+                            </div>
+                          </CardContent>
+                        </Card>
                       ))}
                     </div>
                   </ScrollArea>
                 </CardContent>
               </Card>
             )}
-
-            {/* Verification Results */}
-            {verificationResults.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <Shield className="h-5 w-5" />
-                        주장별 검증 결과
-                      </CardTitle>
-                      <CardDescription>
-                        각 주장에 대한 팩트체크 결과입니다. 개별 주장을 Deep Search로 심층 분석할 수 있습니다.
-                      </CardDescription>
-                    </div>
-                    {aiComplete && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleDeepSearchAnalysis()}
-                        className="gap-1 text-purple-600 hover:text-purple-700 border-purple-300 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20"
-                      >
-                        <Microscope className="h-4 w-4" />
-                        전체 Deep Search 분석
-                      </Button>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {verificationResults.map((result) => (
-                      <ClaimVerificationCard 
-                        key={result.claimId} 
-                        result={result} 
-                        onDeepSearch={handleDeepSearchForClaim}
-                      />
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+          </div>
+          
+          {/* Analytics Panel */}
+          <div className="lg:col-span-2 space-y-4">
+            {/* Action Buttons */}
+            {(analytics || claims.length > 0) && (
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={handleCopyResults}>
+                  <Copy className="h-4 w-4 mr-2" />
+                  복사
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleSaveResult}>
+                  <Download className="h-4 w-4 mr-2" />
+                  저장
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => {
+                    setClaims([]);
+                    setVerificationResults([]);
+                    setChatMessages([]);
+                  }}
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  초기화
+                </Button>
+              </div>
             )}
-
-            {/* AI Conclusion */}
-            {aiConclusion && (
+            
+            {/* Analytics Panel */}
+            <FactCheckAnalyticsPanel 
+              analytics={analytics} 
+              isLoading={isAnalyzingHook} 
+            />
+            
+            {/* Chat Messages (if any) */}
+            {chatMessages.length > 0 && (
               <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Brain className="h-5 w-5 text-purple-600" />
-                      <CardTitle>AI 종합 분석</CardTitle>
-                      {!aiComplete && <Loader2 className="h-4 w-4 animate-spin" />}
-                      {aiComplete && <CheckCircle2 className="h-4 w-4 text-green-600" />}
-                    </div>
-                  </div>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Sparkles className="h-5 w-5" />
+                    AI 분석 로그
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <MarkdownRenderer 
-                    content={aiConclusion} 
-                    isStreaming={!aiComplete}
-                    className="bg-muted/30 p-4 rounded-lg"
-                  />
-                  
-                  {/* Deep Search CTA */}
-                  {aiComplete && (
-                    <div className="mt-4 p-4 rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-900/10">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <h4 className="text-sm font-medium text-purple-700 dark:text-purple-300">
-                            더 깊은 분석이 필요하신가요?
-                          </h4>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Deep Search를 통해 다양한 관점의 증거를 수집하고 더 심층적인 분석을 받아보세요.
-                          </p>
-                        </div>
-                        <Button
-                          onClick={() => handleDeepSearchAnalysis()}
-                          className="gap-2 bg-purple-600 hover:bg-purple-700"
+                  <ScrollArea className="h-[300px]">
+                    <div className="space-y-3">
+                      {chatMessages.map((msg) => (
+                        <div 
+                          key={msg.id}
+                          className={`p-3 rounded-lg ${
+                            msg.role === "user" 
+                              ? "bg-primary/10 ml-8" 
+                              : msg.role === "system"
+                              ? "bg-muted/50 border-l-2 border-yellow-500"
+                              : "bg-muted/50 mr-8"
+                          }`}
                         >
-                          <Microscope className="h-4 w-4" />
-                          Deep Search 분석
-                        </Button>
-                      </div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <Badge variant="outline" className="text-xs">
+                              {msg.role === "user" ? "사용자" : msg.role === "system" ? "시스템" : "AI"}
+                            </Badge>
+                            {msg.phase && (
+                              <Badge variant="secondary" className="text-xs">
+                                {msg.phase}
+                              </Badge>
+                            )}
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(msg.timestamp).toLocaleTimeString()}
+                            </span>
+                          </div>
+                          <MarkdownRenderer content={msg.content} />
+                        </div>
+                      ))}
                     </div>
-                  )}
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            )}
+            
+            {/* Empty State */}
+            {!analytics && claims.length === 0 && !isAnalyzing && (
+              <Card className="border-dashed">
+                <CardContent className="py-12">
+                  <div className="text-center text-muted-foreground">
+                    <BarChart3 className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                    <h3 className="text-lg font-medium mb-2">분석 결과 대기 중</h3>
+                    <p className="text-sm max-w-md mx-auto">
+                      URL 또는 텍스트를 입력하고 분석을 시작하면
+                      출처 신뢰도, 클릭베이트 감지, 허위정보 위험도 등
+                      상세한 분석 결과가 표시됩니다.
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
             )}
           </div>
-        )}
-
-        {/* Empty State */}
-        {!isAnalyzing && verificationResults.length === 0 && !aiConclusion && (
-          <div className="text-center py-16">
-            <div className="inline-flex items-center justify-center gap-4 mb-6">
-              <div className="p-4 rounded-full bg-green-100 dark:bg-green-900/30">
-                <Shield className="h-10 w-10 text-green-600" />
-              </div>
-            </div>
-            <h2 className="text-xl font-semibold mb-2">팩트체크 & 심층분석</h2>
-            <p className="text-muted-foreground max-w-md mx-auto mb-6">
-              주제와 검증하고 싶은 주장을 입력하면 Wikipedia 등 신뢰할 수 있는 출처와 대조하여 
-              타당성을 분석하고 종합적인 결론을 제공합니다.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto text-sm">
-              <div className="p-4 rounded-lg bg-muted/50">
-                <BookOpen className="h-6 w-6 mx-auto mb-2 text-blue-600" />
-                <p className="font-medium">신뢰할 수 있는 출처</p>
-                <p className="text-muted-foreground text-xs mt-1">Wikipedia, 학술DB 등</p>
-              </div>
-              <div className="p-4 rounded-lg bg-muted/50">
-                <Scale className="h-6 w-6 mx-auto mb-2 text-orange-600" />
-                <p className="font-medium">객관적 검증</p>
-                <p className="text-muted-foreground text-xs mt-1">지지/반박 근거 제시</p>
-              </div>
-              <div className="p-4 rounded-lg bg-muted/50">
-                <Brain className="h-6 w-6 mx-auto mb-2 text-purple-600" />
-                <p className="font-medium">AI 종합 분석</p>
-                <p className="text-muted-foreground text-xs mt-1">맥락을 고려한 결론</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Navigation */}
-        <div className="mt-8 flex justify-center gap-4">
-          <Link to="/search">
-            <Button variant="outline" className="gap-2">
-              <Search className="h-4 w-4" />
-              통합 검색으로 이동
-            </Button>
-          </Link>
-          <Link to="/deep-search">
-            <Button variant="outline" className="gap-2">
-              <Brain className="h-4 w-4" />
-              Deep Search로 이동
-            </Button>
-          </Link>
         </div>
+        
+        {/* Info Section */}
+        <Card className="bg-muted/30">
+          <CardContent className="py-4">
+            <div className="flex items-start gap-3">
+              <Info className="h-5 w-5 text-muted-foreground shrink-0 mt-0.5" />
+              <div className="text-sm text-muted-foreground">
+                <p className="font-medium mb-1">팩트체크 분석 방법</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>KoELECTRA, KLUE BERT 등 한국어 특화 ML 모델 사용</li>
+                  <li>출처 신뢰도 데이터베이스 기반 교차 검증</li>
+                  <li>클릭베이트 패턴 및 허위정보 신호 탐지</li>
+                  <li>의미론적 유사도 기반 주장-증거 매칭</li>
+                </ul>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
-    </div>
+    </TooltipProvider>
   );
-};
-
-export default FactCheck;
+}

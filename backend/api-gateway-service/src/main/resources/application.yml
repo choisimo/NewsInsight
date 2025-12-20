@@ -204,6 +204,14 @@ spring:
             # /api/ml-addons/sentiment/** -> /** 로 전달
             - StripPrefix=3
 
+        # Fact Check Chat - 팩트체크 챗봇
+        - id: factcheck-chat
+          uri: ${COLLECTOR_SERVICE_URL:http://data-collection-service:8080}
+          predicates:
+            - Path=/api/v1/factcheck-chat/**
+          filters:
+            - StripPrefix=0
+
         # ML Add-ons - 팩트체크 (Fact Check)
         - id: ml-addon-factcheck
           uri: ${ML_ADDON_FACTCHECK_URL:http://factcheck-addon:8101}
@@ -228,6 +236,29 @@ spring:
             - Path=/api/ml-addons/bot-detector/**
           filters:
             - StripPrefix=3
+
+        # ML Trainer Service - 모델 학습 서비스
+        - id: ml-trainer
+          uri: ${ML_TRAINER_URL:http://ml-trainer:8090}
+          predicates:
+            - Path=/api/ml-trainer/**
+          filters:
+            # /api/ml-trainer/** -> /** 로 전달
+            - StripPrefix=2
+          metadata:
+            # 학습 작업은 오래 걸릴 수 있으므로 긴 타임아웃
+            response-timeout: 600000
+
+        # ML Trainer SSE Stream - 실시간 학습 진행 상황
+        - id: ml-trainer-stream
+          uri: ${ML_TRAINER_URL:http://ml-trainer:8090}
+          predicates:
+            - Path=/api/ml-trainer/jobs/*/stream
+          filters:
+            - StripPrefix=2
+          metadata:
+            # SSE 스트림을 위한 매우 긴 타임아웃 (30분)
+            response-timeout: 1800000
 
         # Health Check Rewrite - 프론트엔드가 /api/actuator/health 호출 시 처리
         - id: gateway-health

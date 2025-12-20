@@ -25,7 +25,9 @@ import java.util.Map;
         @Index(name = "idx_search_history_query", columnList = "query"),
         @Index(name = "idx_search_history_created_at", columnList = "created_at"),
         @Index(name = "idx_search_history_user_id", columnList = "user_id"),
-        @Index(name = "idx_search_history_parent_id", columnList = "parent_search_id")
+        @Index(name = "idx_search_history_parent_id", columnList = "parent_search_id"),
+        @Index(name = "idx_search_history_completion_status", columnList = "completion_status"),
+        @Index(name = "idx_search_history_project_id", columnList = "project_id")
 })
 @Data
 @Builder
@@ -182,6 +184,76 @@ public class SearchHistory {
     @Builder.Default
     private Boolean success = true;
 
+    // ============ New fields for improved tracking ============
+
+    /**
+     * Completion status for "Continue Work" feature
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "completion_status", length = 32)
+    @Builder.Default
+    private CompletionStatus completionStatus = CompletionStatus.IN_PROGRESS;
+
+    /**
+     * Whether the user has viewed the results
+     */
+    @Column(name = "viewed")
+    @Builder.Default
+    private Boolean viewed = false;
+
+    /**
+     * When the user viewed the results
+     */
+    @Column(name = "viewed_at")
+    private LocalDateTime viewedAt;
+
+    /**
+     * Whether a report has been generated for this search
+     */
+    @Column(name = "report_generated")
+    @Builder.Default
+    private Boolean reportGenerated = false;
+
+    /**
+     * Phase where failure occurred (for debugging)
+     * e.g., "db_search", "web_crawl", "ai_analysis"
+     */
+    @Column(name = "failure_phase", length = 64)
+    private String failurePhase;
+
+    /**
+     * Detailed failure information
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "failure_details", columnDefinition = "jsonb")
+    private Map<String, Object> failureDetails;
+
+    /**
+     * Partial results saved before failure
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "partial_results", columnDefinition = "jsonb")
+    private List<Map<String, Object>> partialResults;
+
+    /**
+     * Progress percentage (0-100) for long-running searches
+     */
+    @Column(name = "progress")
+    @Builder.Default
+    private Integer progress = 0;
+
+    /**
+     * Current phase description for UI display
+     */
+    @Column(name = "current_phase", length = 128)
+    private String currentPhase;
+
+    /**
+     * Project ID for project-based organization
+     */
+    @Column(name = "project_id")
+    private Long projectId;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -189,6 +261,28 @@ public class SearchHistory {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    // ============ Enums ============
+
+    /**
+     * Completion status for tracking search progress
+     */
+    public enum CompletionStatus {
+        /** Search input saved but not executed */
+        DRAFT,
+        /** Search is currently running */
+        IN_PROGRESS,
+        /** Some sources succeeded, some failed */
+        PARTIAL,
+        /** Search completed successfully */
+        COMPLETED,
+        /** Search failed */
+        FAILED,
+        /** Search was cancelled by user */
+        CANCELLED
+    }
+
+    // ============ Helper methods ============
 
     /**
      * Convenience method to check if this is a derived search
@@ -205,5 +299,72 @@ public class SearchHistory {
             return results.size();
         }
         return resultCount != null ? resultCount : 0;
+    }
+
+    /**
+     * Check if this search needs to be continued
+     */
+    public boolean needsContinuation() {
+        if (completionStatus == null) {
+            return !Boolean.TRUE.equals(success);
+        }
+        return completionStatus == CompletionStatus.DRAFT
+                || completionStatus == CompletionStatus.IN_PROGRESS
+                || completionStatus == CompletionStatus.PARTIAL
+                || completionStatus == CompletionStatus.FAILED;
+    }
+
+    /**
+     * Check if this search is actionable (should show in "Continue Work")
+     */
+    public boolean isActionable() {
+        // Exclude completed searches that have been viewed
+        if (completionStatus == CompletionStatus.COMPLETED && Boolean.TRUE.equals(viewed)) {
+            return false;
+        }
+        // Exclude bookmarked or report-generated searches
+        if (Boolean.TRUE.equals(bookmarked) || Boolean.TRUE.equals(reportGenerated)) {
+            return false;
+        }
+        return needsContinuation() || (completionStatus == CompletionStatus.COMPLETED && !Boolean.TRUE.equals(viewed));
+    }
+
+    /**
+     * Mark as viewed
+     */
+    public void markViewed() {
+        this.viewed = true;
+        this.viewedAt = LocalDateTime.now();
+    }
+
+    /**
+     * Mark as completed
+     */
+    public void markCompleted() {
+        this.completionStatus = CompletionStatus.COMPLETED;
+        this.success = true;
+        this.progress = 100;
+    }
+
+    /**
+     * Mark as failed with details
+     */
+    public void markFailed(String phase, String errorMessage, Map<String, Object> details) {
+        this.completionStatus = CompletionStatus.FAILED;
+        this.success = false;
+        this.failurePhase = phase;
+        this.errorMessage = errorMessage;
+        this.failureDetails = details;
+    }
+
+    /**
+     * Update progress
+     */
+    public void updateProgress(int progress, String phase) {
+        this.progress = Math.min(100, Math.max(0, progress));
+        this.currentPhase = phase;
+        if (this.completionStatus == CompletionStatus.DRAFT) {
+            this.completionStatus = CompletionStatus.IN_PROGRESS;
+        }
     }
 }

@@ -1,5 +1,6 @@
 # ML Add-on Server Dependencies
 
+# FastAPI core
 fastapi>=0.104.0
 uvicorn>=0.24.0
 pydantic>=2.5.0
@@ -7,7 +8,11 @@ pydantic>=2.5.0
 # For ngrok tunnel (Colab용)
 pyngrok>=7.0.0
 
-# Optional: ML 모델 사용 시
-# transformers>=4.35.0
-# torch>=2.1.0
+# ML dependencies for sentiment analysis
+torch>=2.1.0
+transformers>=4.35.0
+sentencepiece>=0.1.99
+
+# Optional: Additional models
 # kobert-tokenizer>=0.5.2
+# sentence-transformers>=2.2.0

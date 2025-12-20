@@ -1151,6 +1151,9 @@ public class UnifiedSearchService {
                             unifiedSearchEventService.publishStatusUpdate(jobId, "system", noResultMessage);
                         }
                         
+                        // Save all collected results to search history
+                        persistAllResultsToSearchHistory(jobId, query, window, discoveredUrls);
+                        
                         unifiedSearchEventService.publishJobComplete(jobId, totalResults.get());
                         
                         // Notify AutoCrawl of discovered URLs
@@ -1634,6 +1637,39 @@ public class UnifiedSearchService {
             log.info("Saved unified AI report to search history: jobId={}", jobId);
         } catch (Exception e) {
             log.warn("Failed to save unified AI report to search history: jobId={}, error={}", jobId, e.getMessage());
+        }
+    }
+
+    /**
+     * Save all collected search results to search history.
+     * This includes DB results, web crawl results, and discovered URLs.
+     */
+    private void persistAllResultsToSearchHistory(String jobId, String query, String window, List<String> discoveredUrls) {
+        try {
+            // Get all collected results from the event service
+            List<Map<String, Object>> collectedResults = unifiedSearchEventService.getCollectedResults(jobId);
+            
+            if (collectedResults.isEmpty()) {
+                log.debug("No results to persist for job: {}", jobId);
+                return;
+            }
+
+            SearchHistoryMessage message = SearchHistoryMessage.builder()
+                    .externalId(jobId + "-results")
+                    .searchType(SearchType.UNIFIED)
+                    .query(query)
+                    .timeWindow(window)
+                    .resultCount(collectedResults.size())
+                    .results(collectedResults)
+                    .discoveredUrls(discoveredUrls)
+                    .success(true)
+                    .timestamp(System.currentTimeMillis())
+                    .build();
+
+            searchHistoryService.saveFromMessage(message);
+            log.info("Saved {} unified search results to search history: jobId={}", collectedResults.size(), jobId);
+        } catch (Exception e) {
+            log.warn("Failed to save unified search results to search history: jobId={}, error={}", jobId, e.getMessage());
         }
     }
 

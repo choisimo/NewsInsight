@@ -33,7 +33,7 @@ export interface ArticlesResponse {
   total: number;
 }
 
-export type SourceType = "RSS" | "WEB" | "API" | "WEBHOOK" | "BROWSER_AGENT";
+export type SourceType = "RSS" | "WEB" | "WEB_SEARCH" | "API" | "WEBHOOK" | "BROWSER_AGENT";
 
 export interface DataSource {
   id: number;
@@ -44,6 +44,8 @@ export interface DataSource {
   lastCollected: string | null;
   collectionFrequency: number;
   metadata: Record<string, unknown>;
+  searchUrlTemplate?: string;
+  searchPriority?: number;
   createdAt: string;
   updatedAt: string;
 }

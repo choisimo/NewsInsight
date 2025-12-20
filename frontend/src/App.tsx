@@ -4,10 +4,12 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { BackgroundTaskProvider } from "@/contexts/BackgroundTaskContext";
+import { SearchJobProvider } from "@/contexts/SearchJobContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { ActiveJobsIndicator } from "@/components/ActiveJobsIndicator";
 import { CommandPalette } from "@/components/CommandPalette";
 import NotFound from "./pages/NotFound";
 import AdminSources from "./pages/AdminSources";
@@ -18,12 +20,16 @@ import SmartSearch from "./pages/SmartSearch";
 import Settings from "./pages/Settings";
 import MLAddons from "./pages/MLAddons";
 import MLResults from "./pages/MLResults";
+import MLTraining from "./pages/MLTraining";
 import Projects from "./pages/Projects";
+import ProjectDashboard from "./pages/ProjectDashboard";
+import ProjectSettings from "./pages/ProjectSettings";
 import LiveDashboard from "./pages/LiveDashboard";
 import Operations from "./pages/Operations";
 import AiJobs from "./pages/AiJobs";
 import CollectedDataPage from "./pages/CollectedDataPage";
 import ParallelSearch from "./pages/ParallelSearch";
+import FactCheck from "./pages/FactCheck";
 
 // New Pages
 import NewHome from "./pages/NewHome";
@@ -51,13 +57,14 @@ const App = () => (
       <AuthProvider>
         <NotificationProvider>
           <BackgroundTaskProvider>
-            <TooltipProvider>
-            <Toaster />
-            <Sonner />
-            <BrowserRouter>
-              <CommandPalette />
-              <AppLayout>
-                <Routes>
+            <SearchJobProvider>
+              <TooltipProvider>
+              <Toaster />
+              <Sonner />
+              <BrowserRouter>
+                <CommandPalette />
+                <AppLayout>
+                  <Routes>
                 {/* NEW: Home - 새 대시보드 스타일 홈 */}
                 <Route path="/" element={<NewHome />} />
                 
@@ -73,20 +80,24 @@ const App = () => (
                 <Route path="/tools" element={<ToolsHub />} />
                 <Route path="/ml-addons" element={<MLAddons />} />
                 <Route path="/ml-results" element={<MLResults />} />
+                <Route path="/ml-training" element={<MLTraining />} />
                 <Route path="/ai-agent" element={<BrowserAgent />} />
                 <Route path="/ai-jobs" element={<AiJobs />} />
                 <Route path="/parallel-search" element={<ParallelSearch />} />
+                <Route path="/factcheck" element={<FactCheck />} />
                 
                 {/* Workspace Section */}
                 <Route path="/workspace" element={<WorkspaceHub />} />
                 <Route path="/projects" element={<Projects />} />
+                <Route path="/projects/:id" element={<ProjectDashboard />} />
+                <Route path="/projects/:id/settings" element={<ProjectSettings />} />
                 <Route path="/history" element={<SearchHistory />} />
                 <Route path="/url-collections" element={<UrlCollections />} />
 
                 {/* Backward compatibility redirects */}
                 <Route path="/smart-search" element={<RedirectWithState to="/search" />} />
                 <Route path="/deep-search" element={<RedirectWithState to="/search?mode=deep" />} />
-                <Route path="/fact-check" element={<RedirectWithState to="/search?mode=factcheck" />} />
+                <Route path="/fact-check" element={<RedirectWithState to="/factcheck" />} />
                 
                 {/* Admin Routes */}
                 <Route path="/admin/login" element={<AdminLogin />} />
@@ -104,13 +115,16 @@ const App = () => (
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </AppLayout>
+            {/* Active Jobs Indicator - floating UI */}
+            <ActiveJobsIndicator position="bottom-right" />
           </BrowserRouter>
           </TooltipProvider>
-        </BackgroundTaskProvider>
-      </NotificationProvider>
-    </AuthProvider>
-  </ThemeProvider>
-  </QueryClientProvider>
+        </SearchJobProvider>
+      </BackgroundTaskProvider>
+    </NotificationProvider>
+  </AuthProvider>
+</ThemeProvider>
+</QueryClientProvider>
 );
 
 export default App;
