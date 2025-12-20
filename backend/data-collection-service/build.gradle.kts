@@ -10,6 +10,9 @@ dependencies {
     // Spring Boot Web
     implementation("org.springframework.boot:spring-boot-starter-web")
     
+    // OpenAPI / Swagger
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0")
+    
     // Spring Data JPA
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     

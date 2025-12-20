@@ -195,7 +195,7 @@ public class ProjectAutoCollectService {
                         .title((String) result.get("title"))
                         .summary((String) result.get("snippet"))
                         .url(url)
-                        .imageUrl((String) result.get("imageUrl"))
+                        .thumbnailUrl((String) result.get("imageUrl"))
                         .sourceName((String) result.get("source"))
                         .sourceId(jobId)
                         .sourceType("auto_collect")

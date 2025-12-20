@@ -41,6 +41,19 @@ public class ProjectNotification {
     private Long projectId;
 
     /**
+     * Target user ID (single recipient for simple notifications)
+     */
+    @Column(name = "user_id", length = 64)
+    private String userId;
+
+    /**
+     * Whether this notification has been read
+     */
+    @Column(name = "is_read")
+    @Builder.Default
+    private Boolean isRead = false;
+
+    /**
      * Notification type
      */
     @Enumerated(EnumType.STRING)
@@ -142,6 +155,8 @@ public class ProjectNotification {
         IMPORTANT_UPDATE,
         /** Team member activity */
         MEMBER_ACTIVITY,
+        /** Member invited to project */
+        MEMBER_INVITED,
         /** Report ready for download */
         REPORT_READY,
         /** Collection completed */

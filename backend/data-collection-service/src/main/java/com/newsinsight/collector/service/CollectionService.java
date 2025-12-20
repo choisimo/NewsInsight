@@ -248,6 +248,10 @@ public class CollectionService {
         return switch (sourceType) {
             case RSS -> rssFeedService.fetchRssFeed(source);
             case WEB -> webScraperService.scrapeWebPage(source);
+            case WEB_SEARCH -> {
+                log.warn("WEB_SEARCH 소스 타입은 UnifiedSearchService를 통해 처리해야 합니다: {}", source.getName());
+                yield List.of();
+            }
             case API -> {
                 log.warn("API 소스 타입은 아직 미구현: {}", source.getName());
                 yield List.of();

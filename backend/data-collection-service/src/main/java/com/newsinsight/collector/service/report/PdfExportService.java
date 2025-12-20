@@ -258,7 +258,9 @@ public class PdfExportService {
                     .setListSymbol("•");
             
             for (String finding : keyFindings) {
-                findingsList.add(new ListItem(finding).setFontSize(11));
+                ListItem item = new ListItem(finding);
+                item.setFontSize(11);
+                findingsList.add(item);
             }
             
             document.add(findingsList);

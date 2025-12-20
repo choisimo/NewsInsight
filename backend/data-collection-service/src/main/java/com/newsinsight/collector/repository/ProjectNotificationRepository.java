@@ -19,6 +19,30 @@ import java.util.List;
 public interface ProjectNotificationRepository extends JpaRepository<ProjectNotification, Long> {
 
     /**
+     * Find by user ID ordered by created at desc
+     */
+    Page<ProjectNotification> findByUserIdOrderByCreatedAtDesc(String userId, Pageable pageable);
+
+    /**
+     * Find unread notifications by user ID
+     */
+    List<ProjectNotification> findByUserIdAndIsReadFalseOrderByCreatedAtDesc(String userId);
+
+    /**
+     * Mark notification as read
+     */
+    @Modifying
+    @Query("UPDATE ProjectNotification n SET n.isRead = true WHERE n.id = :id")
+    void markAsRead(@Param("id") Long id, @Param("readAt") LocalDateTime readAt);
+
+    /**
+     * Mark all notifications as read for a user
+     */
+    @Modifying
+    @Query("UPDATE ProjectNotification n SET n.isRead = true WHERE n.userId = :userId AND n.isRead = false")
+    void markAllAsRead(@Param("userId") String userId, @Param("readAt") LocalDateTime readAt);
+
+    /**
      * Find by project ID
      */
     Page<ProjectNotification> findByProjectIdOrderByCreatedAtDesc(Long projectId, Pageable pageable);

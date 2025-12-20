@@ -109,8 +109,10 @@ public class ProjectActivityLog {
         PROJECT_ARCHIVED,
         PROJECT_DELETED,
         PROJECT_RESTORED,
+        PROJECT_STATUS_CHANGED,
         
         // Member management
+        MEMBER_ADDED,
         MEMBER_INVITED,
         MEMBER_JOINED,
         MEMBER_ROLE_CHANGED,
@@ -136,6 +138,8 @@ public class ProjectActivityLog {
         
         // Collection activities
         AUTO_COLLECT_RAN,
+        AUTO_COLLECTION,
+        MANUAL_COLLECTION,
         ITEMS_COLLECTED,
         COLLECTION_FAILED,
         

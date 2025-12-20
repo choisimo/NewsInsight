@@ -443,14 +443,14 @@ public class ProjectService {
                 .title(request.getTitle())
                 .summary(request.getSummary())
                 .url(request.getUrl())
-                .imageUrl(request.getImageUrl())
+                .thumbnailUrl(request.getThumbnailUrl())
                 .sourceName(request.getSourceName())
                 .sourceId(request.getSourceId())
                 .sourceType(request.getSourceType())
                 .publishedAt(request.getPublishedAt())
                 .category(request.getCategory())
                 .tags(request.getTags())
-                .sentiment(request.getSentiment())
+                .sentimentLabel(request.getSentiment())
                 .importance(request.getImportance() != null ? request.getImportance() : 50)
                 .addedBy(userId)
                 .addedAt(LocalDateTime.now())
@@ -535,18 +535,18 @@ public class ProjectService {
      */
     @Transactional
     public ProjectActivityLog logActivity(Long projectId, String userId, ProjectActivityLog.ActivityType type,
-                                          String description, String entityType, String entityId, Map<String, Object> details) {
-        ProjectActivityLog log = ProjectActivityLog.builder()
+                                          String description, String entityType, String entityId, Map<String, Object> metadata) {
+        ProjectActivityLog activityLog = ProjectActivityLog.builder()
                 .projectId(projectId)
                 .userId(userId)
                 .activityType(type)
                 .description(description)
                 .entityType(entityType)
                 .entityId(entityId)
-                .details(details)
+                .metadata(metadata)
                 .build();
 
-        return activityLogRepository.save(log);
+        return activityLogRepository.save(activityLog);
     }
 
     /**
@@ -734,7 +734,7 @@ public class ProjectService {
         private String title;
         private String summary;
         private String url;
-        private String imageUrl;
+        private String thumbnailUrl;
         private String sourceName;
         private String sourceId;
         private String sourceType;
