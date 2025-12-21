@@ -29,7 +29,9 @@ public class RbacFilter implements GlobalFilter, Ordered {
         "admin", List.of("READ", "WRITE", "DELETE", "ADMIN"),
         "analyst", List.of("READ", "WRITE"),
         "viewer", List.of("READ"),
-        "system", List.of("READ", "WRITE", "DELETE")
+        "system", List.of("READ", "WRITE", "DELETE"),
+        "anonymous", List.of("READ", "WRITE"),  // 익명 사용자 - 검색 및 분석 허용
+        "user", List.of("READ", "WRITE")        // 일반 회원 - 검색 및 분석 허용
     );
     
     // HTTP 메서드별 필요 권한

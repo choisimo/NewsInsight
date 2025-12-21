@@ -79,10 +79,20 @@ public class PerplexityClient {
 
         String url = baseUrl.endsWith("/") ? baseUrl + "chat/completions" : baseUrl + "/chat/completions";
 
+        // System message to guide the AI to respond directly in report format
+        String systemMessage = """
+                당신은 뉴스 분석 전문가입니다. 사용자의 요청에 대해 직접 보고서 형식으로 답변해주세요.
+                "알겠습니다", "네", "검색하겠습니다" 등의 서두 없이 바로 분석 결과를 작성하세요.
+                요청받은 형식(마크다운 등)을 정확히 따르세요.
+                """;
+
         Map<String, Object> body = Map.of(
                 "model", model,
                 "stream", true,
-                "messages", List.of(Map.of("role", "user", "content", prompt))
+                "messages", List.of(
+                        Map.of("role", "system", "content", systemMessage),
+                        Map.of("role", "user", "content", prompt)
+                )
         );
 
         log.debug("Calling Perplexity API: {} with timeout {}s", url, timeoutSeconds);

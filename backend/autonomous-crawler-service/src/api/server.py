@@ -35,6 +35,14 @@ from src.state.store import StateStore, get_state_store, close_state_store
 # MCP Integration
 from src.mcp.router import router as mcp_router
 
+# ML Integration
+from src.ml.router import router as ml_router
+from src.ml.orchestrator import init_ml_orchestrator, get_ml_orchestrator
+
+# Authentication
+from src.auth.middleware import get_current_user, require_auth, require_admin, require_operator
+from src.auth.jwt_utils import JWTPayload
+
 logger = structlog.get_logger(__name__)
 
 
@@ -658,7 +666,21 @@ async def lifespan(app: FastAPI):
         task_count=state_store.task_count,
     )
 
+    # Initialize ML Orchestrator
+    try:
+        ml_orchestrator = await init_ml_orchestrator()
+        app.state.ml_orchestrator = ml_orchestrator
+        logger.info("ML Orchestrator initialized")
+    except Exception as e:
+        logger.warning("ML Orchestrator initialization failed (non-critical)", error=str(e))
+        app.state.ml_orchestrator = None
+
     yield
+
+    # Cleanup ML Orchestrator
+    if hasattr(app.state, "ml_orchestrator") and app.state.ml_orchestrator:
+        await app.state.ml_orchestrator.close()
+        logger.info("ML Orchestrator closed")
 
     # Cleanup StateStore
     logger.info("Shutting down autonomous-crawler REST API server")
@@ -701,12 +723,20 @@ def register_routes(app: FastAPI):
     # MCP Add-on Router 등록
     app.include_router(mcp_router)
 
+    # ML Analysis Router 등록
+    app.include_router(ml_router)
+
     @app.get("/health")
     @app.head("/health")
     async def health(req: Request):
         """헬스체크 엔드포인트"""
         state_store: StateStore = req.app.state.state_store
         store_stats = await state_store.get_stats()
+
+        # Check ML orchestrator status
+        ml_available = (
+            hasattr(req.app.state, "ml_orchestrator") and req.app.state.ml_orchestrator is not None
+        )
 
         return {
             "status": "ok",
@@ -719,6 +749,7 @@ def register_routes(app: FastAPI):
                 "camoufox": True,
                 "captcha_bypass": True,
                 "redis_persistence": state_store.is_redis_connected,
+                "ml_analysis": ml_available,
             },
             "storage": store_stats,
             "active_sessions": state_store.task_count,
@@ -756,8 +787,8 @@ def register_routes(app: FastAPI):
         }
 
     @app.get("/providers")
-    async def get_available_providers():
-        """사용 가능한 LLM Provider 목록 조회"""
+    async def get_available_providers(user: JWTPayload = Depends(require_auth())):
+        """사용 가능한 LLM Provider 목록 조회 (인증 필요 - API 키 정보 보호)"""
         providers = []
         settings = get_settings()
 
@@ -1147,16 +1178,22 @@ def register_routes(app: FastAPI):
         return static_models.get(provider, [])
 
     @app.post("/agent/crawl", response_model=AgentTaskResult)
-    async def agent_crawl(request: AgentTask, req: Request):
+    async def agent_crawl(
+        request: AgentTask,
+        req: Request,
+        user: JWTPayload = Depends(require_auth()),
+    ):
         """
         AI 에이전트 크롤링 실행 (동기).
 
         CAPTCHA 우회 및 스텔스 모드 지원.
+        인증 필요: Bearer 토큰 필수
         """
         settings: Settings = req.app.state.settings
         sse_manager: SSEManager = req.app.state.sse_manager
         state_store: StateStore = req.app.state.state_store
 
+        logger.info("Agent crawl requested", user=user.username, url=str(request.url))
         result = await run_browser_agent(request, settings, sse_manager)
         await state_store.save_task(result.task_id, result)
         return result
@@ -1166,8 +1203,9 @@ def register_routes(app: FastAPI):
         request: AgentTask,
         req: Request,
         background_tasks: BackgroundTasks,
+        user: JWTPayload = Depends(require_auth()),
     ):
-        """AI 에이전트 크롤링 비동기 실행"""
+        """AI 에이전트 크롤링 비동기 실행 (인증 필요)"""
         settings: Settings = req.app.state.settings
         sse_manager: SSEManager = req.app.state.sse_manager
         state_store: StateStore = req.app.state.state_store
@@ -1225,8 +1263,9 @@ def register_routes(app: FastAPI):
         request: BatchCrawlRequest,
         req: Request,
         background_tasks: BackgroundTasks,
+        user: JWTPayload = Depends(require_auth()),
     ):
-        """여러 URL 배치 크롤링"""
+        """여러 URL 배치 크롤링 (인증 필요)"""
         settings: Settings = req.app.state.settings
         sse_manager: SSEManager = req.app.state.sse_manager
         state_store: StateStore = req.app.state.state_store

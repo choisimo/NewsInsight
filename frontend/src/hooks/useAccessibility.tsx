@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect } from "react";
+import React, { useRef, useCallback, useEffect } from "react";
 
 /**
  * 포커스 가능한 요소 셀렉터

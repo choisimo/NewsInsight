@@ -1,7 +1,7 @@
 export type EnvironmentType = 'zerotrust' | 'local' | 'gcp' | 'aws' | 'production' | 'staging';
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export type TaskStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
-export type UserRole = 'viewer' | 'operator' | 'admin';
+export type UserRole = 'user' | 'viewer' | 'operator' | 'admin';
 export type ServiceStatus = 'up' | 'down' | 'starting' | 'stopping' | 'unknown';
 export type DocumentCategory = 'deployment' | 'troubleshooting' | 'architecture' | 'runbook' | 'general';
 export type AuditAction = 'login' | 'logout' | 'view' | 'create' | 'update' | 'delete' | 'execute' | 'deploy' | 'rollback';

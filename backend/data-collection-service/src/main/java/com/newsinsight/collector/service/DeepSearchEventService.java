@@ -109,7 +109,10 @@ public class DeepSearchEventService {
      */
     public void publishProgressUpdate(String jobId, int progress, String currentStep) {
         Sinks.Many<ServerSentEvent<Object>> sink = jobSinks.get(jobId);
-        if (sink == null) return;
+        if (sink == null) {
+            log.debug("No sink found for job: {}, creating new one for progress update", jobId);
+            sink = getOrCreateSink(jobId);
+        }
 
         ServerSentEvent<Object> event = ServerSentEvent.builder()
                 .event("progress")
@@ -134,7 +137,10 @@ public class DeepSearchEventService {
      */
     public void publishEvidence(String jobId, EvidenceDto evidence) {
         Sinks.Many<ServerSentEvent<Object>> sink = jobSinks.get(jobId);
-        if (sink == null) return;
+        if (sink == null) {
+            log.debug("No sink found for job: {}, creating new one for evidence", jobId);
+            sink = getOrCreateSink(jobId);
+        }
 
         // Get current evidence count from the sink's context or use a simple counter
         int evidenceCount = evidence.getId() != null ? evidence.getId().intValue() : 1;
@@ -162,7 +168,10 @@ public class DeepSearchEventService {
      */
     public void publishComplete(String jobId, DeepSearchJobDto jobDto) {
         Sinks.Many<ServerSentEvent<Object>> sink = jobSinks.get(jobId);
-        if (sink == null) return;
+        if (sink == null) {
+            log.debug("No sink found for job: {}, creating new one for completion", jobId);
+            sink = getOrCreateSink(jobId);
+        }
 
         ServerSentEvent<Object> event = ServerSentEvent.builder()
                 .event("complete")
@@ -201,7 +210,10 @@ public class DeepSearchEventService {
      */
     public void publishError(String jobId, String errorMessage, CrawlFailureReason failureReason) {
         Sinks.Many<ServerSentEvent<Object>> sink = jobSinks.get(jobId);
-        if (sink == null) return;
+        if (sink == null) {
+            log.debug("No sink found for job: {}, creating new one for error", jobId);
+            sink = getOrCreateSink(jobId);
+        }
 
         // Build error data map with optional failure reason
         java.util.Map<String, Object> errorData = new java.util.HashMap<>();

@@ -14,6 +14,7 @@ Features:
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Any, Tuple
 from enum import Enum
@@ -25,6 +26,20 @@ import logging
 import asyncio
 from functools import lru_cache
 from contextlib import asynccontextmanager
+
+# Prometheus metrics
+try:
+    from prometheus_client import (
+        Counter,
+        Histogram,
+        Gauge,
+        CONTENT_TYPE_LATEST,
+        generate_latest,
+    )
+
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -153,6 +168,52 @@ async def get_http_client():
     return _api_clients.get("http_client")
 
 
+# Model loading status for health checks
+_model_warmup_complete = False
+_model_warmup_error = None
+
+
+async def _warmup_models():
+    """Warm up models and track completion status"""
+    global _model_warmup_complete, _model_warmup_error
+    try:
+        logger.info("Starting model warm-up...")
+        start_time = time.time()
+
+        # Load models synchronously in thread
+        models = await asyncio.to_thread(get_ml_models)
+
+        if models.get("loaded"):
+            # Run a dummy inference to fully warm up the model
+            if "claim_model" in models and "claim_tokenizer" in models:
+                try:
+                    dummy_text = "테스트 문장입니다."
+                    tokenizer = models["claim_tokenizer"]
+                    model = models["claim_model"]
+                    inputs = tokenizer(
+                        dummy_text, return_tensors="pt", truncation=True, max_length=128
+                    )
+                    if models.get("device") == "cuda":
+                        inputs = {k: v.cuda() for k, v in inputs.items()}
+                    with __import__("torch").no_grad():
+                        _ = model(**inputs)
+                    logger.info("Claim model warm-up inference complete")
+                except Exception as e:
+                    logger.warning(f"Claim model warm-up inference failed: {e}")
+
+            elapsed = time.time() - start_time
+            logger.info(f"Model warm-up completed in {elapsed:.2f}s")
+            _model_warmup_complete = True
+        else:
+            logger.warning("Models not loaded, running in heuristic mode")
+            _model_warmup_complete = True  # Still mark as complete for heuristic mode
+
+    except Exception as e:
+        logger.error(f"Model warm-up failed: {e}")
+        _model_warmup_error = str(e)
+        _model_warmup_complete = True  # Mark complete even on error to avoid blocking
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler"""
@@ -161,7 +222,8 @@ async def lifespan(app: FastAPI):
 
     # Preload models in background if ML is enabled
     if os.getenv("ENABLE_ML_MODELS", "true").lower() == "true":
-        asyncio.create_task(asyncio.to_thread(get_ml_models))
+        # Start warm-up task
+        asyncio.create_task(_warmup_models())
 
     yield
 
@@ -186,6 +248,56 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ========== Prometheus Metrics ==========
+
+if PROMETHEUS_AVAILABLE:
+    # Request metrics
+    REQUEST_COUNT = Counter(
+        "factcheck_requests_total",
+        "Total number of factcheck requests",
+        ["endpoint", "status"],
+    )
+    REQUEST_LATENCY = Histogram(
+        "factcheck_request_latency_seconds",
+        "Request latency in seconds",
+        ["endpoint"],
+        buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
+    )
+
+    # Analysis metrics
+    ANALYSIS_COUNT = Counter(
+        "factcheck_analysis_total",
+        "Total number of analyses performed",
+        ["mode", "verdict"],
+    )
+    CLAIMS_EXTRACTED = Counter(
+        "factcheck_claims_extracted_total", "Total number of claims extracted"
+    )
+
+    # Model metrics
+    MODEL_LOADED = Gauge(
+        "factcheck_model_loaded", "Whether ML models are loaded (1=yes, 0=no)"
+    )
+    MODEL_WARMUP_COMPLETE = Gauge(
+        "factcheck_model_warmup_complete",
+        "Whether model warm-up is complete (1=yes, 0=no)",
+    )
+
+    # Error metrics
+    ERROR_COUNT = Counter(
+        "factcheck_errors_total", "Total number of errors", ["error_type"]
+    )
+
+    @app.get("/metrics")
+    async def metrics():
+        """Prometheus metrics endpoint"""
+        # Update model status gauges
+        models = get_ml_models() if not _model_loading else {}
+        MODEL_LOADED.set(1 if models.get("loaded") else 0)
+        MODEL_WARMUP_COMPLETE.set(1 if _model_warmup_complete else 0)
+
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # ========== Enums and Models ==========
 
@@ -1257,34 +1369,30 @@ def analyze_claim(
                         if similarity > 0.5:
                             supporting.append(f"키워드 유사도: {similarity:.0%}")
 
-    # If no external verification, use heuristic with intent boost
+    # If no external verification available, mark as UNVERIFIED with appropriate context
+    # IMPORTANT: We do NOT use pseudo-random verdicts as they mislead users
     if verdict == ClaimVerdict.UNVERIFIED.value:
-        # Use intent analysis for better verdict estimation
+        # Use intent analysis to provide better context
         if intent_analysis and intent_analysis.get("intent", {}).get("is_verifiable"):
-            # Hash-based pseudo-random for demo (will be replaced by actual ML)
-            claim_hash = int(hashlib.md5(claim_text.encode()).hexdigest(), 16)
-            # Verifiable claims have higher chance of being verified
-            verdict_options = [
-                ClaimVerdict.VERIFIED.value,
-                ClaimVerdict.VERIFIED.value,
-                ClaimVerdict.VERIFIED.value,
-                ClaimVerdict.UNVERIFIED.value,
-                ClaimVerdict.MISLEADING.value,
-            ]
-            verdict = verdict_options[claim_hash % 5]
-            confidence = 0.55 + (claim_hash % 45) / 100
+            # This is a verifiable claim but we couldn't verify it externally
+            # Keep it as UNVERIFIED with low confidence
+            verdict = ClaimVerdict.UNVERIFIED.value
+            confidence = 0.35  # Low confidence since no external verification
+            analysis_method = "needs_external_verification"
+            supporting.append("검증 가능한 주장이나 외부 검증 소스를 찾지 못했습니다")
         else:
-            # Non-verifiable claims (opinions, etc.)
-            claim_hash = int(hashlib.md5(claim_text.encode()).hexdigest(), 16)
-            verdict_options = [
-                ClaimVerdict.VERIFIED.value,
-                ClaimVerdict.UNVERIFIED.value,
-                ClaimVerdict.UNVERIFIED.value,
-                ClaimVerdict.UNVERIFIED.value,
-                ClaimVerdict.MISLEADING.value,
-            ]
-            verdict = verdict_options[claim_hash % 5]
-            confidence = 0.4 + (claim_hash % 30) / 100
+            # Non-verifiable claims (opinions, subjective statements, etc.)
+            verdict = ClaimVerdict.UNVERIFIED.value
+            confidence = 0.25  # Very low confidence for non-verifiable claims
+            analysis_method = "opinion_or_subjective"
+            supporting.append("의견 또는 주관적 주장으로 사실 검증이 어렵습니다")
+
+        # If ML model provided some insight, use that to adjust confidence slightly
+        if ml_confidence and ml_confidence > 0.5:
+            confidence = min(
+                0.5, ml_confidence * 0.6
+            )  # Cap at 0.5 for ML-only analysis
+            analysis_method = "ml_analysis_only"
 
     # Clamp confidence
     confidence = max(0.0, min(1.0, confidence))
@@ -1569,12 +1677,29 @@ async def health_check():
         "service": "factcheck-addon",
         "version": "2.0.0",
         "ml_enabled": models.get("loaded", False),
+        "warmup_complete": _model_warmup_complete,
+        "warmup_error": _model_warmup_error,
         "models_loaded": [
             k
             for k in models.keys()
             if k not in ["loaded", "device"] and models.get(k) is not None
         ],
         "device": models.get("device", "cpu"),
+    }
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness check - only returns healthy when models are warmed up"""
+    if not _model_warmup_complete:
+        return {"status": "warming_up", "ready": False}
+
+    models = get_ml_models()
+    return {
+        "status": "ready",
+        "ready": True,
+        "ml_enabled": models.get("loaded", False),
+        "warmup_error": _model_warmup_error,
     }
 
 
@@ -1595,6 +1720,21 @@ async def analyze(request: AddonRequest):
         # Response metadata
         latency_ms = int((time.time() - start_time) * 1000)
         models = get_ml_models()
+
+        # Track Prometheus metrics
+        if PROMETHEUS_AVAILABLE:
+            REQUEST_COUNT.labels(endpoint="analyze", status="success").inc()
+            REQUEST_LATENCY.labels(endpoint="analyze").observe(time.time() - start_time)
+            ANALYSIS_COUNT.labels(
+                mode=request.options.analysis_mode.value
+                if request.options and request.options.analysis_mode
+                else "hybrid",
+                verdict=factcheck_result.overall_verdict
+                if factcheck_result
+                else "unknown",
+            ).inc()
+            if factcheck_result and factcheck_result.claims:
+                CLAIMS_EXTRACTED.inc(len(factcheck_result.claims))
 
         return AddonResponse(
             request_id=request.request_id,
@@ -1617,6 +1757,12 @@ async def analyze(request: AddonRequest):
     except Exception as e:
         logger.error(f"Analysis error: {e}")
         latency_ms = int((time.time() - start_time) * 1000)
+
+        # Track error metrics
+        if PROMETHEUS_AVAILABLE:
+            REQUEST_COUNT.labels(endpoint="analyze", status="error").inc()
+            REQUEST_LATENCY.labels(endpoint="analyze").observe(time.time() - start_time)
+            ERROR_COUNT.labels(error_type=type(e).__name__).inc()
 
         return AddonResponse(
             request_id=request.request_id,

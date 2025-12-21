@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
   // API Gateway (Spring Cloud Gateway) - 포트 8000
   // 프로덕션: docker-compose에서 api-gateway:8000
   // 개발: 로컬에서 실행 시 localhost:8000
-  const apiGatewayUrl = env.VITE_API_BASE_URL || "http://localhost:8000";
+  const apiGatewayUrl = env.VITE_API_BASE_URL || "http://localhost:8081";
   
   // Cloudflare Tunnel 환경인지 확인 (환경변수로 제어)
   const isCloudflareTunnel = env.VITE_CLOUDFLARE_TUNNEL === 'true';

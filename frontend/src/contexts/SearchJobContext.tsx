@@ -195,7 +195,6 @@ export function SearchJobProvider({
         break;
 
       case 'completed': {
-        const existingJob = state.jobs.find(j => j.jobId === jobId);
         dispatch({
           type: 'UPDATE_JOB',
           jobId,
@@ -205,20 +204,11 @@ export function SearchJobProvider({
             completedAt: new Date().toISOString(),
           },
         });
-
-        // Show completion toast
-        if (existingJob) {
-          toast({
-            title: `${JOB_TYPE_LABELS[existingJob.type]} 완료`,
-            description: `"${existingJob.query}" 작업이 완료되었습니다.`,
-            duration: 8000,
-          });
-        }
+        // Note: Toast notification will be shown by the status change detector
         break;
       }
 
       case 'failed': {
-        const failedJob = state.jobs.find(j => j.jobId === jobId);
         dispatch({
           type: 'UPDATE_JOB',
           jobId,
@@ -228,21 +218,11 @@ export function SearchJobProvider({
             completedAt: new Date().toISOString(),
           },
         });
-
-        // Show failure toast
-        if (failedJob) {
-          toast({
-            title: `${JOB_TYPE_LABELS[failedJob.type]} 실패`,
-            description: message || `"${failedJob.query}" 작업 중 오류가 발생했습니다.`,
-            variant: 'destructive',
-            duration: 10000,
-          });
-        }
+        // Note: Toast notification will be shown by the status change detector
         break;
       }
 
       case 'cancelled': {
-        const cancelledJob = state.jobs.find(j => j.jobId === jobId);
         dispatch({
           type: 'UPDATE_JOB',
           jobId,
@@ -251,14 +231,7 @@ export function SearchJobProvider({
             completedAt: new Date().toISOString(),
           },
         });
-
-        if (cancelledJob) {
-          toast({
-            title: `${JOB_TYPE_LABELS[cancelledJob.type]} 취소됨`,
-            description: `"${cancelledJob.query}" 작업이 취소되었습니다.`,
-            duration: 5000,
-          });
-        }
+        // Note: Toast notification will be shown by the status change detector
         break;
       }
 
@@ -336,6 +309,13 @@ export function SearchJobProvider({
 
       eventSource.onerror = (err) => {
         console.error('[SearchJob SSE] Error:', err);
+        
+        // Close the failed connection
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
+        
         dispatch({ type: 'SET_CONNECTED', connected: false });
 
         // Attempt reconnection with exponential backoff
@@ -351,6 +331,7 @@ export function SearchJobProvider({
             connect();
           }, delay);
         } else {
+          console.error('[SearchJob SSE] Max reconnection attempts reached. Stopping reconnection.');
           dispatch({
             type: 'SET_CONNECTED',
             connected: false,
@@ -388,15 +369,67 @@ export function SearchJobProvider({
     try {
       const jobs = await getAllSearchJobs(userIdRef.current, MAX_JOBS_TO_KEEP);
       dispatch({ type: 'LOAD_JOBS', jobs });
+      return jobs;
     } catch (err) {
       console.error('[SearchJob] Failed to load jobs:', err);
       dispatch({ type: 'LOAD_JOBS', jobs: [] });
+      return [];
     }
   }, []);
 
+  // Track previous job states to detect completions when returning to page
+  const prevJobStatesRef = useRef<Map<string, SearchJobStatus>>(new Map());
+
+  // Detect newly completed jobs (for background completion notifications)
+  useEffect(() => {
+    const currentStates = new Map(state.jobs.map(j => [j.jobId, j.status]));
+    
+    state.jobs.forEach(job => {
+      const prevStatus = prevJobStatesRef.current.get(job.jobId);
+      const isNewlyCompleted = prevStatus && 
+        (prevStatus === 'PENDING' || prevStatus === 'RUNNING') &&
+        (job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED');
+      
+      if (isNewlyCompleted) {
+        console.log(`[SearchJob] Detected background completion: ${job.jobId} (${prevStatus} -> ${job.status})`);
+        
+        // Show notification for background completion
+        if (job.status === 'COMPLETED') {
+          toast({
+            title: `✅ ${JOB_TYPE_LABELS[job.type]} 완료`,
+            description: `"${job.query}" 작업이 완료되었습니다. 결과를 확인하세요.`,
+            duration: 8000,
+          });
+        } else if (job.status === 'FAILED') {
+          toast({
+            title: `❌ ${JOB_TYPE_LABELS[job.type]} 실패`,
+            description: job.errorMessage || `"${job.query}" 작업 중 오류가 발생했습니다.`,
+            variant: 'destructive',
+            duration: 10000,
+          });
+        } else if (job.status === 'CANCELLED') {
+          toast({
+            title: `⚠️ ${JOB_TYPE_LABELS[job.type]} 취소됨`,
+            description: `"${job.query}" 작업이 취소되었습니다.`,
+            duration: 5000,
+          });
+        }
+      }
+    });
+    
+    prevJobStatesRef.current = currentStates;
+  }, [state.jobs]);
+
   // Initialize on mount
   useEffect(() => {
-    loadJobs();
+    const initializeJobs = async () => {
+      const jobs = await loadJobs();
+      
+      // Store initial job states (don't show notifications for already completed jobs on mount)
+      prevJobStatesRef.current = new Map(jobs.map(j => [j.jobId, j.status]));
+    };
+    
+    initializeJobs();
 
     if (autoConnect) {
       connect();
@@ -405,7 +438,31 @@ export function SearchJobProvider({
     return () => {
       disconnect();
     };
-  }, [loadJobs, connect, disconnect, autoConnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoConnect]); // Only run on mount and when autoConnect changes
+
+  // Refresh jobs when page becomes visible (user returns to tab)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[SearchJob] Page visible, refreshing jobs...');
+        loadJobs();
+        
+        // Reconnect SSE if disconnected
+        if (autoConnect && !state.isConnected) {
+          console.log('[SearchJob] Reconnecting SSE...');
+          connect();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoConnect, state.isConnected]);
 
   // Derived state
   const activeJobs = state.jobs.filter(

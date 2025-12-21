@@ -195,7 +195,7 @@ export function useDeepSearchSSE(options: UseDeepSearchSSEOptions): UseDeepSearc
           title: topic,
           status: 'pending',
           progress: 0,
-          resultUrl: `/deep-search?jobId=${jobId}`,
+          resultUrl: `/search?mode=deep&jobId=${jobId}`,
         });
       }
     }

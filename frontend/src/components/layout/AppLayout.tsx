@@ -1,12 +1,24 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Command } from 'lucide-react';
+import { Command, User, LogIn, LogOut } from 'lucide-react';
 import { BackgroundTaskIndicator } from '@/components/BackgroundTaskIndicator';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileNavDrawer } from '@/components/MobileNavDrawer';
 import { NotificationBell } from '@/contexts/NotificationContext';
 import { NewNavigation, MobileBottomNav } from './NewNavigation';
+import { SetupBanner } from './SetupBanner';
+import { QuickAccessButton } from './QuickAccessButton';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { useAutoNotifications } from '@/hooks/useNotificationBridge';
+import { useAuth } from '@/contexts/AuthContext';
+import { useSkipLinks } from '@/hooks/useAccessibility';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -14,6 +26,8 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const location = useLocation();
+  const { isAuthenticated, user, logout, isLoading } = useAuth();
+  const { SkipLink } = useSkipLinks();
 
   // SSE 이벤트를 NotificationContext에 자동 연결
   useAutoNotifications({
@@ -24,8 +38,20 @@ export function AppLayout({ children }: AppLayoutProps) {
     dedupeInterval: 10000, // 10초 내 동일 타입 알림 중복 방지
   });
 
+  const handleLogout = async () => {
+    await logout();
+    window.location.href = '/';
+  };
+
   return (
     <div className="min-h-screen flex flex-col pb-16 md:pb-0">
+      {/* Skip Links for Accessibility - visible only on keyboard focus */}
+      <SkipLink targetId="main-content" text="본문으로 건너뛰기" />
+      <SkipLink targetId="search-input" text="검색으로 건너뛰기" />
+      
+      {/* Setup Banner - Shows when admin setup is required */}
+      <SetupBanner />
+
       {/* Header */}
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container flex h-14 items-center justify-between px-4">
@@ -77,18 +103,71 @@ export function AppLayout({ children }: AppLayoutProps) {
               <kbd className="ml-2 px-1.5 py-0.5 rounded bg-background text-[10px]">Ctrl+K</kbd>
             </button>
             
+            {/* Quick Access Button */}
+            <QuickAccessButton />
+            
             {/* Notification Bell */}
             <NotificationBell />
             {/* Theme Toggle */}
             <ThemeToggle variant="dropdown" size="sm" />
             {/* Background Task Indicator */}
             <BackgroundTaskIndicator />
+            
+            {/* User Menu / Login Button */}
+            {!isLoading && (
+              isAuthenticated && user ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="gap-2">
+                      <User className="h-4 w-4" />
+                      <span className="hidden sm:inline max-w-24 truncate">{user.username}</span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <div className="px-2 py-1.5 text-sm">
+                      <div className="font-medium">{user.username}</div>
+                      {user.email && (
+                        <div className="text-xs text-muted-foreground truncate">{user.email}</div>
+                      )}
+                      <div className="text-xs text-muted-foreground capitalize mt-1">
+                        {user.role === 'user' ? '일반 회원' : user.role}
+                      </div>
+                    </div>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem asChild>
+                      <Link to="/settings" className="cursor-pointer">
+                        설정
+                      </Link>
+                    </DropdownMenuItem>
+                    {(user.role === 'admin' || user.role === 'operator' || user.role === 'viewer') && (
+                      <DropdownMenuItem asChild>
+                        <Link to="/admin/environments" className="cursor-pointer">
+                          관리자 페이지
+                        </Link>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleLogout} className="text-red-600 cursor-pointer">
+                      <LogOut className="h-4 w-4 mr-2" />
+                      로그아웃
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <Button variant="outline" size="sm" asChild className="gap-2">
+                  <Link to="/login">
+                    <LogIn className="h-4 w-4" />
+                    <span className="hidden sm:inline">로그인</span>
+                  </Link>
+                </Button>
+              )
+            )}
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1" role="main">
+      <main id="main-content" className="flex-1" role="main" tabIndex={-1}>
         {children}
       </main>
 

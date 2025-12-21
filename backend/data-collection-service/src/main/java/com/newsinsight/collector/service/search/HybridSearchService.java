@@ -20,6 +20,8 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -71,11 +73,26 @@ public class HybridSearchService {
      * @return RRF 점수순 정렬된 검색 결과
      */
     public Mono<HybridSearchResult> search(String query, String window) {
+        return search(query, window, null, null);
+    }
+
+    /**
+     * 하이브리드 검색을 실행합니다 (커스텀 날짜 범위 지원).
+     * 키워드 검색과 시맨틱 검색을 병렬로 실행하고 RRF로 융합합니다.
+     *
+     * @param query 검색 쿼리
+     * @param window 시간 범위 (1d, 7d, 30d) - startDate가 지정되면 무시됨
+     * @param startDate 커스텀 시작 날짜 (ISO 8601 형식)
+     * @param endDate 커스텀 종료 날짜 (ISO 8601 형식)
+     * @return RRF 점수순 정렬된 검색 결과
+     */
+    public Mono<HybridSearchResult> search(String query, String window, String startDate, String endDate) {
         if (query == null || query.isBlank()) {
             return Mono.just(HybridSearchResult.empty());
         }
 
-        log.info("Starting hybrid search: query='{}', window={}", query, window);
+        log.info("Starting hybrid search: query='{}', window={}, startDate={}, endDate={}", 
+                query, window, startDate, endDate);
         long startTime = System.currentTimeMillis();
 
         // 1. 의도 분석
@@ -83,13 +100,17 @@ public class HybridSearchService {
         log.debug("Query intent: type={}, confidence={}, keywords={}", 
                 intent.getType(), intent.getConfidence(), intent.getKeywords());
 
-        LocalDateTime since = calculateSinceDate(window, intent);
+        // Calculate date range
+        LocalDateTime since = calculateSinceDate(window, intent, startDate);
+        LocalDateTime until = calculateEndDate(endDate);
+        
+        log.debug("Effective date range: {} to {}", since, until != null ? until : "now");
 
         // 2. 병렬 검색 실행
-        Mono<List<SearchCandidate>> keywordResults = searchKeyword(query, since)
+        Mono<List<SearchCandidate>> keywordResults = searchKeyword(query, since, until)
                 .subscribeOn(Schedulers.boundedElastic());
         
-        Mono<List<SearchCandidate>> semanticResults = searchSemantic(query, since)
+        Mono<List<SearchCandidate>> semanticResults = searchSemantic(query, since, until)
                 .subscribeOn(Schedulers.boundedElastic());
 
         // 3. 결과 융합
@@ -140,15 +161,23 @@ public class HybridSearchService {
     /**
      * 키워드 기반 검색 (PostgreSQL LIKE/Full-text)
      */
-    private Mono<List<SearchCandidate>> searchKeyword(String query, LocalDateTime since) {
+    private Mono<List<SearchCandidate>> searchKeyword(String query, LocalDateTime since, LocalDateTime until) {
         return Mono.fromCallable(() -> {
             try {
                 PageRequest pageRequest = PageRequest.of(0, keywordTopK,
                         Sort.by(Sort.Direction.DESC, "publishedDate")
                                 .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
 
-                Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(
-                        query, since, pageRequest);
+                Page<CollectedData> page;
+                if (until != null) {
+                    // Use date range query
+                    page = collectedDataRepository.searchByQueryAndDateRange(
+                            query, since, until, pageRequest);
+                } else {
+                    // Use since-only query
+                    page = collectedDataRepository.searchByQueryAndSince(
+                            query, since, pageRequest);
+                }
 
                 return page.getContent().stream()
                         .map(data -> SearchCandidate.builder()
@@ -177,7 +206,7 @@ public class HybridSearchService {
     /**
      * 시맨틱(벡터) 검색 (pgvector)
      */
-    private Mono<List<SearchCandidate>> searchSemantic(String query, LocalDateTime since) {
+    private Mono<List<SearchCandidate>> searchSemantic(String query, LocalDateTime since, LocalDateTime until) {
         if (!vectorSearchService.isAvailable()) {
             log.debug("Vector search not available, skipping semantic search");
             return Mono.just(List.of());
@@ -210,13 +239,24 @@ public class HybridSearchService {
                     return scoredDocs.stream()
                             .filter(doc -> dataMap.containsKey(doc.id()))
                             .filter(doc -> {
-                                // 시간 필터링 적용
+                                // 시간 필터링 적용 (since ~ until)
                                 CollectedData data = dataMap.get(doc.id());
                                 LocalDateTime publishedDate = data.getPublishedDate();
                                 if (publishedDate == null) {
                                     publishedDate = data.getCollectedAt();
                                 }
-                                return publishedDate == null || !publishedDate.isBefore(since);
+                                if (publishedDate == null) {
+                                    return true;  // No date info, include by default
+                                }
+                                // Check since
+                                if (publishedDate.isBefore(since)) {
+                                    return false;
+                                }
+                                // Check until (if specified)
+                                if (until != null && publishedDate.isAfter(until)) {
+                                    return false;
+                                }
+                                return true;
                             })
                             .map(doc -> {
                                 CollectedData data = dataMap.get(doc.id());
@@ -272,6 +312,22 @@ public class HybridSearchService {
     }
 
     /**
+     * 의도를 고려한 시간 범위 계산 (커스텀 날짜 지원)
+     */
+    private LocalDateTime calculateSinceDate(String window, QueryIntent intent, String startDate) {
+        // Custom startDate takes priority
+        if (startDate != null && !startDate.isBlank()) {
+            try {
+                return LocalDateTime.parse(startDate, DateTimeFormatter.ISO_DATE_TIME);
+            } catch (DateTimeParseException e) {
+                log.warn("Invalid startDate format: '{}', falling back to window", startDate);
+            }
+        }
+        
+        return calculateSinceDate(window, intent);
+    }
+
+    /**
      * 의도를 고려한 시간 범위 계산
      */
     private LocalDateTime calculateSinceDate(String window, QueryIntent intent) {
@@ -292,11 +348,31 @@ public class HybridSearchService {
         return calculateFromWindow(window, now);
     }
 
+    /**
+     * Calculate end date from custom endDate string
+     */
+    private LocalDateTime calculateEndDate(String endDate) {
+        if (endDate != null && !endDate.isBlank()) {
+            try {
+                return LocalDateTime.parse(endDate, DateTimeFormatter.ISO_DATE_TIME);
+            } catch (DateTimeParseException e) {
+                log.warn("Invalid endDate format: '{}', using current time", endDate);
+            }
+        }
+        return null;  // null means no upper limit (i.e., "now")
+    }
+
     private LocalDateTime calculateFromWindow(String window, LocalDateTime now) {
         return switch (window != null ? window : "7d") {
+            case "1h" -> now.minusHours(1);
             case "1d" -> now.minusDays(1);
+            case "3d" -> now.minusDays(3);
+            case "14d" -> now.minusDays(14);
             case "30d" -> now.minusDays(30);
             case "90d" -> now.minusDays(90);
+            case "180d" -> now.minusDays(180);
+            case "365d" -> now.minusDays(365);
+            case "all" -> LocalDateTime.of(2000, 1, 1, 0, 0);
             default -> now.minusDays(7);
         };
     }

@@ -8,9 +8,12 @@ import { SearchJobProvider } from "@/contexts/SearchJobContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { QuickAccessProvider } from "@/contexts/QuickAccessContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ActiveJobsIndicator } from "@/components/ActiveJobsIndicator";
 import { CommandPalette } from "@/components/CommandPalette";
+import { QuickAccessPanel } from "@/components/QuickAccessPanel";
+import { useQuickAccess } from "@/contexts/QuickAccessContext";
 import NotFound from "./pages/NotFound";
 import AdminSources from "./pages/AdminSources";
 import BrowserAgent from "./pages/BrowserAgent";
@@ -36,10 +39,15 @@ import NewHome from "./pages/NewHome";
 import ToolsHub from "./pages/ToolsHub";
 import WorkspaceHub from "./pages/WorkspaceHub";
 
+// Auth Pages (Public)
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+
 // Admin Pages
 import AdminEnvironments from "./pages/admin/AdminEnvironments";
 import AdminScripts from "./pages/admin/AdminScripts";
 import AdminAuditLogs from "./pages/admin/AdminAuditLogs";
+import AdminUsers from "./pages/admin/AdminUsers";
 import AdminLogin from "./pages/admin/AdminLogin";
 import AdminSetup from "./pages/admin/AdminSetup";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -51,19 +59,13 @@ const RedirectWithState = ({ to }: { to: string }) => {
   return <Navigate to={to} replace state={location.state} />;
 };
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <ThemeProvider>
-      <AuthProvider>
-        <NotificationProvider>
-          <BackgroundTaskProvider>
-            <SearchJobProvider>
-              <TooltipProvider>
-              <Toaster />
-              <Sonner />
-              <BrowserRouter>
-                <CommandPalette />
-                <AppLayout>
+const AppContent = () => {
+  const { isOpen, close } = useQuickAccess();
+  return (
+    <>
+      <CommandPalette />
+      <QuickAccessPanel isOpen={isOpen} onClose={close} />
+      <AppLayout>
                   <Routes>
                 {/* NEW: Home - 새 대시보드 스타일 홈 */}
                 <Route path="/" element={<NewHome />} />
@@ -99,6 +101,10 @@ const App = () => (
                 <Route path="/deep-search" element={<RedirectWithState to="/search?mode=deep" />} />
                 <Route path="/fact-check" element={<RedirectWithState to="/factcheck" />} />
                 
+                {/* Public Auth Routes */}
+                <Route path="/login" element={<Login />} />
+                <Route path="/register" element={<Register />} />
+                
                 {/* Admin Routes */}
                 <Route path="/admin/login" element={<AdminLogin />} />
                 <Route path="/admin/setup" element={<ProtectedRoute allowSetup><AdminSetup /></ProtectedRoute>} />
@@ -107,6 +113,7 @@ const App = () => (
                 <Route path="/admin/environments" element={<ProtectedRoute requiredRole="operator"><AdminEnvironments /></ProtectedRoute>} />
                 <Route path="/admin/scripts" element={<ProtectedRoute requiredRole="operator"><AdminScripts /></ProtectedRoute>} />
                 <Route path="/admin/audit-logs" element={<ProtectedRoute requiredRole="admin"><AdminAuditLogs /></ProtectedRoute>} />
+                <Route path="/admin/users" element={<ProtectedRoute requiredRole="admin"><AdminUsers /></ProtectedRoute>} />
                 
                 {/* Settings */}
                 <Route path="/settings" element={<Settings />} />
@@ -114,17 +121,35 @@ const App = () => (
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
-            </AppLayout>
-            {/* Active Jobs Indicator - floating UI */}
-            <ActiveJobsIndicator position="bottom-right" />
-          </BrowserRouter>
-          </TooltipProvider>
-        </SearchJobProvider>
-      </BackgroundTaskProvider>
-    </NotificationProvider>
-  </AuthProvider>
-</ThemeProvider>
-</QueryClientProvider>
+      </AppLayout>
+      {/* Active Jobs Indicator - floating UI */}
+      <ActiveJobsIndicator position="bottom-right" />
+    </>
+  );
+};
+
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <ThemeProvider>
+      <AuthProvider>
+        <NotificationProvider>
+          <BackgroundTaskProvider>
+            <SearchJobProvider>
+              <QuickAccessProvider>
+                <TooltipProvider>
+                  <Toaster />
+                  <Sonner />
+                  <BrowserRouter>
+                    <AppContent />
+                  </BrowserRouter>
+                </TooltipProvider>
+              </QuickAccessProvider>
+            </SearchJobProvider>
+          </BackgroundTaskProvider>
+        </NotificationProvider>
+      </AuthProvider>
+    </ThemeProvider>
+  </QueryClientProvider>
 );
 
 export default App;

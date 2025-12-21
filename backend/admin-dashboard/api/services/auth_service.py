@@ -4,6 +4,8 @@ Auth Service - 인증/권한 관리 서비스
 
 import hashlib
 import secrets
+import random
+import string
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -30,6 +32,7 @@ class AuthService:
         self.algorithm = algorithm
         self.access_token_expire_minutes = access_token_expire_minutes
         self.users: dict[str, dict] = {}  # user_id -> user_data (with password hash)
+        self.email_verifications: dict[str, dict] = {}  # email -> verification data
         self._load_users()
 
     def _load_users(self) -> None:
@@ -181,6 +184,13 @@ class AuthService:
                 return self.get_user(user_data["id"])
         return None
 
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        """이메일로 조회"""
+        for user_data in self.users.values():
+            if user_data.get("email") == email:
+                return self.get_user(user_data["id"])
+        return None
+
     def list_users(self, active_only: bool = False) -> list[User]:
         """사용자 목록 조회"""
         users = []
@@ -236,6 +246,49 @@ class AuthService:
             email=data.email,
             role=data.role,
             is_active=data.is_active,
+            created_at=now,
+            last_login=None,
+            password_change_required=False,
+        )
+
+    def register_user(self, username: str, email: str, password: str) -> User:
+        """일반 사용자 회원가입
+
+        - 사용자명 중복 체크
+        - 이메일 중복 체크
+        - role은 항상 USER로 고정
+        """
+        # 사용자명 중복 확인
+        if self.get_user_by_username(username):
+            raise ValueError(f"이미 사용 중인 사용자명입니다: {username}")
+
+        # 이메일 중복 확인
+        if self.get_user_by_email(email):
+            raise ValueError(f"이미 사용 중인 이메일입니다: {email}")
+
+        user_id = f"user-{uuid4().hex[:8]}"
+        now = datetime.utcnow()
+
+        self.users[user_id] = {
+            "id": user_id,
+            "username": username,
+            "email": email,
+            "password_hash": self._hash_password(password),
+            "role": UserRole.USER.value,  # 항상 일반 사용자
+            "is_active": True,
+            "created_at": now.isoformat(),
+            "last_login": None,
+            "password_change_required": False,
+        }
+
+        self._save_users()
+
+        return User(
+            id=user_id,
+            username=username,
+            email=email,
+            role=UserRole.USER,
+            is_active=True,
             created_at=now,
             last_login=None,
             password_change_required=False,
@@ -337,3 +390,140 @@ class AuthService:
             has_users=has_users,
             is_default_admin=is_default_admin,
         )
+
+    # ============================================================================
+    # Email Verification Methods
+    # ============================================================================
+
+    def generate_verification_code(self) -> str:
+        """6자리 인증 코드 생성"""
+        return ''.join(random.choices(string.digits, k=6))
+
+    def create_email_verification(self, email: str, username: str, password: str) -> str:
+        """이메일 인증 요청 생성 (회원가입 전 단계)
+        
+        Returns:
+            verification_code: 6자리 인증 코드
+        """
+        # 이미 존재하는 이메일인지 확인
+        if self.get_user_by_email(email):
+            raise ValueError(f"이미 사용 중인 이메일입니다: {email}")
+        
+        # 이미 존재하는 사용자명인지 확인
+        if self.get_user_by_username(username):
+            raise ValueError(f"이미 사용 중인 사용자명입니다: {username}")
+
+        code = self.generate_verification_code()
+        expires_at = datetime.utcnow() + timedelta(minutes=10)  # 10분 유효
+
+        self.email_verifications[email] = {
+            "code": code,
+            "username": username,
+            "password_hash": self._hash_password(password),
+            "expires_at": expires_at.isoformat(),
+            "created_at": datetime.utcnow().isoformat(),
+            "attempts": 0,
+        }
+
+        return code
+
+    def verify_email_code(self, email: str, code: str) -> User:
+        """이메일 인증 코드 검증 및 회원가입 완료
+        
+        Args:
+            email: 이메일 주소
+            code: 6자리 인증 코드
+            
+        Returns:
+            User: 생성된 사용자 객체
+            
+        Raises:
+            ValueError: 유효하지 않은 인증 코드 또는 만료된 경우
+        """
+        verification = self.email_verifications.get(email)
+        
+        if not verification:
+            raise ValueError("인증 요청을 찾을 수 없습니다. 다시 시도해주세요.")
+        
+        # 시도 횟수 증가
+        verification["attempts"] += 1
+        
+        # 최대 시도 횟수 초과
+        if verification["attempts"] > 5:
+            del self.email_verifications[email]
+            raise ValueError("인증 시도 횟수를 초과했습니다. 처음부터 다시 시도해주세요.")
+        
+        # 만료 확인
+        expires_at = datetime.fromisoformat(verification["expires_at"])
+        if datetime.utcnow() > expires_at:
+            del self.email_verifications[email]
+            raise ValueError("인증 코드가 만료되었습니다. 다시 시도해주세요.")
+        
+        # 코드 확인
+        if verification["code"] != code:
+            raise ValueError(f"잘못된 인증 코드입니다. (남은 시도: {5 - verification['attempts']}회)")
+        
+        # 인증 성공 - 회원가입 완료
+        username = verification["username"]
+        password_hash = verification["password_hash"]
+        
+        # 최종 중복 확인
+        if self.get_user_by_email(email):
+            del self.email_verifications[email]
+            raise ValueError(f"이미 사용 중인 이메일입니다: {email}")
+        
+        if self.get_user_by_username(username):
+            del self.email_verifications[email]
+            raise ValueError(f"이미 사용 중인 사용자명입니다: {username}")
+        
+        # 사용자 생성
+        user_id = f"user-{uuid4().hex[:8]}"
+        now = datetime.utcnow()
+
+        self.users[user_id] = {
+            "id": user_id,
+            "username": username,
+            "email": email,
+            "password_hash": password_hash,
+            "role": UserRole.USER.value,
+            "is_active": True,
+            "created_at": now.isoformat(),
+            "last_login": None,
+            "password_change_required": False,
+            "email_verified": True,
+        }
+
+        self._save_users()
+        
+        # 인증 정보 삭제
+        del self.email_verifications[email]
+
+        return User(
+            id=user_id,
+            username=username,
+            email=email,
+            role=UserRole.USER,
+            is_active=True,
+            created_at=now,
+            last_login=None,
+            password_change_required=False,
+        )
+
+    def resend_verification_code(self, email: str) -> str:
+        """인증 코드 재발송
+        
+        Returns:
+            새로운 인증 코드
+        """
+        verification = self.email_verifications.get(email)
+        
+        if not verification:
+            raise ValueError("인증 요청을 찾을 수 없습니다. 처음부터 다시 시도해주세요.")
+        
+        # 새 코드 생성
+        code = self.generate_verification_code()
+        verification["code"] = code
+        verification["expires_at"] = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
+        verification["attempts"] = 0
+        
+        return code

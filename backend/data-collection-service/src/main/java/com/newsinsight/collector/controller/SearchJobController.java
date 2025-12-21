@@ -42,8 +42,13 @@ public class SearchJobController {
      * Supports concurrent execution of multiple job types.
      */
     @PostMapping
-    public ResponseEntity<Map<String, Object>> startJob(@RequestBody JobStartRequest request) {
-        log.info("Starting new search job: type={}, query='{}'", request.type(), request.query());
+    public ResponseEntity<Map<String, Object>> startJob(
+            @RequestBody JobStartRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-Session-Id", required = false) String sessionId
+    ) {
+        log.info("Starting new search job: type={}, query='{}', userId={}, sessionId={}", 
+                request.type(), request.query(), userId, sessionId);
 
         if (request.query() == null || request.query().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of(
@@ -57,12 +62,16 @@ public class SearchJobController {
             ));
         }
 
+        // Use headers if request doesn't specify userId/sessionId
+        String effectiveUserId = request.userId() != null ? request.userId() : userId;
+        String effectiveSessionId = request.sessionId() != null ? request.sessionId() : sessionId;
+
         SearchJobRequest jobRequest = SearchJobRequest.builder()
                 .type(request.type())
                 .query(request.query())
                 .timeWindow(request.timeWindow() != null ? request.timeWindow() : "7d")
-                .userId(request.userId())
-                .sessionId(request.sessionId())
+                .userId(effectiveUserId)
+                .sessionId(effectiveSessionId)
                 .projectId(request.projectId())
                 .options(request.options())
                 .build();
@@ -141,9 +150,12 @@ public class SearchJobController {
      */
     @GetMapping("/active")
     public ResponseEntity<List<SearchJob>> getActiveJobs(
-            @RequestParam(required = false, defaultValue = "anonymous") String userId
+            @RequestParam(required = false) String userId,
+            @RequestHeader(value = "X-User-Id", required = false) String headerUserId
     ) {
-        List<SearchJob> activeJobs = searchJobQueueService.getActiveJobs(userId);
+        // Use header userId if not provided in query param
+        String effectiveUserId = userId != null ? userId : headerUserId;
+        List<SearchJob> activeJobs = searchJobQueueService.getActiveJobs(effectiveUserId);
         return ResponseEntity.ok(activeJobs);
     }
 
@@ -152,10 +164,13 @@ public class SearchJobController {
      */
     @GetMapping
     public ResponseEntity<List<SearchJob>> getAllJobs(
-            @RequestParam(required = false, defaultValue = "anonymous") String userId,
-            @RequestParam(required = false, defaultValue = "20") int limit
+            @RequestParam(required = false) String userId,
+            @RequestParam(required = false, defaultValue = "20") int limit,
+            @RequestHeader(value = "X-User-Id", required = false) String headerUserId
     ) {
-        List<SearchJob> jobs = searchJobQueueService.getAllJobs(userId, limit);
+        // Use header userId if not provided in query param
+        String effectiveUserId = userId != null ? userId : headerUserId;
+        List<SearchJob> jobs = searchJobQueueService.getAllJobs(effectiveUserId, limit);
         return ResponseEntity.ok(jobs);
     }
 

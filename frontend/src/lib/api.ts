@@ -6,6 +6,7 @@ import type {
   PageResponse,
   SourceType,
 } from '@/types/api';
+import { getSessionId, getDeviceId } from './anonymous-session';
 
 // Storage key for access token (shared with AuthContext)
 const ACCESS_TOKEN_KEY = 'access_token';
@@ -93,13 +94,18 @@ export const getApiClient = async () => {
     withCredentials: true, // Include cookies in requests
   });
 
-  // Request interceptor to add Authorization header
+  // Request interceptor to add Authorization and Session headers
   apiInstance.interceptors.request.use(
     (config) => {
       const token = getAccessToken();
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
+      
+      // Always add session headers for anonymous user tracking
+      config.headers['X-Session-Id'] = getSessionId();
+      config.headers['X-Device-Id'] = getDeviceId();
+      
       return config;
     },
     (error) => {
@@ -916,19 +922,25 @@ export interface UnifiedSearchJob {
  * Returns immediately with job details; results are delivered via SSE.
  * 
  * @param query - Search query string
- * @param window - Time window (1d, 7d, 30d)
+ * @param window - Time window (1d, 7d, 30d, or 'custom' for custom date range)
  * @param priorityUrls - Optional array of URLs to prioritize for web crawling
+ * @param startDate - Optional start date for custom date range (ISO string)
+ * @param endDate - Optional end date for custom date range (ISO string)
  */
 export const startUnifiedSearchJob = async (
   query: string,
   window: string = '7d',
   priorityUrls?: string[],
+  startDate?: string,
+  endDate?: string,
 ): Promise<UnifiedSearchJob> => {
   const client = await getApiClient();
   const response = await client.post<UnifiedSearchJob>('/api/v1/search/jobs', {
     query,
     window,
     ...(priorityUrls && priorityUrls.length > 0 && { priorityUrls }),
+    ...(startDate && { startDate }),
+    ...(endDate && { endDate }),
   });
   return response.data;
 };
@@ -2612,7 +2624,7 @@ export interface HuggingFaceDataset {
  */
 export const KOREAN_DATASETS: HuggingFaceDataset[] = [
   {
-    id: 'nsmc',
+    id: 'e9t/nsmc',
     name: 'Naver Sentiment Movie Corpus',
     description: '네이버 영화 리뷰 감정 분석 데이터셋 (긍정/부정)',
     size: '200K',
@@ -2621,46 +2633,46 @@ export const KOREAN_DATASETS: HuggingFaceDataset[] = [
     language: 'ko',
   },
   {
-    id: 'klue/nli',
+    id: 'klue',
     name: 'KLUE NLI',
-    description: '한국어 자연어 추론 데이터셋',
-    size: '50K',
+    description: '한국어 자연어 추론 데이터셋 (config: nli)',
+    size: '28K',
     downloads: 100000,
     task: 'classification',
     language: 'ko',
   },
   {
-    id: 'klue/ner',
+    id: 'klue',
     name: 'KLUE NER',
-    description: '한국어 개체명 인식 데이터셋',
-    size: '21K',
+    description: '한국어 개체명 인식 데이터셋 (config: ner)',
+    size: '26K',
     downloads: 80000,
     task: 'ner',
     language: 'ko',
   },
   {
-    id: 'klue/ynat',
+    id: 'klue',
     name: 'KLUE YNAT',
-    description: '연합뉴스 주제 분류 데이터셋 (7개 카테고리)',
-    size: '45K',
+    description: '연합뉴스 주제 분류 데이터셋 (config: ynat)',
+    size: '55K',
     downloads: 90000,
     task: 'classification',
     language: 'ko',
   },
   {
-    id: 'kor_hate',
+    id: 'jeanlee/kmhas_korean_hate_speech',
     name: 'Korean Hate Speech',
-    description: '한국어 혐오 발언 데이터셋',
-    size: '8K',
+    description: '한국어 혐오 발언 데이터셋 (KMHAS)',
+    size: '110K',
     downloads: 30000,
     task: 'classification',
     language: 'ko',
   },
   {
-    id: 'korquad',
+    id: 'KorQuAD/squad_kor_v1',
     name: 'KorQuAD',
     description: '한국어 기계독해 데이터셋',
-    size: '70K',
+    size: '66K',
     downloads: 120000,
     task: 'qa',
     language: 'ko',
@@ -3875,5 +3887,199 @@ export const checkProjectServiceHealth = async (): Promise<{
 }> => {
   const client = await getApiClient();
   const response = await client.get('/api/v1/projects/health');
+  return response.data;
+};
+
+// ============================================
+// LLM Provider Settings API
+// Backend: /api/v1/llm-providers, /api/v1/admin/llm-providers
+// ============================================
+
+import type {
+  LlmProviderType as LlmProviderTypeEnum,
+  LlmProviderTypeInfo,
+  LlmProviderSettings,
+  LlmProviderSettingsRequest,
+  LlmTestResult,
+} from '@/types/api';
+
+/**
+ * 지원하는 LLM Provider 타입 목록 조회
+ */
+export const getLlmProviderTypes = async (): Promise<LlmProviderTypeInfo[]> => {
+  const client = await getApiClient();
+  const response = await client.get<LlmProviderTypeInfo[]>('/api/v1/llm-providers/types');
+  return response.data;
+};
+
+// ========== 관리자 전역 설정 API ==========
+
+/**
+ * 모든 전역(관리자) LLM 설정 조회
+ */
+export const getGlobalLlmSettings = async (): Promise<LlmProviderSettings[]> => {
+  const client = await getApiClient();
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/admin/llm-providers');
+  return response.data;
+};
+
+/**
+ * 특정 Provider의 전역 설정 조회
+ */
+export const getGlobalLlmSetting = async (providerType: LlmProviderTypeEnum): Promise<LlmProviderSettings | null> => {
+  const client = await getApiClient();
+  try {
+    const response = await client.get<LlmProviderSettings>(`/api/v1/admin/llm-providers/${providerType}`);
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+};
+
+/**
+ * 전역(관리자) LLM 설정 저장/수정
+ */
+export const saveGlobalLlmSetting = async (request: LlmProviderSettingsRequest): Promise<LlmProviderSettings> => {
+  const client = await getApiClient();
+  const response = await client.put<LlmProviderSettings>('/api/v1/admin/llm-providers', request);
+  return response.data;
+};
+
+/**
+ * 전역(관리자) LLM 설정 삭제
+ */
+export const deleteGlobalLlmSetting = async (providerType: LlmProviderTypeEnum): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete(`/api/v1/admin/llm-providers/${providerType}`);
+};
+
+/**
+ * 전역 설정 연결 테스트
+ */
+export const testGlobalLlmConnection = async (id: number): Promise<LlmTestResult> => {
+  const client = await getApiClient();
+  const response = await client.post<LlmTestResult>(`/api/v1/admin/llm-providers/${id}/test`);
+  return response.data;
+};
+
+/**
+ * 전역 설정 활성화/비활성화
+ */
+export const toggleGlobalLlmSetting = async (id: number, enabled: boolean): Promise<void> => {
+  const client = await getApiClient();
+  await client.post(`/api/v1/admin/llm-providers/${id}/toggle`, null, { params: { enabled } });
+};
+
+// ========== 사용자별 설정 API ==========
+
+/**
+ * 현재 사용자에게 유효한 모든 LLM 설정 조회 (사용자 설정 > 전역 설정)
+ */
+export const getEffectiveLlmSettings = async (userId?: string): Promise<LlmProviderSettings[]> => {
+  const client = await getApiClient();
+  const headers: Record<string, string> = {};
+  if (userId) headers['X-User-Id'] = userId;
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/llm-providers/effective', { headers });
+  return response.data;
+};
+
+/**
+ * 활성화된 Provider 목록 (Fallback 체인용)
+ */
+export const getEnabledLlmProviders = async (userId?: string): Promise<LlmProviderSettings[]> => {
+  const client = await getApiClient();
+  const headers: Record<string, string> = {};
+  if (userId) headers['X-User-Id'] = userId;
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/llm-providers/enabled', { headers });
+  return response.data;
+};
+
+/**
+ * 특정 Provider의 유효 설정 조회
+ */
+export const getEffectiveLlmSetting = async (
+  providerType: LlmProviderTypeEnum,
+  userId?: string
+): Promise<LlmProviderSettings | null> => {
+  const client = await getApiClient();
+  const headers: Record<string, string> = {};
+  if (userId) headers['X-User-Id'] = userId;
+  try {
+    const response = await client.get<LlmProviderSettings>(
+      `/api/v1/llm-providers/config/${providerType}`,
+      { headers }
+    );
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+};
+
+/**
+ * 사용자의 개인 LLM 설정만 조회
+ */
+export const getUserLlmSettings = async (userId: string): Promise<LlmProviderSettings[]> => {
+  const client = await getApiClient();
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/llm-providers/user', {
+    headers: { 'X-User-Id': userId },
+  });
+  return response.data;
+};
+
+/**
+ * 사용자 LLM 설정 저장/수정
+ */
+export const saveUserLlmSetting = async (
+  userId: string,
+  request: LlmProviderSettingsRequest
+): Promise<LlmProviderSettings> => {
+  const client = await getApiClient();
+  const response = await client.put<LlmProviderSettings>('/api/v1/llm-providers/user', request, {
+    headers: { 'X-User-Id': userId },
+  });
+  return response.data;
+};
+
+/**
+ * 사용자 LLM 설정 삭제 (전역 설정으로 폴백)
+ */
+export const deleteUserLlmSetting = async (userId: string, providerType: LlmProviderTypeEnum): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete(`/api/v1/llm-providers/user/${providerType}`, {
+    headers: { 'X-User-Id': userId },
+  });
+};
+
+/**
+ * 사용자의 모든 개인 설정 삭제
+ */
+export const deleteAllUserLlmSettings = async (userId: string): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete('/api/v1/llm-providers/user', {
+    headers: { 'X-User-Id': userId },
+  });
+};
+
+/**
+ * 사용자 설정 연결 테스트
+ */
+export const testUserLlmConnection = async (id: number): Promise<LlmTestResult> => {
+  const client = await getApiClient();
+  const response = await client.post<LlmTestResult>(`/api/v1/llm-providers/user/${id}/test`);
+  return response.data;
+};
+
+/**
+ * 새 설정으로 연결 테스트 (저장 전)
+ */
+export const testNewLlmConnection = async (request: LlmProviderSettingsRequest): Promise<LlmTestResult> => {
+  const client = await getApiClient();
+  const response = await client.post<LlmTestResult>('/api/v1/llm-providers/test', request);
   return response.data;
 };

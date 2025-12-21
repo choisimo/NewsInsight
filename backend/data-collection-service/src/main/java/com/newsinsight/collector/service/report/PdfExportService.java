@@ -237,7 +237,7 @@ public class PdfExportService {
                     .setBorder(new SolidBorder(new DeviceRgb(226, 232, 240), 1))
                     .setMarginBottom(20);
             
-            summaryBox.add(new Paragraph(truncateText(aiSummary, 1500))
+            summaryBox.add(new Paragraph(truncateText(aiSummary, 5000))
                     .setFontSize(11)
                     .setFontColor(new DeviceRgb(51, 65, 85)));
             
@@ -495,20 +495,26 @@ public class PdfExportService {
                     .setFontColor(NEUTRAL_COLOR)
                     .setMarginBottom(5));
             
-            // 요약
+            // 본문 내용 (content가 있으면 전체 사용, 없으면 snippet 사용)
+            String content = (String) result.get("content");
             String snippet = (String) result.get("snippet");
-            if (snippet != null && !snippet.isBlank()) {
-                resultBox.add(new Paragraph(truncateText(snippet, 200))
+            String displayContent = (content != null && !content.isBlank()) ? content : snippet;
+            if (displayContent != null && !displayContent.isBlank()) {
+                // PDF에서는 너무 긴 내용은 적절히 잘라서 표시 (최대 10000자)
+                String truncatedContent = displayContent.length() > 10000 
+                    ? displayContent.substring(0, 10000) + "..." 
+                    : displayContent;
+                resultBox.add(new Paragraph(truncatedContent)
                         .setFontSize(10)
                         .setFontColor(new DeviceRgb(71, 85, 105)));
             }
             
-            // URL
+            // URL (출처 링크)
             String url = (String) result.get("url");
             if (url != null && !url.isBlank()) {
-                resultBox.add(new Paragraph(truncateText(url, 80))
+                resultBox.add(new Paragraph("출처: " + url)
                         .setFontSize(9)
-                        .setFontColor(new DeviceRgb(100, 116, 139))
+                        .setFontColor(PRIMARY_COLOR)
                         .setMarginTop(5));
             }
             
@@ -521,10 +527,17 @@ public class PdfExportService {
 
     private PdfFont loadFont(String fontPath) throws IOException {
         try {
-            // 클래스패스에서 로드 시도
-            return PdfFontFactory.createFont(fontPath, PdfEncodings.IDENTITY_H);
+            // 클래스패스에서 리소스 로드
+            var resource = getClass().getClassLoader().getResourceAsStream(fontPath);
+            if (resource == null) {
+                log.warn("Font resource not found: {}, using default font", fontPath);
+                return PdfFontFactory.createFont();
+            }
+            
+            byte[] fontBytes = resource.readAllBytes();
+            return PdfFontFactory.createFont(fontBytes, PdfEncodings.IDENTITY_H);
         } catch (Exception e) {
-            log.warn("Failed to load font from {}, using default", fontPath);
+            log.error("Failed to load font from {}: {}", fontPath, e.getMessage(), e);
             // 기본 폰트 사용
             return PdfFontFactory.createFont();
         }

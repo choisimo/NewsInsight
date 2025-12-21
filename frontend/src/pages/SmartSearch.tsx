@@ -53,7 +53,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
@@ -94,15 +93,17 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+import { FactCheckChatbot, type FactCheckChatbotRef } from "@/components/FactCheckChatbot";
+import { UnifiedExportMenu } from "@/components/UnifiedExportMenu";
 import { useProjects, type Project, type ProjectItemType, ITEM_TYPE_LABELS } from "@/hooks/useProjects";
 import { useToast } from "@/hooks/use-toast";
+import { AdvancedFilters, defaultFilters, type SearchFilters } from "@/components/AdvancedFilters";
 import {
   startUnifiedSearchJob,
   openUnifiedSearchJobStream,
   startDeepSearch,
   getDeepSearchStatus,
   getDeepSearchResult,
-  openDeepAnalysisStream,
   createSearchTemplate,
   getAllTemplatesByUser,
   deleteSearchTemplate,
@@ -121,6 +122,7 @@ import {
   type SearchTemplate as ApiSearchTemplate,
 } from "@/lib/api";
 import { useDeepSearchSSE } from "@/hooks/useDeepSearchSSE";
+import { useBackgroundTasks } from "@/contexts/BackgroundTaskContext";
 import { PriorityUrlEditor, type PriorityUrl } from "@/components/PriorityUrlEditor";
 
 // ============================================
@@ -439,122 +441,7 @@ const EvidenceCard = ({ evidence, isSelected, onSelect, onViewDetail, onAddToPro
   );
 };
 
-interface VerificationCardProps {
-  result: VerificationResult;
-  isSelected: boolean;
-  onSelect: () => void;
-  onViewDetail: () => void;
-  onAddToProject?: () => void;
-  hasProject?: boolean;
-}
-
-const VerificationCard = ({ result, isSelected, onSelect, onViewDetail, onAddToProject, hasProject }: VerificationCardProps) => {
-  const config = VERIFICATION_CONFIG[result.status] || VERIFICATION_CONFIG.UNVERIFIED;
-  const StatusIcon = config.icon;
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <Card className={`${config.bgColor} border-l-4 ${isSelected ? "border-l-primary ring-2 ring-primary/30" : config.color.replace("text-", "border-l-")} transition-all`}>
-      <Collapsible open={expanded} onOpenChange={setExpanded}>
-        <CardContent className="p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-2">
-                <Badge className={`${config.bgColor} ${config.color} border-none`}>
-                  <StatusIcon className="h-3 w-3 mr-1" />
-                  {config.label}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  신뢰도: {Math.round(result.confidenceScore * 100)}%
-                </span>
-              </div>
-              <p className="font-medium text-sm mb-1">{result.originalClaim}</p>
-              <p className="text-sm text-muted-foreground">{result.verificationSummary}</p>
-            </div>
-            <div className="flex flex-col gap-1">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={onViewDetail}
-                      className="p-2 rounded-md hover:bg-muted text-muted-foreground transition-colors"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>세부 내용 보기</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={onSelect}
-                      className={`p-2 rounded-md transition-colors ${
-                        isSelected
-                          ? "bg-primary text-primary-foreground"
-                          : "hover:bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      <Pin className="h-4 w-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {isSelected ? "선택 해제" : "템플릿에 추가"}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              {hasProject && onAddToProject && (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={onAddToProject}
-                        className="p-2 rounded-md hover:bg-muted text-muted-foreground hover:text-green-600 transition-colors"
-                      >
-                        <FolderPlus className="h-4 w-4" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>프로젝트에 추가</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
-              {(result.supportingEvidence.length > 0 || result.contradictingEvidence.length > 0) && (
-                <CollapsibleTrigger asChild>
-                  <button className="p-2 rounded-md hover:bg-muted transition-colors">
-                    {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                  </button>
-                </CollapsibleTrigger>
-              )}
-            </div>
-          </div>
-          <CollapsibleContent className="mt-3 pt-3 border-t space-y-2">
-            {result.supportingEvidence.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-green-600 mb-1">지지 근거 ({result.supportingEvidence.length})</p>
-                {result.supportingEvidence.slice(0, 2).map((e, i) => (
-                  <div key={i} className="text-xs text-muted-foreground pl-2 border-l-2 border-green-400 mb-1">
-                    {e.excerpt.slice(0, 100)}...
-                  </div>
-                ))}
-              </div>
-            )}
-            {result.contradictingEvidence.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-red-600 mb-1">반박 근거 ({result.contradictingEvidence.length})</p>
-                {result.contradictingEvidence.slice(0, 2).map((e, i) => (
-                  <div key={i} className="text-xs text-muted-foreground pl-2 border-l-2 border-red-400 mb-1">
-                    {e.excerpt.slice(0, 100)}...
-                  </div>
-                ))}
-              </div>
-            )}
-          </CollapsibleContent>
-        </CardContent>
-      </Collapsible>
-    </Card>
-  );
-};
+// VerificationCard component removed - now using embedded FactCheckChatbot
 
 // ============================================
 // Selection Panel
@@ -685,6 +572,20 @@ export default function SmartSearch() {
     currentProject,
   } = useProjects({ userId: DEFAULT_USER_ID, autoLoad: true });
 
+  // Background tasks for loading completed Deep Search results
+  const { getTask } = useBackgroundTasks();
+
+  // State (moved before effects that use them)
+  const [activeTab, setActiveTab] = useState<SearchMode>(getInitialMode);
+  const [query, setQuery] = useState(searchParams.get("q") || "");
+
+  // Deep Search State (moved before the loading effect)
+  const [deepJobId, setDeepJobId] = useState<string | null>(null);
+  const [deepResults, setDeepResults] = useState<DeepSearchResult | null>(null);
+  const [deepLoading, setDeepLoading] = useState(false);
+  const [deepError, setDeepError] = useState<string | null>(null);
+  const [deepProgress, setDeepProgress] = useState(0);
+
   // Get selected project object
   const selectedProject = useMemo(() => {
     if (!selectedProjectId) return null;
@@ -704,15 +605,61 @@ export default function SmartSearch() {
     }
   }, [searchParams, selectProject]);
 
-  // State
-  const [activeTab, setActiveTab] = useState<SearchMode>(getInitialMode);
-  const [query, setQuery] = useState(searchParams.get("q") || "");
+  // Load Deep Search result from URL jobId parameter or background task
+  useEffect(() => {
+    const jobIdParam = searchParams.get("jobId");
+    if (!jobIdParam) return;
+
+    console.log('[SmartSearch] Loading Deep Search from jobId param:', jobIdParam);
+    setDeepJobId(jobIdParam);
+    setActiveTab("deep");
+    
+    // Try to load result from background task first
+    const task = getTask(jobIdParam);
+    if (task && task.result) {
+      console.log('[SmartSearch] Found cached result in background task:', task.result);
+      setDeepResults(task.result as DeepSearchResult);
+      setDeepProgress(100);
+      setDeepLoading(false);
+      if (task.title) {
+        setQuery(task.title);
+      }
+      return;
+    }
+
+    // Fallback: fetch from API
+    const loadFromApi = async () => {
+      try {
+        console.log('[SmartSearch] Fetching Deep Search result from API...');
+        setDeepLoading(true);
+        const result = await getDeepSearchResult(jobIdParam);
+        console.log('[SmartSearch] API result:', result);
+        setDeepResults(result);
+        setDeepProgress(100);
+        if (result.topic) {
+          setQuery(result.topic);
+        }
+      } catch (e) {
+        console.error('[SmartSearch] Failed to load Deep Search result:', e);
+        setDeepError(e instanceof Error ? e.message : 'Deep Search 결과를 불러오는데 실패했습니다.');
+      } finally {
+        setDeepLoading(false);
+      }
+    };
+
+    loadFromApi();
+  }, [searchParams, getTask, deepResults]);
+
+  // Additional State
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
   const [templates, setTemplates] = useState<SearchTemplate[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [templateFilter, setTemplateFilter] = useState<"all" | "favorites" | "recent" | "mostUsed">("all");
   const [templateSearchQuery, setTemplateSearchQuery] = useState("");
+
+  // Search filters state (time window, sources, etc.)
+  const [filters, setFilters] = useState<SearchFilters>(defaultFilters);
 
   // Unified Search State
   const [unifiedResults, setUnifiedResults] = useState<UnifiedSearchResult[]>([]);
@@ -726,18 +673,8 @@ export default function SmartSearch() {
   const [aiReportSummary, setAiReportSummary] = useState<string | null>(null);
   const [aiReportContent, setAiReportContent] = useState<string | null>(null);
 
-  // Deep Search State
-  const [deepJobId, setDeepJobId] = useState<string | null>(null);
-  const [deepResults, setDeepResults] = useState<DeepSearchResult | null>(null);
-  const [deepLoading, setDeepLoading] = useState(false);
-  const [deepError, setDeepError] = useState<string | null>(null);
-  const [deepProgress, setDeepProgress] = useState(0);
-
-  // FactCheck State
-  const [claims, setClaims] = useState<string[]>([""]);
-  const [factCheckResults, setFactCheckResults] = useState<VerificationResult[]>([]);
-  const [factCheckLoading, setFactCheckLoading] = useState(false);
-  const [factCheckError, setFactCheckError] = useState<string | null>(null);
+  // FactCheck State - Moved to embedded FactCheckChatbot component
+  // Old states removed: claims, factCheckResults, factCheckLoading, factCheckError
 
   // URL Analysis State
   const [analysisUrl, setAnalysisUrl] = useState("");
@@ -762,6 +699,12 @@ export default function SmartSearch() {
 
   // Track if we should auto-search on initial load
   const initialSearchRef = useRef(false);
+  
+  // Ref for the embedded FactCheckChatbot
+  const factCheckChatbotRef = useRef<FactCheckChatbotRef>(null);
+  
+  // State for claims to be sent to the chatbot (from URL analysis transfer)
+  const [pendingFactCheckClaims, setPendingFactCheckClaims] = useState<string[]>([]);
 
   // Accept navigation state from other pages (SearchHistory, UrlCollections, ParallelSearch, etc.)
   useEffect(() => {
@@ -793,13 +736,15 @@ export default function SmartSearch() {
   } = useDeepSearchSSE({
     jobId: deepJobId,
     topic: query,
-    enabled: !!deepJobId && deepLoading,
+    enabled: !!deepJobId,
     onComplete: (result) => {
+      console.log('[SmartSearch] Deep Search completed with result:', result);
       setDeepResults(result);
       setDeepLoading(false);
       setDeepProgress(100);
     },
     onError: (error) => {
+      console.error('[SmartSearch] Deep Search error:', error);
       setDeepError(error);
       setDeepLoading(false);
     },
@@ -807,6 +752,16 @@ export default function SmartSearch() {
       setDeepProgress(progress);
     },
   });
+
+  // Sync SSE result to deepResults state (fallback if onComplete doesn't fire)
+  useEffect(() => {
+    if (sseResult && !deepResults) {
+      console.log('[SmartSearch] Syncing sseResult to deepResults:', sseResult);
+      setDeepResults(sseResult);
+      setDeepLoading(false);
+      setDeepProgress(100);
+    }
+  }, [sseResult, deepResults]);
 
   // Load templates from server based on filter and search query
   useEffect(() => {
@@ -1089,21 +1044,7 @@ export default function SmartSearch() {
   }, [handleAddToProject, query]);
 
   // Add verification result to project
-  const handleAddVerificationToProject = useCallback((result: VerificationResult) => {
-    handleAddToProject(
-      'DOCUMENT',
-      `[팩트체크] ${result.originalClaim.slice(0, 40)}${result.originalClaim.length > 40 ? '...' : ''}`,
-      `## 원본 주장\n${result.originalClaim}\n\n## 검증 결과\n상태: ${result.status}\n신뢰도: ${Math.round(result.confidenceScore * 100)}%\n\n## 요약\n${result.verificationSummary}`,
-      undefined,
-      {
-        verificationStatus: result.status,
-        confidenceScore: result.confidenceScore,
-        supportingEvidenceCount: result.supportingEvidence.length,
-        contradictingEvidenceCount: result.contradictingEvidence.length,
-        searchQuery: query,
-      }
-    );
-  }, [handleAddToProject, query]);
+  // handleAddVerificationToProject removed - now using embedded FactCheckChatbot
 
   // Handle project selection change
   const handleProjectSelect = useCallback((projectId: number | null) => {
@@ -1138,7 +1079,34 @@ export default function SmartSearch() {
     }
 
     try {
-      const job = await startUnifiedSearchJob(query, "7d");
+      // Build date parameters based on filters
+      let startDate: string | undefined;
+      let endDate: string | undefined;
+      
+      if (filters.timeWindow === "custom") {
+        if (filters.customStartDate) {
+          startDate = filters.customStartDate.toISOString();
+        }
+        if (filters.customEndDate) {
+          // Set end date to end of day
+          const end = new Date(filters.customEndDate);
+          end.setHours(23, 59, 59, 999);
+          endDate = end.toISOString();
+        }
+      }
+
+      // Get priority URLs if any
+      const priorityUrlStrings = priorityUrls.length > 0 
+        ? priorityUrls.map(u => u.url) 
+        : undefined;
+
+      const job = await startUnifiedSearchJob(
+        query, 
+        filters.timeWindow,
+        priorityUrlStrings,
+        startDate,
+        endDate
+      );
       setUnifiedJobId(job.jobId);
       const es = await openUnifiedSearchJobStream(job.jobId);
       unifiedEventSourceRef.current = es;
@@ -1179,7 +1147,7 @@ export default function SmartSearch() {
       setUnifiedError(e instanceof Error ? e.message : "검색 시작 실패");
       setUnifiedLoading(false);
     }
-  }, [query]);
+  }, [query, filters, priorityUrls]);
 
   // Helper: Extract summary section from markdown content
   const extractSummaryFromContent = useCallback((markdown: string | null | undefined): string | null => {
@@ -1213,10 +1181,31 @@ export default function SmartSearch() {
       }
 
       // Priority 1: Use SSE content if available (immediate, no network call)
+      // SSE result should have full content in 'content' field
       const sseContent = current.content || null;
       const sseSnippet = current.snippet || null;
       
-      // If no jobId, use SSE data only
+      // Debug: Log what we have from SSE
+      console.debug("[AI Report] SSE data:", {
+        hasContent: !!sseContent,
+        contentLength: sseContent?.length,
+        hasSnippet: !!sseSnippet,
+        snippetLength: sseSnippet?.length,
+        contentPreview: sseContent?.substring(0, 100),
+      });
+      
+      // If SSE content is available, use it immediately (best case - no network needed)
+      if (sseContent && sseContent.length > 500) {
+        // SSE has full content (longer than typical snippet)
+        setAiReportLoading(false);
+        setAiReportError(null);
+        setAiReportContent(sseContent);
+        setAiReportSummary(extractSummaryFromContent(sseContent));
+        console.debug("[AI Report] Using SSE full content");
+        return;
+      }
+      
+      // If no jobId, use whatever SSE data we have
       if (!unifiedJobId) {
         setAiReportLoading(false);
         setAiReportError(null);
@@ -1226,16 +1215,17 @@ export default function SmartSearch() {
         return;
       }
 
-      // Set initial content from SSE immediately while loading DB data
+      // Set initial content from SSE while loading DB data
       const initialContent = sseContent || sseSnippet;
       setAiReportContent(initialContent);
       setAiReportSummary(extractSummaryFromContent(initialContent));
       
-      // Priority 2: Try to fetch from DB for persistence across refreshes
+      // Try to fetch from DB for full content
       setAiReportLoading(true);
       setAiReportError(null);
       
-      try {
+      // Helper to fetch from DB
+      const fetchFromDb = async (): Promise<{ content: string | null; summary: string | null }> => {
         const record = await getSearchHistoryByExternalId(unifiedJobId);
         const aiSummary = record.aiSummary || {};
         const dbSummary = typeof (aiSummary as Record<string, unknown>).summary === "string" 
@@ -1244,6 +1234,32 @@ export default function SmartSearch() {
         const dbContent = typeof (aiSummary as Record<string, unknown>).content === "string" 
           ? (aiSummary as Record<string, unknown>).content as string 
           : null;
+        return { content: dbContent, summary: dbSummary };
+      };
+      
+      try {
+        let { content: dbContent, summary: dbSummary } = await fetchFromDb();
+        
+        // Debug: Log DB result
+        console.debug("[AI Report] DB fetch result:", {
+          hasDbContent: !!dbContent,
+          dbContentLength: dbContent?.length,
+          hasDbSummary: !!dbSummary,
+        });
+        
+        // If DB doesn't have content yet, wait and retry once
+        // (AI report might still be saving to DB)
+        if (!dbContent && unifiedJobId) {
+          console.debug("[AI Report] DB content not found, retrying after delay...");
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          const retry = await fetchFromDb();
+          dbContent = retry.content;
+          dbSummary = retry.summary;
+          console.debug("[AI Report] Retry result:", {
+            hasDbContent: !!dbContent,
+            dbContentLength: dbContent?.length,
+          });
+        }
 
         // Use DB content if available (most reliable), otherwise keep SSE content
         const finalContent = dbContent || sseContent || sseSnippet;
@@ -1251,9 +1267,11 @@ export default function SmartSearch() {
         
         setAiReportContent(finalContent);
         setAiReportSummary(finalSummary);
+        
+        console.debug("[AI Report] Final content source:", dbContent ? "DB" : sseContent ? "SSE content" : "SSE snippet");
       } catch (e) {
         // DB fetch failed - keep using SSE content (already set above)
-        console.warn("Failed to load AI report from DB, using SSE content:", e);
+        console.warn("[AI Report] Failed to load from DB, using SSE content:", e);
         // Don't show error to user if we have SSE content
         if (!sseContent && !sseSnippet) {
           setAiReportError(e instanceof Error ? e.message : "AI 보고서를 불러오는데 실패했습니다");
@@ -1284,60 +1302,8 @@ export default function SmartSearch() {
     }
   }, [query]);
 
-  // Fact Check
-  const runFactCheck = useCallback(async () => {
-    const validClaims = claims.filter((c) => c.trim());
-    if (validClaims.length === 0) return;
-
-    setFactCheckLoading(true);
-    setFactCheckError(null);
-    setFactCheckResults([]);
-
-    try {
-      const response = await openDeepAnalysisStream(query || "Fact Check", validClaims);
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response body");
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.eventType === "verification" && data.verificationResult) {
-                setFactCheckResults((prev) => [...prev, data.verificationResult]);
-              } else if (data.eventType === "error") {
-                setFactCheckError(data.message || "검증 중 오류 발생");
-              }
-            } catch {
-              // Skip invalid JSON
-            }
-          }
-        }
-      }
-
-      setFactCheckLoading(false);
-    } catch (e) {
-      setFactCheckError(e instanceof Error ? e.message : "팩트체크 실패");
-      setFactCheckLoading(false);
-    }
-  }, [query, claims]);
-
-  // Claim management
-  const addClaim = () => setClaims((prev) => [...prev, ""]);
-  const removeClaim = (index: number) => setClaims((prev) => prev.filter((_, i) => i !== index));
-  const updateClaim = (index: number, value: string) => {
-    setClaims((prev) => prev.map((c, i) => (i === index ? value : c)));
-  };
+  // Fact Check - Now handled by embedded FactCheckChatbot component
+  // Old functions removed: runFactCheck, addClaim, removeClaim, updateClaim
 
   // URL Analysis - Extract claims from URL
   const runUrlAnalysis = useCallback(async () => {
@@ -1410,7 +1376,7 @@ export default function SmartSearch() {
     setUrlClaims((prev) => prev.map((claim) => ({ ...claim, selected })));
   }, []);
 
-  // Transfer selected URL claims to fact check
+  // Transfer selected URL claims to fact check chatbot
   const transferToFactCheck = useCallback(() => {
     const selectedClaims = urlClaims.filter((c) => c.selected).map((c) => c.text);
     if (selectedClaims.length === 0) {
@@ -1421,19 +1387,34 @@ export default function SmartSearch() {
       });
       return;
     }
-    setClaims(selectedClaims);
+    
+    // Switch to factcheck tab first
     setActiveTab("factcheck");
+    
+    // Use ref to send claims directly if chatbot is ready, otherwise store as pending
+    if (factCheckChatbotRef.current) {
+      factCheckChatbotRef.current.sendClaims(selectedClaims);
+    } else {
+      setPendingFactCheckClaims(selectedClaims);
+    }
+    
     toast({
       title: "주장이 전송되었습니다",
-      description: `${selectedClaims.length}개의 주장이 팩트체크 탭으로 전송되었습니다.`,
+      description: `${selectedClaims.length}개의 주장이 팩트체크 챗봇으로 전송되었습니다.`,
     });
   }, [urlClaims, toast]);
 
   // Handle search based on active tab
+  // Note: factcheck tab now uses embedded chatbot, so no explicit search function needed
   const handleSearch = () => {
     if (activeTab === "unified") runUnifiedSearch();
     else if (activeTab === "deep") runDeepSearch();
-    else if (activeTab === "factcheck") runFactCheck();
+    else if (activeTab === "factcheck") {
+      // For factcheck, send the query to the chatbot
+      if (query.trim() && factCheckChatbotRef.current) {
+        factCheckChatbotRef.current.sendQuery(query);
+      }
+    }
     else if (activeTab === "urlanalysis") runUrlAnalysis();
   };
 
@@ -1444,13 +1425,27 @@ export default function SmartSearch() {
       initialSearchRef.current = true;
       // Delay to ensure state is set
       const timer = setTimeout(() => {
-        if (activeTab === "unified") runUnifiedSearch();
-        else if (activeTab === "deep") runDeepSearch();
-        else if (activeTab === "factcheck") runFactCheck();
+        if (activeTab === "unified") {
+          runUnifiedSearch();
+        } else if (activeTab === "deep") {
+          runDeepSearch();
+        } else if (activeTab === "factcheck") {
+          // Send query to factcheck chatbot
+          if (factCheckChatbotRef.current) {
+            factCheckChatbotRef.current.sendQuery(queryParam);
+          }
+        } else if (activeTab === "urlanalysis") {
+          // Set URL and run analysis
+          setAnalysisUrl(queryParam);
+          // Need another delay for state to update
+          setTimeout(() => {
+            runUrlAnalysis();
+          }, 50);
+        }
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [searchParams, activeTab, runUnifiedSearch, runDeepSearch, runFactCheck]);
+  }, [searchParams, activeTab, runUnifiedSearch, runDeepSearch, runUrlAnalysis]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1725,22 +1720,34 @@ export default function SmartSearch() {
           </Button>
         </div>
       ) : (
-        <div className="flex gap-2">
-          <Input
-            placeholder="검색어를 입력하세요..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            className="flex-1"
-          />
-          <Button onClick={handleSearch} disabled={unifiedLoading || deepLoading || factCheckLoading}>
-            {(unifiedLoading || deepLoading || factCheckLoading) ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-1" />
-            ) : (
-              <Play className="h-4 w-4 mr-1" />
-            )}
-            검색
-          </Button>
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <Input
+              placeholder="검색어를 입력하세요..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              className="flex-1"
+            />
+            <Button onClick={handleSearch} disabled={unifiedLoading || deepLoading}>
+              {(unifiedLoading || deepLoading) ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+              ) : (
+                <Play className="h-4 w-4 mr-1" />
+              )}
+              검색
+            </Button>
+          </div>
+          
+          {/* Date range and filters - shown for unified/deep search */}
+          {(activeTab === "unified" || activeTab === "deep") && (
+            <AdvancedFilters
+              filters={filters}
+              onFiltersChange={setFilters}
+              disabled={unifiedLoading || deepLoading}
+              compact={true}
+            />
+          )}
         </div>
       )}
 
@@ -1754,9 +1761,9 @@ export default function SmartSearch() {
               ? unifiedResults.length 
               : mode === "deep" 
                 ? (deepResults?.evidence?.length || 0) 
-                : mode === "factcheck"
-                  ? factCheckResults.length
-                  : urlClaims.length;
+                : mode === "urlanalysis"
+                  ? urlClaims.length
+                  : 0; // factcheck tab uses embedded chatbot, no count needed
             return (
               <TabsTrigger key={mode} value={mode} className="flex items-center gap-2">
                 <Icon className="h-4 w-4" />
@@ -1775,6 +1782,35 @@ export default function SmartSearch() {
                 <Search className={`h-4 w-4 ${MODE_CONFIG.unified.color}`} />
                 <span className="text-muted-foreground">데이터베이스, 웹, AI를 동시에 검색합니다.</span>
                 {unifiedLoading && <Loader2 className="h-4 w-4 animate-spin ml-auto" />}
+                
+                {/* Export buttons */}
+                {unifiedResults.length > 0 && !unifiedLoading && (
+                  <div className="ml-auto flex items-center gap-2">
+                    <UnifiedExportMenu
+                      jobId={unifiedJobId || undefined}
+                      query={query}
+                      reportType="UNIFIED_SEARCH"
+                      aiContent={unifiedResults.find(r => r.source === 'ai')?.content || unifiedResults.find(r => r.source === 'ai')?.snippet || undefined}
+                      data={unifiedResults.map(r => ({
+                        id: r.id,
+                        title: r.title,
+                        url: r.url,
+                        snippet: r.snippet,
+                        content: r.content,
+                        source: r.source,
+                        sourceLabel: r.sourceLabel,
+                        publishedAt: r.publishedAt,
+                        reliabilityScore: r.reliabilityScore,
+                        sentimentLabel: r.sentimentLabel,
+                        biasLabel: r.biasLabel,
+                        factcheckStatus: r.factcheckStatus,
+                      }))}
+                      exportOptions={{ filename: `NewsInsight_통합검색_${query}`, title: query }}
+                      size="sm"
+                      variant="outline"
+                    />
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -1834,6 +1870,29 @@ export default function SmartSearch() {
                     <span className="text-xs">{deepProgress}%</span>
                   </div>
                 )}
+                
+                {/* Export buttons for Deep Search */}
+                {deepResults && !deepLoading && deepJobId && (
+                  <div className="ml-auto flex items-center gap-2">
+                    <UnifiedExportMenu
+                      jobId={deepJobId}
+                      query={query || deepResults.topic}
+                      reportType="DEEP_SEARCH"
+                      data={(deepResults.evidence || []).map(e => ({
+                        id: String(e.id),
+                        title: e.title || e.snippet.slice(0, 50),
+                        url: e.url,
+                        snippet: e.snippet,
+                        content: e.snippet,
+                        source: e.source || 'web',
+                        stance: e.stance,
+                      }))}
+                      exportOptions={{ filename: `NewsInsight_DeepSearch_${query || deepResults.topic}`, title: query || deepResults.topic }}
+                      size="sm"
+                      variant="outline"
+                    />
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -1851,28 +1910,45 @@ export default function SmartSearch() {
                 <CardTitle className="text-base">입장 분포</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex gap-1 h-6 rounded overflow-hidden mb-2">
-                  {deepResults.stanceDistribution.proRatio > 0 && (
-                    <div className="bg-teal-500 text-white text-xs flex items-center justify-center" style={{ width: `${deepResults.stanceDistribution.proRatio}%` }}>
-                      {deepResults.stanceDistribution.proRatio >= 15 && `${Math.round(deepResults.stanceDistribution.proRatio)}%`}
-                    </div>
-                  )}
-                  {deepResults.stanceDistribution.neutralRatio > 0 && (
-                    <div className="bg-gray-400 text-white text-xs flex items-center justify-center" style={{ width: `${deepResults.stanceDistribution.neutralRatio}%` }}>
-                      {deepResults.stanceDistribution.neutralRatio >= 15 && `${Math.round(deepResults.stanceDistribution.neutralRatio)}%`}
-                    </div>
-                  )}
-                  {deepResults.stanceDistribution.conRatio > 0 && (
-                    <div className="bg-red-500 text-white text-xs flex items-center justify-center" style={{ width: `${deepResults.stanceDistribution.conRatio}%` }}>
-                      {deepResults.stanceDistribution.conRatio >= 15 && `${Math.round(deepResults.stanceDistribution.conRatio)}%`}
-                    </div>
-                  )}
-                </div>
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span className="text-teal-600">찬성 {deepResults.stanceDistribution.pro}</span>
-                  <span>중립 {deepResults.stanceDistribution.neutral}</span>
-                  <span className="text-red-600">반대 {deepResults.stanceDistribution.con}</span>
-                </div>
+                {/* Note: Backend returns ratios as decimals (0.0-1.0), multiply by 100 for percentage */}
+                {(() => {
+                  const proPercent = deepResults.stanceDistribution.proRatio <= 1 
+                    ? deepResults.stanceDistribution.proRatio * 100 
+                    : deepResults.stanceDistribution.proRatio;
+                  const conPercent = deepResults.stanceDistribution.conRatio <= 1 
+                    ? deepResults.stanceDistribution.conRatio * 100 
+                    : deepResults.stanceDistribution.conRatio;
+                  const neutralPercent = deepResults.stanceDistribution.neutralRatio <= 1 
+                    ? deepResults.stanceDistribution.neutralRatio * 100 
+                    : deepResults.stanceDistribution.neutralRatio;
+                  
+                  return (
+                    <>
+                      <div className="flex gap-1 h-6 rounded overflow-hidden mb-2">
+                        {proPercent > 0 && (
+                          <div className="bg-teal-500 text-white text-xs flex items-center justify-center" style={{ width: `${proPercent}%` }}>
+                            {proPercent >= 15 && `${Math.round(proPercent)}%`}
+                          </div>
+                        )}
+                        {neutralPercent > 0 && (
+                          <div className="bg-gray-400 text-white text-xs flex items-center justify-center" style={{ width: `${neutralPercent}%` }}>
+                            {neutralPercent >= 15 && `${Math.round(neutralPercent)}%`}
+                          </div>
+                        )}
+                        {conPercent > 0 && (
+                          <div className="bg-red-500 text-white text-xs flex items-center justify-center" style={{ width: `${conPercent}%` }}>
+                            {conPercent >= 15 && `${Math.round(conPercent)}%`}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span className="text-teal-600">찬성 {deepResults.stanceDistribution.pro}</span>
+                        <span>중립 {deepResults.stanceDistribution.neutral}</span>
+                        <span className="text-red-600">반대 {deepResults.stanceDistribution.con}</span>
+                      </div>
+                    </>
+                  );
+                })()}
               </CardContent>
             </Card>
           )}
@@ -1902,96 +1978,45 @@ export default function SmartSearch() {
                   onAddToProject={() => handleAddEvidenceToProject(evidence)}
                 />
               ))}
-              {!deepLoading && (!deepResults || deepResults.evidence?.length === 0) && !deepError && (
+              {!deepLoading && !deepJobId && !deepResults && !deepError && (
                 <div className="text-center py-12 text-muted-foreground">
                   <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
                   <p>검색어를 입력하고 Deep Search를 시작해보세요.</p>
                   <p className="text-xs mt-1">AI가 심층 분석을 수행하며 2-5분 정도 소요됩니다.</p>
                 </div>
               )}
+              {!deepLoading && deepResults && deepResults.evidence?.length === 0 && (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
+                  <p>검색 결과가 없습니다.</p>
+                  <p className="text-xs mt-1">다른 검색어로 다시 시도해보세요.</p>
+                </div>
+              )}
             </div>
           </ScrollArea>
         </TabsContent>
 
-        {/* Fact Check Tab */}
+        {/* Fact Check Tab - Using Embedded Chatbot */}
         <TabsContent value="factcheck" className="space-y-4">
           <Card className={`${MODE_CONFIG.factcheck.bgColor} border-none`}>
             <CardContent className="py-3">
               <div className="flex items-center gap-2 text-sm">
                 <Shield className={`h-4 w-4 ${MODE_CONFIG.factcheck.color}`} />
-                <span className="text-muted-foreground">주장을 입력하면 신뢰할 수 있는 출처와 대조하여 검증합니다.</span>
+                <span className="text-muted-foreground">
+                  AI 챗봇과 대화하며 주장이나 뉴스의 사실 여부를 검증합니다.
+                </span>
               </div>
             </CardContent>
           </Card>
 
-          {/* Claims Input */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">검증할 주장</CardTitle>
-              <CardDescription>확인하고 싶은 주장을 입력하세요.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {claims.map((claim, index) => (
-                <div key={index} className="flex gap-2">
-                  <Textarea
-                    placeholder={`주장 ${index + 1}`}
-                    value={claim}
-                    onChange={(e) => updateClaim(index, e.target.value)}
-                    className="flex-1 min-h-[60px]"
-                  />
-                  {claims.length > 1 && (
-                    <Button variant="ghost" size="icon" onClick={() => removeClaim(index)}>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              ))}
-              <Button variant="outline" size="sm" onClick={addClaim}>
-                <Plus className="h-4 w-4 mr-1" />
-                주장 추가
-              </Button>
-            </CardContent>
-          </Card>
-
-          {factCheckError && (
-            <div className="p-4 rounded-lg bg-destructive/10 text-destructive flex items-center gap-2">
-              <AlertCircle className="h-4 w-4" />
-              {factCheckError}
-            </div>
-          )}
-
-          <ScrollArea className="h-[350px]">
-            <div className="space-y-3 pr-4">
-              {factCheckResults.map((result) => (
-                <VerificationCard
-                  key={result.claimId}
-                  result={result}
-                  isSelected={isSelected(`factcheck_${result.claimId}`)}
-                  onSelect={() =>
-                    toggleSelection({
-                      id: `factcheck_${result.claimId}`,
-                      type: "factcheck",
-                      title: result.originalClaim,
-                      snippet: result.verificationSummary,
-                      verificationStatus: result.status,
-                    })
-                  }
-                  onViewDetail={() => {
-                    setDetailItem({ type: "verification", data: result });
-                    setDetailDialogOpen(true);
-                  }}
-                  hasProject={!!selectedProjectId}
-                  onAddToProject={() => handleAddVerificationToProject(result)}
-                />
-              ))}
-              {!factCheckLoading && factCheckResults.length === 0 && !factCheckError && (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Shield className="h-12 w-12 mx-auto mb-4 opacity-30" />
-                  <p>검증할 주장을 입력하고 검색 버튼을 눌러주세요.</p>
-                </div>
-              )}
-            </div>
-          </ScrollArea>
+          {/* Embedded FactCheck Chatbot */}
+          <FactCheckChatbot
+            ref={factCheckChatbotRef}
+            compact={true}
+            hideHeader={false}
+            heightClass="h-[500px]"
+            initialClaims={pendingFactCheckClaims.length > 0 ? pendingFactCheckClaims : undefined}
+          />
         </TabsContent>
 
         {/* URL Analysis Tab */}

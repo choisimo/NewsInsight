@@ -110,6 +110,15 @@ spring:
           predicates:
             - Path=/api/v1/search-templates/**
 
+        # Reports API - PDF 보고서 생성 및 다운로드 (ReportController)
+        - id: reports
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/reports/**
+          metadata:
+            # PDF 생성에 시간이 걸릴 수 있으므로 긴 타임아웃 (3분)
+            response-timeout: 180000
+
         # Search Jobs API - 검색 작업 관리 (SearchJobController)
         # SSE 스트리밍 지원: /api/v1/jobs/stream, /api/v1/jobs/{jobId}/stream
         - id: search-jobs
@@ -126,6 +135,21 @@ spring:
           predicates:
             - Path=/api/v1/autocrawl/**
 
+        # Projects API - 프로젝트 관리 (ProjectController)
+        - id: projects
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/projects/**
+
+        # Workspace Files API - 파일 업로드/다운로드 (WorkspaceController)
+        - id: workspace-files
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/workspace/**
+          metadata:
+            # 파일 업로드/다운로드를 위한 긴 타임아웃 (5분)
+            response-timeout: 300000
+
         # Config API - 프론트엔드 설정
         # NOTE: Gateway 자체 FrontendConfigController가 우선 처리됨
         # 이 라우트는 fallback으로 유지 (collector-service에도 ConfigController가 있을 경우)
@@ -133,6 +157,12 @@ spring:
           uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/config/**
+
+        # LLM Provider Settings - LLM 제공자 설정 (collector-service LlmProviderSettingsController)
+        - id: llm-providers
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/llm-providers/**
 
         # AI Orchestration - AI 분석 요청 (collector-service AiOrchestrationController)
         - id: collector-ai
@@ -161,6 +191,14 @@ spring:
           predicates:
             - Path=/api/v1/admin/**
           # No StripPrefix needed because the admin API uses /api/v1/admin prefix
+
+        # Public Auth API - 회원가입, 로그인 (Admin Dashboard에서 처리)
+        # /api/v1/auth/register, /api/v1/auth/login, /api/v1/auth/me 등
+        - id: public-auth
+          uri: ${ADMIN_DASHBOARD_URL:http://localhost:8888}
+          predicates:
+            - Path=/api/v1/auth/**
+          # No StripPrefix needed because the admin API uses /api/v1/auth prefix
 
         # Autonomous Crawler - 크롤링 작업 관리
         - id: autonomous-crawler-api
@@ -279,21 +317,22 @@ spring:
             # /api/actuator/health -> /actuator/health 로 재작성
             - RewritePath=/api/actuator/(?<segment>.*), /actuator/${segment}
 
-      # 전역 CORS 설정
-      globalcors:
-        cors-configurations:
-          '[/**]':
-            allowedOriginPatterns: "*"
-            allowedMethods:
-              - GET
-              - POST
-              - PUT
-              - DELETE
-              - PATCH
-              - OPTIONS
-            allowedHeaders: "*"
-            allowCredentials: true
-            maxAge: 3600
+      # NOTE: CORS is handled by SecurityConfig.java - DO NOT enable globalcors
+      # Having both causes duplicate Access-Control-Allow-Origin headers
+      # globalcors:
+      #   cors-configurations:
+      #     '[/**]':
+      #       allowedOriginPatterns: "*"
+      #       allowedMethods:
+      #         - GET
+      #         - POST
+      #         - PUT
+      #         - DELETE
+      #         - PATCH
+      #         - OPTIONS
+      #       allowedHeaders: "*"
+      #       allowCredentials: true
+      #       maxAge: 3600
   
   # Redis 설정 (Rate Limiting 및 세션 관리용)
   data:

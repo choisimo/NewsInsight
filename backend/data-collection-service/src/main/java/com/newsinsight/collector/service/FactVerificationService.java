@@ -343,10 +343,24 @@ public class FactVerificationService {
             }
 
             // 5. AI 기반 종합 분석 (Fallback Chain)
+            int evidenceCount = filteredEvidence.size();
+            
+            // 증거 수에 따른 경고 메시지 생성
+            String synthesisStatusMessage;
+            if (evidenceCount == 0) {
+                synthesisStatusMessage = "⚠️ 신뢰할 수 있는 출처에서 관련 정보를 찾지 못했습니다. 제한된 분석을 진행합니다...";
+                log.warn("No evidence found for topic: {}. AI may refuse to generate content.", topic);
+            } else if (evidenceCount < 3) {
+                synthesisStatusMessage = "⚠️ 수집된 정보가 제한적입니다 (" + evidenceCount + "개). 제한된 분석을 진행합니다...";
+                log.info("Limited evidence ({}) found for topic: {}", evidenceCount, topic);
+            } else {
+                synthesisStatusMessage = "AI가 수집된 " + evidenceCount + "개의 정보를 종합 분석하고 있습니다...";
+            }
+            
             sink.next(DeepAnalysisEvent.builder()
                     .eventType("status")
                     .phase("synthesis")
-                    .message("AI가 수집된 정보를 종합 분석하고 있습니다...")
+                    .message(synthesisStatusMessage)
                     .build());
 
             // Build provider chain and try each in sequence
@@ -486,7 +500,19 @@ public class FactVerificationService {
         sb.append("## ").append(topic).append(" 분석 결과\n\n");
         
         if (results == null || results.isEmpty()) {
-            sb.append("검증된 주장이 없습니다.\n");
+            // 증거가 전혀 없는 경우 - 명확한 "정보 없음" 메시지
+            sb.append("""
+                ### ⚠️ 검색 결과 없음
+                
+                죄송합니다. 이 주제에 대해 신뢰할 수 있는 출처에서 관련 정보를 찾을 수 없었습니다.
+                
+                **가능한 이유:**
+                - 해당 주제가 존재하지 않거나 잘못된 정보일 수 있습니다
+                - 아직 널리 알려지지 않은 주제일 수 있습니다
+                - 검색어를 다르게 입력해 보시기 바랍니다
+                
+                **주의**: 확인되지 않은 정보는 제공하지 않습니다.
+                """);
         } else {
             sb.append("### 검증 결과 요약\n\n");
             int verified = 0, unverified = 0, contradicted = 0;
@@ -498,18 +524,31 @@ public class FactVerificationService {
                     case DISPUTED, FALSE -> contradicted++;
                 }
             }
-            sb.append(String.format("- 검증됨: %d건\n", verified));
-            sb.append(String.format("- 미확인: %d건\n", unverified));
-            sb.append(String.format("- 반박됨: %d건\n\n", contradicted));
+            sb.append(String.format("- ✅ 검증됨: %d건\n", verified));
+            sb.append(String.format("- ❓ 미확인: %d건\n", unverified));
+            sb.append(String.format("- ❌ 반박됨: %d건\n\n", contradicted));
+            
+            // 미확인 비율이 높을 경우 경고
+            int total = verified + unverified + contradicted;
+            if (total > 0 && (double) unverified / total > 0.5) {
+                sb.append("⚠️ **주의**: 대부분의 주장이 확인되지 않았습니다. 추가 검증이 필요합니다.\n\n");
+            }
         }
 
         if (credibility != null) {
             sb.append("### 신뢰도 평가\n");
             sb.append(String.format("- 전체 신뢰도: %.0f%%\n", credibility.getOverallScore() * 100));
             sb.append(String.format("- 위험 수준: %s\n", credibility.getRiskLevel()));
+            
+            if (credibility.getWarnings() != null && !credibility.getWarnings().isEmpty()) {
+                sb.append("\n### ⚠️ 주의사항\n");
+                for (String warning : credibility.getWarnings()) {
+                    sb.append("- ").append(warning).append("\n");
+                }
+            }
         }
 
-        sb.append("\n*AI 종합 분석은 현재 사용 불가합니다. 위 결과를 참고하여 판단해 주세요.*");
+        sb.append("\n---\n*이 결과는 수집된 정보에만 기반합니다. 추가 검증을 권장합니다.*");
         return sb.toString();
     }
 
@@ -963,15 +1002,76 @@ public class FactVerificationService {
 
     private String buildSynthesisPrompt(String topic, List<SourceEvidence> evidence, List<String> claims) {
         StringBuilder prompt = new StringBuilder();
-        prompt.append("당신은 팩트체커이자 심층 분석 전문가입니다.\n\n");
-        prompt.append("주제: ").append(topic).append("\n\n");
+        
+        // 강력한 할루시네이션 방지 지침
+        prompt.append("""
+                당신은 팩트체커이자 심층 분석 전문가입니다.
+                
+                ## ⚠️ 절대 규칙 (반드시 준수)
+                1. **아래 '수집된 정보' 섹션에 있는 내용만 사용하세요**
+                2. **수집된 정보에 없는 내용은 절대 만들어내지 마세요 (할루시네이션 금지)**
+                3. **정보가 부족하면 "관련 정보를 찾을 수 없습니다"라고 명확히 말하세요**
+                4. **각 사실에는 반드시 출처를 [출처명] 형식으로 표기하세요**
+                5. **수집된 정보에 없는 통계, 날짜, 수치, 순위 등을 절대 만들어내지 마세요**
+                6. **존재하지 않는 출처나 URL을 만들어내지 마세요**
+                7. **불확실한 정보는 "~로 추정됩니다", "~일 가능성이 있습니다"로 표현하세요**
+                
+                """);
+        
+        prompt.append("## 분석 주제\n").append(topic).append("\n\n");
+        
+        // 통화/단위 맥락 분석
+        String currencyHint = buildCurrencyHint(topic);
+        if (!currencyHint.isEmpty()) {
+            prompt.append(currencyHint).append("\n");
+        }
 
-        if (!evidence.isEmpty()) {
-            prompt.append("## 신뢰할 수 있는 출처에서 수집된 정보:\n");
+        // 수집된 증거 수에 따른 분기
+        int evidenceCount = (evidence != null) ? evidence.size() : 0;
+        
+        if (evidenceCount == 0) {
+            // 증거가 전혀 없는 경우 - 분석 거부 지시
+            prompt.append("""
+                ## ⚠️ 주의: 수집된 정보 없음
+                신뢰할 수 있는 출처에서 이 주제에 관한 정보를 찾지 못했습니다.
+                
+                **이 경우 반드시 다음과 같이만 응답하세요:**
+                
+                ---
+                ## 검색 결과
+                
+                죄송합니다. **"[주제]"**에 대해 신뢰할 수 있는 출처에서 관련 정보를 찾을 수 없었습니다.
+                
+                가능한 이유:
+                - 해당 주제가 존재하지 않거나 잘못된 정보일 수 있습니다
+                - 아직 널리 알려지지 않은 주제일 수 있습니다
+                - 검색어를 다르게 입력해 보시기 바랍니다
+                
+                **주의**: 확인되지 않은 정보를 제공하지 않습니다.
+                ---
+                
+                위 형식 외의 다른 내용을 생성하지 마세요.
+                """);
+        } else if (evidenceCount < 3) {
+            // 증거가 부족한 경우 - 제한적 분석 지시
+            prompt.append("## ⚠️ 주의: 수집된 정보 부족 (").append(evidenceCount).append("개)\n");
+            prompt.append("정보가 매우 제한적이므로, **반드시 수집된 정보의 범위 내에서만** 답변하세요.\n");
+            prompt.append("정보가 부족하다는 점을 응답 시작 부분에 명확히 밝히세요.\n\n");
+            
+            prompt.append("## 수집된 정보 (").append(evidenceCount).append("개):\n");
             for (SourceEvidence e : evidence) {
-                prompt.append("- [").append(e.getSourceName()).append("] ").append(e.getExcerpt()).append("\n");
+                String url = (e.getUrl() != null && !e.getUrl().isBlank()) ? " - " + e.getUrl() : "";
+                prompt.append("- [").append(e.getSourceName()).append("]").append(url).append("\n");
+                prompt.append("  내용: ").append(truncateContent(e.getExcerpt(), 500)).append("\n\n");
             }
-            prompt.append("\n");
+        } else {
+            // 충분한 증거가 있는 경우
+            prompt.append("## 수집된 정보 (").append(evidenceCount).append("개):\n");
+            for (SourceEvidence e : evidence) {
+                String url = (e.getUrl() != null && !e.getUrl().isBlank()) ? " - " + e.getUrl() : "";
+                prompt.append("- [").append(e.getSourceName()).append("]").append(url).append("\n");
+                prompt.append("  내용: ").append(truncateContent(e.getExcerpt(), 500)).append("\n\n");
+            }
         }
 
         if (claims != null && !claims.isEmpty()) {
@@ -982,25 +1082,79 @@ public class FactVerificationService {
             prompt.append("\n");
         }
 
-        prompt.append("""
-                위 정보를 바탕으로 다음을 제공해주세요:
+        // 증거가 충분할 때만 상세 분석 요청
+        if (evidenceCount >= 3) {
+            prompt.append("""
+                ## 응답 형식
+                위 **수집된 정보만을** 바탕으로 다음을 제공해주세요:
                 
-                ## 사실 확인 결과
-                각 주장에 대한 팩트체크 결과를 제시
+                ### 📋 사실 확인 결과
+                각 주장에 대해 수집된 정보에서 확인 가능한 내용만 제시
+                - ✅ 확인됨: 수집된 정보에서 직접 확인된 사실
+                - ⚠️ 부분 확인: 일부만 확인되거나 추가 검증 필요
+                - ❓ 확인 불가: 수집된 정보에서 확인할 수 없음
                 
-                ## 배경 지식
-                이 주제를 이해하는 데 필요한 핵심 개념 설명
+                ### 📚 배경 지식
+                수집된 정보에서 추출한 맥락과 배경 (출처 명시 필수)
                 
-                ## 다양한 관점
-                서로 다른 시각이나 해석이 있다면 균형있게 제시
+                ### 🔍 다양한 관점
+                수집된 정보에서 발견된 서로 다른 시각 (있는 경우만)
                 
-                ## 결론
-                객관적인 종합 판단
+                ### 📌 결론
+                수집된 정보 기반의 객관적 종합 판단
+                - 정보가 부족한 부분은 "추가 확인 필요"라고 명시
                 
-                한국어로 답변해주세요. 불확실한 정보는 명확히 표시해주세요.
+                ### ⚠️ 주의사항
+                - 이 분석은 수집된 정보에 기반합니다
+                - 수집되지 않은 최신 정보가 있을 수 있습니다
+                
+                한국어로 답변해주세요.
                 """);
+        } else if (evidenceCount > 0) {
+            // 증거가 적을 때는 간략한 분석만 요청
+            prompt.append("""
+                ## 응답 형식
+                **수집된 정보가 제한적입니다.** 다음 형식으로 응답하세요:
+                
+                ### ⚠️ 정보 부족 안내
+                이 주제에 대해 신뢰할 수 있는 출처에서 제한된 정보만 수집되었습니다.
+                
+                ### 📋 확인된 정보
+                수집된 정보에서 확인 가능한 내용만 간략히 제시 (출처 명시 필수)
+                
+                ### ❓ 확인 불가 사항
+                현재 수집된 정보로는 확인할 수 없는 내용 목록
+                
+                **중요**: 수집된 정보에 없는 내용은 절대 추가하지 마세요.
+                
+                한국어로 답변해주세요.
+                """);
+        }
 
         return prompt.toString();
+    }
+    
+    /**
+     * 토픽에서 통화/단위 맥락을 분석하여 힌트 생성
+     */
+    private String buildCurrencyHint(String topic) {
+        if (topic == null) return "";
+        
+        // 한국어 숫자 단위 + 가격 관련 키워드 감지
+        boolean hasKoreanNumber = topic.matches(".*\\d+\\s*(억|만|조|천).*");
+        boolean hasPriceKeyword = topic.matches(".*(가격|price|도달|목표|전망|예측).*");
+        boolean hasExplicitCurrency = topic.matches(".*\\$|USD|달러|₩|KRW|원화.*");
+        
+        if (hasKoreanNumber && hasPriceKeyword && !hasExplicitCurrency) {
+            return """
+                ## 통화 단위 주의
+                - 이 주제에 한국어 숫자 단위가 포함되어 있습니다
+                - 단위가 명시되지 않은 금액은 **한국 원화(KRW)**일 가능성을 고려하세요
+                - 예: "10억" = 10억 원 ≈ $670,000 USD
+                - 가능하면 원화와 달러 양쪽 기준을 모두 분석해주세요
+                """;
+        }
+        return "";
     }
 
     // ============================================

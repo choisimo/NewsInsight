@@ -464,3 +464,22 @@ async:
     core-pool-size: ${CHAT_SYNC_CORE_POOL_SIZE:3}
     max-pool-size: ${CHAT_SYNC_MAX_POOL_SIZE:10}
     queue-capacity: ${CHAT_SYNC_QUEUE_CAPACITY:50}
+
+# ============================================
+# Workspace File Storage Configuration
+# ============================================
+workspace:
+  storage:
+    # Local storage path (Docker volume mount point)
+    path: ${WORKSPACE_STORAGE_PATH:/data/workspace}
+    # Maximum file size in bytes (default: 100MB)
+    max-file-size: ${WORKSPACE_MAX_FILE_SIZE:104857600}
+    # Maximum files per anonymous session
+    max-files-per-session: ${WORKSPACE_MAX_FILES_PER_SESSION:100}
+    # Session file TTL in hours (files auto-expire after this)
+    session-file-ttl-hours: ${WORKSPACE_SESSION_FILE_TTL_HOURS:24}
+  cleanup:
+    # Cron for expired file cleanup (3:30 AM daily)
+    cron: ${WORKSPACE_CLEANUP_CRON:0 30 3 * * *}
+    # Hours before orphaned session files are marked for deletion
+    orphan-hours: ${WORKSPACE_ORPHAN_HOURS:48}

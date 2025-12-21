@@ -7,6 +7,11 @@ import Dashboard from './pages/Dashboard';
 import Environments from './pages/Environments';
 import Scripts from './pages/Scripts';
 import Documents from './pages/Documents';
+import LlmSettings from './pages/LlmSettings';
+import HealthMonitor from './pages/HealthMonitor';
+import DataSources from './pages/DataSources';
+import Databases from './pages/Databases';
+import Kafka from './pages/Kafka';
 import './index.css';
 
 const queryClient = new QueryClient({
@@ -82,6 +87,46 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Documents />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/llm-settings"
+        element={
+          <ProtectedRoute>
+            <LlmSettings />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/health-monitor"
+        element={
+          <ProtectedRoute>
+            <HealthMonitor />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/data-sources"
+        element={
+          <ProtectedRoute>
+            <DataSources />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/databases"
+        element={
+          <ProtectedRoute>
+            <Databases />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/kafka"
+        element={
+          <ProtectedRoute>
+            <Kafka />
           </ProtectedRoute>
         }
       />

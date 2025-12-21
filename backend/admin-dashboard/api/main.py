@@ -1,6 +1,7 @@
 """
 Admin Dashboard API - FastAPI 메인 애플리케이션
 """
+
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -11,7 +12,21 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .models.schemas import HealthCheck
-from .routers import auth, audit, documents, environments, scripts
+from .routers import (
+    auth,
+    audit,
+    documents,
+    environments,
+    scripts,
+    public_auth,
+    llm_providers,
+    health_monitor,
+    data_sources,
+    ml_addons,
+    ml_training,
+    databases,
+    kafka,
+)
 
 # 버전 정보
 VERSION = "1.0.0"
@@ -40,8 +55,7 @@ app = FastAPI(
 
 # CORS 설정
 CORS_ORIGINS = os.environ.get(
-    "CORS_ORIGINS",
-    "http://localhost:3000,http://localhost:5173,http://localhost:8080"
+    "CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,http://localhost:8080"
 ).split(",")
 
 app.add_middleware(
@@ -68,12 +82,24 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # API 라우터 등록
 API_PREFIX = "/api/v1/admin"
+PUBLIC_API_PREFIX = "/api/v1"
 
+# Admin 전용 라우터 (/api/v1/admin/...)
 app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(environments.router, prefix=API_PREFIX)
 app.include_router(scripts.router, prefix=API_PREFIX)
 app.include_router(documents.router, prefix=API_PREFIX)
 app.include_router(audit.router, prefix=API_PREFIX)
+app.include_router(llm_providers.router, prefix=API_PREFIX)
+app.include_router(health_monitor.router, prefix=API_PREFIX)
+app.include_router(data_sources.router, prefix=API_PREFIX)
+app.include_router(ml_addons.router, prefix=API_PREFIX)
+app.include_router(ml_training.router, prefix=API_PREFIX)
+app.include_router(databases.router, prefix=API_PREFIX)
+app.include_router(kafka.router, prefix=API_PREFIX)
+
+# 공개 라우터 (/api/v1/auth/...)
+app.include_router(public_auth.router, prefix=PUBLIC_API_PREFIX)
 
 
 # 헬스체크 엔드포인트

@@ -36,6 +36,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserLlmSettings } from '@/components/settings/UserLlmSettings';
 import {
   // API Gateway
   checkApiGatewayHealth,
@@ -181,9 +183,16 @@ const LLM_MODELS: Record<LLMProviderType, { value: string; label: string }[]> = 
 // Settings Page Component
 // ============================================
 
+// Helper function to check if user has admin role
+const isAdminRole = (role?: string): boolean => {
+  return role === 'admin';
+};
+
 const Settings = () => {
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState('ai-settings');
+  const { user } = useAuth();
+  const isAdmin = isAdminRole(user?.role);
+  const [activeTab, setActiveTab] = useState('user-llm');
   
   // AI Settings state
   const [aiSettings, setAISettings] = useState<AISettings>(() => {
@@ -523,18 +532,48 @@ const Settings = () => {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 lg:w-[400px]">
-            <TabsTrigger value="ai-settings" className="gap-2">
-              <Sparkles className="h-4 w-4" />
-              AI/LLM
+          <TabsList className={`grid w-full ${isAdmin ? 'grid-cols-3 lg:w-[600px]' : 'grid-cols-2 lg:w-[400px]'}`}>
+            <TabsTrigger value="user-llm" className="gap-2">
+              <Bot className="h-4 w-4" />
+              내 LLM 설정
             </TabsTrigger>
+            {isAdmin && (
+              <TabsTrigger value="ai-settings" className="gap-2">
+                <Sparkles className="h-4 w-4" />
+                고급 AI 설정
+              </TabsTrigger>
+            )}
             <TabsTrigger value="system" className="gap-2">
               <Server className="h-4 w-4" />
               시스템
             </TabsTrigger>
           </TabsList>
 
-          {/* AI/LLM Settings Tab */}
+          {/* User LLM Settings Tab (DB-based with admin defaults) */}
+          <TabsContent value="user-llm" className="space-y-6">
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                <strong>개인 LLM 설정:</strong> 여기서 설정한 값은 데이터베이스에 저장되며, 
+                관리자가 설정한 전역 기본값보다 우선 적용됩니다.
+                개인 설정이 없으면 자동으로 관리자 전역 설정이 사용됩니다.
+              </AlertDescription>
+            </Alert>
+            
+            {user?.id ? (
+              <UserLlmSettings userId={user.id} />
+            ) : (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  로그인이 필요합니다. LLM 설정을 관리하려면 먼저 로그인해주세요.
+                </AlertDescription>
+              </Alert>
+            )}
+          </TabsContent>
+
+          {/* AI/LLM Settings Tab - Admin Only */}
+          {isAdmin && (
           <TabsContent value="ai-settings" className="space-y-6">
             {/* LLM Provider Card */}
             <Card>
@@ -1177,12 +1216,14 @@ const Settings = () => {
               </AlertDescription>
             </Alert>
           </TabsContent>
+          )}
 
 
 
           {/* System Tab */}
           <TabsContent value="system" className="space-y-6">
-            {/* API Gateway Health */}
+            {/* API Gateway Health - Admin Only */}
+            {isAdmin && (
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -1246,8 +1287,9 @@ const Settings = () => {
                 )}
               </CardContent>
             </Card>
+            )}
 
-            {/* System Info */}
+            {/* System Info - Limited for non-admin */}
             <Card>
               <CardHeader>
                 <CardTitle>시스템 정보</CardTitle>
@@ -1261,6 +1303,8 @@ const Settings = () => {
                     <Label className="text-muted-foreground">프론트엔드 버전</Label>
                     <p className="font-mono text-sm">1.0.0</p>
                   </div>
+                  {isAdmin && (
+                  <>
                   <div className="space-y-1">
                     <Label className="text-muted-foreground">API Gateway</Label>
                     <p className="font-mono text-sm">localhost:8000</p>
@@ -1273,8 +1317,12 @@ const Settings = () => {
                     <Label className="text-muted-foreground">Browser-Use API</Label>
                     <p className="font-mono text-sm">lb://browser-use-api</p>
                   </div>
+                  </>
+                  )}
                 </div>
 
+                {isAdmin && (
+                <>
                 <Separator />
 
                 <div className="space-y-2">
@@ -1294,6 +1342,8 @@ const Settings = () => {
                     </Button>
                   </div>
                 </div>
+                </>
+                )}
               </CardContent>
             </Card>
 

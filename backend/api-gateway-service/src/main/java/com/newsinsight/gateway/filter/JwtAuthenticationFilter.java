@@ -38,8 +38,7 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     private static final List<String> PUBLIC_PATHS = List.of(
         "/health",
         "/actuator",
-        "/api/v1/auth/login",
-        "/api/v1/auth/register",
+        "/api/v1/auth",          // Public Auth API (register, login, check-username, check-email)
         "/api/v1/articles",
         "/api/v1/analysis",
         "/api/v1/ai",
@@ -52,8 +51,10 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         "/api/v1/search-history",
         "/api/v1/search-templates",
         "/api/v1/jobs",          // Search Jobs API (SSE 스트림 포함)
+        "/api/v1/projects",      // Projects API (익명 사용자 지원)
         "/api/v1/ai",
         "/api/v1/ml",
+        "/api/v1/llm-providers", // LLM Provider Settings (사용자별 설정 지원)
         "/api/v1/admin",         // Admin Dashboard (자체 인증 처리)
         "/api/v1/crawler",       // Autonomous Crawler API
         "/api/v1/autocrawl",     // AutoCrawl API (자동 크롤링 관리)
@@ -74,10 +75,10 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getPath().value();
         
-        // 공개 엔드포인트는 인증 스킵
+        // 공개 엔드포인트는 인증 스킵하지만 익명 사용자 헤더는 추가
         if (PUBLIC_PATHS.stream().anyMatch(path::startsWith)) {
-            log.debug("Skipping authentication for public path: {}", path);
-            return chain.filter(exchange);
+            log.debug("Public path: {}, adding anonymous user headers", path);
+            return handleAnonymousUser(exchange, chain);
         }
         
         // 토큰 추출 (우선순위: Authorization 헤더 > Cookie > Query Parameter)
@@ -116,6 +117,43 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
         }
+    }
+    
+    /**
+     * Handle anonymous user by generating unique user ID based on session
+     * This prevents data leakage between different anonymous users
+     */
+    private Mono<Void> handleAnonymousUser(ServerWebExchange exchange, GatewayFilterChain chain) {
+        // Extract session ID from headers (sent by frontend)
+        String sessionId = exchange.getRequest().getHeaders().getFirst("X-Session-Id");
+        String deviceId = exchange.getRequest().getHeaders().getFirst("X-Device-Id");
+        
+        // Generate unique anonymous user ID based on session
+        String anonymousUserId;
+        if (sessionId != null && !sessionId.isBlank()) {
+            anonymousUserId = "user_anon_" + sessionId;
+        } else {
+            // Fallback: use device ID or generate random ID
+            if (deviceId != null && !deviceId.isBlank()) {
+                anonymousUserId = "user_anon_" + deviceId;
+            } else {
+                // Last resort: generate random ID (not ideal, but prevents null)
+                anonymousUserId = "user_anon_" + System.currentTimeMillis();
+            }
+            log.warn("No session ID provided, using fallback anonymous user ID: {}", anonymousUserId);
+        }
+        
+        // Add anonymous user headers for downstream services
+        ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+                .header("X-User-Id", anonymousUserId)
+                .header("X-User-Role", "anonymous")
+                .header("X-Session-Id", sessionId != null ? sessionId : "")
+                .header("X-Device-Id", deviceId != null ? deviceId : "")
+                .build();
+        
+        log.debug("Anonymous user: userId={}, sessionId={}", anonymousUserId, sessionId);
+        
+        return chain.filter(exchange.mutate().request(mutatedRequest).build());
     }
     
     /**

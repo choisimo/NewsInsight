@@ -41,6 +41,8 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -78,6 +80,7 @@ public class UnifiedSearchService {
     private final AutoCrawlIntegrationService autoCrawlIntegrationService;
     private final SearchHistoryService searchHistoryService;
     private final AdvancedIntentAnalyzer advancedIntentAnalyzer;
+    private final SearchCacheService searchCacheService;
 
     @Value("${autocrawl.enabled:true}")
     private boolean autoCrawlEnabled;
@@ -87,10 +90,18 @@ public class UnifiedSearchService {
 
     private static final int SNIPPET_MAX_LENGTH = 200;
     private static final int MAX_DB_RESULTS = 20;
+    
+    // Deduplication settings
+    private static final double TITLE_SIMILARITY_THRESHOLD = 0.85;
+    private static final double CONTENT_SIMILARITY_THRESHOLD = 0.90;
 
     private static final String AI_SUMMARY_KEY_CONTENT = "content";
     private static final String AI_SUMMARY_KEY_SUMMARY = "summary";
     private static final String AI_SUMMARY_KEY_GENERATED_AT = "generatedAt";
+    
+    // Thread-safe deduplication tracker for streaming results
+    private final java.util.concurrent.ConcurrentHashMap<String, SearchResult> seenResults = 
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     // ============================================
     // DTO Classes
@@ -162,6 +173,118 @@ public class UnifiedSearchService {
     }
 
     // ============================================
+    // Deduplication Methods
+    // ============================================
+    
+    /**
+     * URL 정규화 - 쿼리 파라미터 제거, 프로토콜 통일
+     */
+    private String normalizeUrl(String url) {
+        if (url == null || url.isBlank()) {
+            return "";
+        }
+        try {
+            // Remove protocol, www, trailing slash, query params, and fragments
+            String normalized = url.toLowerCase()
+                    .replaceFirst("^https?://", "")
+                    .replaceFirst("^www\\.", "")
+                    .replaceAll("\\?.*$", "")
+                    .replaceAll("#.*$", "")
+                    .replaceAll("/$", "");
+            return normalized;
+        } catch (Exception e) {
+            return url.toLowerCase();
+        }
+    }
+    
+    /**
+     * 제목 유사도 계산 (Jaccard similarity)
+     */
+    private double calculateTitleSimilarity(String title1, String title2) {
+        if (title1 == null || title2 == null) {
+            return 0.0;
+        }
+        
+        // 간단한 토큰화 및 정규화
+        java.util.Set<String> tokens1 = java.util.Arrays.stream(
+                title1.toLowerCase().replaceAll("[^가-힣a-z0-9\\s]", " ").split("\\s+"))
+                .filter(s -> s.length() >= 2)
+                .collect(Collectors.toSet());
+        
+        java.util.Set<String> tokens2 = java.util.Arrays.stream(
+                title2.toLowerCase().replaceAll("[^가-힣a-z0-9\\s]", " ").split("\\s+"))
+                .filter(s -> s.length() >= 2)
+                .collect(Collectors.toSet());
+        
+        if (tokens1.isEmpty() || tokens2.isEmpty()) {
+            return 0.0;
+        }
+        
+        // Jaccard similarity
+        java.util.Set<String> intersection = new java.util.HashSet<>(tokens1);
+        intersection.retainAll(tokens2);
+        
+        java.util.Set<String> union = new java.util.HashSet<>(tokens1);
+        union.addAll(tokens2);
+        
+        return (double) intersection.size() / union.size();
+    }
+    
+    /**
+     * 중복 검사 - URL 기반 + 제목 유사도 기반
+     */
+    private boolean isDuplicate(SearchResult newResult, Map<String, SearchResult> existingResults) {
+        // 1. URL 기반 중복 체크 (정확한 매칭)
+        String normalizedUrl = normalizeUrl(newResult.getUrl());
+        if (!normalizedUrl.isEmpty()) {
+            for (SearchResult existing : existingResults.values()) {
+                if (normalizedUrl.equals(normalizeUrl(existing.getUrl()))) {
+                    log.debug("Duplicate detected by URL: {}", normalizedUrl);
+                    return true;
+                }
+            }
+        }
+        
+        // 2. 제목 유사도 기반 중복 체크 (유사한 기사 필터링)
+        String newTitle = newResult.getTitle();
+        if (newTitle != null && !newTitle.isBlank()) {
+            for (SearchResult existing : existingResults.values()) {
+                double similarity = calculateTitleSimilarity(newTitle, existing.getTitle());
+                if (similarity >= TITLE_SIMILARITY_THRESHOLD) {
+                    log.debug("Duplicate detected by title similarity ({:.2f}): '{}' ~ '{}'", 
+                            similarity, newTitle, existing.getTitle());
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * 검색 세션용 중복 제거 트래커 초기화
+     */
+    private Map<String, SearchResult> createDeduplicationTracker() {
+        return new java.util.concurrent.ConcurrentHashMap<>();
+    }
+    
+    /**
+     * 중복이 아닌 경우에만 결과 추가하고 true 반환
+     */
+    private boolean addIfNotDuplicate(SearchResult result, Map<String, SearchResult> tracker) {
+        if (isDuplicate(result, tracker)) {
+            return false;
+        }
+        
+        // 결과 ID 또는 URL을 키로 사용
+        String key = result.getId() != null ? result.getId() : 
+                    (result.getUrl() != null ? normalizeUrl(result.getUrl()) : 
+                    String.valueOf(System.nanoTime()));
+        tracker.put(key, result);
+        return true;
+    }
+
+    // ============================================
     // Main Search Method - Parallel Execution
     // ============================================
 
@@ -193,6 +316,10 @@ public class UnifiedSearchService {
 
         // Collect discovered URLs for AutoCrawl integration
         List<String> discoveredUrls = new ArrayList<>();
+        
+        // Deduplication tracker for this search session
+        Map<String, SearchResult> deduplicationTracker = createDeduplicationTracker();
+        java.util.concurrent.atomic.AtomicInteger duplicateCount = new java.util.concurrent.atomic.AtomicInteger(0);
 
         return Flux.merge(
                 // 1. 데이터베이스 검색 (가장 빠름)
@@ -207,6 +334,22 @@ public class UnifiedSearchService {
                 searchAI(query, window)
                         .subscribeOn(Schedulers.boundedElastic())
         )
+        // Filter duplicates before emitting results
+        .filter(event -> {
+            if (!"result".equals(event.getEventType()) || event.getResult() == null) {
+                return true; // Pass through non-result events
+            }
+            
+            SearchResult result = event.getResult();
+            if (addIfNotDuplicate(result, deduplicationTracker)) {
+                return true; // Unique result, pass through
+            } else {
+                duplicateCount.incrementAndGet();
+                log.debug("Filtered duplicate result: '{}' from {}", 
+                        result.getTitle(), result.getSource());
+                return false; // Duplicate, filter out
+            }
+        })
         .doOnNext(event -> {
             // Collect URLs from search results for AutoCrawl
             if ("result".equals(event.getEventType()) && event.getResult() != null 
@@ -217,7 +360,8 @@ public class UnifiedSearchService {
             }
         })
         .doOnComplete(() -> {
-            log.info("Parallel search completed for query: '{}', discovered {} URLs", query, discoveredUrls.size());
+            log.info("Parallel search completed for query: '{}', discovered {} URLs, filtered {} duplicates", 
+                    query, discoveredUrls.size(), duplicateCount.get());
             
             // Notify AutoCrawl of discovered URLs
             if (autoCrawlEnabled && !discoveredUrls.isEmpty()) {
@@ -345,9 +489,16 @@ public class UnifiedSearchService {
     }
 
     /**
-     * 동기식 데이터베이스 검색 (폴백용)
+     * 동기식 데이터베이스 검색 (폴백용) - with caching
      */
     private List<SearchResult> searchDatabaseSync(String query, String window) {
+        // Check cache first
+        var cachedResults = searchCacheService.getDbSearchResults(query, window, SearchResult.class);
+        if (cachedResults.isPresent()) {
+            log.debug("Returning cached DB search results for query: '{}'", query);
+            return cachedResults.get();
+        }
+        
         List<SearchResult> results = new ArrayList<>();
         
         try {
@@ -377,6 +528,11 @@ public class UnifiedSearchService {
                 ArticleAnalysis analysis = data.getId() != null ? analysisMap.get(data.getId()) : null;
                 ArticleDiscussion discussion = data.getId() != null ? discussionMap.get(data.getId()) : null;
                 results.add(convertToSearchResult(data, analysis, discussion));
+            }
+            
+            // Cache the results
+            if (!results.isEmpty()) {
+                searchCacheService.cacheDbSearchResults(query, window, results);
             }
         } catch (Exception e) {
             log.error("Database sync search failed: {}", e.getMessage());
@@ -570,13 +726,18 @@ public class UnifiedSearchService {
                 ? data.getPublishedDate().toString()
                 : (data.getCollectedAt() != null ? data.getCollectedAt().toString() : null);
 
+        // 원본 콘텐츠를 보존하면서 정제된 텍스트 생성
+        String rawContent = data.getContent();
+        String cleanedContent = cleanContent(rawContent);
+        
+        // snippet은 정제된 콘텐츠에서 생성하되, content는 정제된 전체 텍스트 사용
         SearchResult.SearchResultBuilder builder = SearchResult.builder()
                 .id(data.getId() != null ? data.getId().toString() : UUID.randomUUID().toString())
                 .source("database")
                 .sourceLabel(sourceName)
                 .title(data.getTitle())
-                .snippet(buildSnippet(data.getContent()))
-                .content(cleanContent(data.getContent()))  // 전체 본문 추가
+                .snippet(buildSnippetFromCleanText(cleanedContent))
+                .content(cleanedContent)  // HTML 제거된 전체 본문 (원본 텍스트 보존)
                 .url(data.getUrl())
                 .publishedAt(publishedAt)
                 .relevanceScore(data.getQualityScore());
@@ -970,17 +1131,23 @@ public class UnifiedSearchService {
             case "30d" -> "최근 한 달";
             default -> "최근 일주일";
         };
+        
+        // 통화/단위 맥락 분석 힌트 생성
+        String currencyContext = buildCurrencyContext(query);
 
         return """
-                당신은 뉴스 분석 전문가입니다. '%s'에 대해 %s 동안의 정보를 철저히 조사하고 분석해주세요.
+                [중요: "알겠습니다", "네", "검색하겠습니다" 등의 서두 없이 바로 아래 형식으로 보고서를 작성하세요]
+                
+                '%s'에 대해 %s 동안의 정보를 철저히 조사하고 분석한 보고서입니다.
                 
                 ## 분석 원칙
                 - **확실한 정보만 보고**: 불확실하거나 추측성 내용은 포함하지 마세요
                 - **출처 명시**: 모든 주요 주장에는 반드시 출처를 표기하세요
                 - **교차 검증**: 가능한 경우 여러 출처에서 확인된 정보만 포함하세요
                 - **객관적 분석**: 특정 입장에 치우치지 않고 균형 있게 분석하세요
+                %s
                 
-                ## 보고서 형식
+                ## 보고서 형식 (이 형식을 정확히 따라주세요)
                 
                 ### [요약] 핵심 요약
                 현재 상황을 4-5문장으로 명확하게 요약해주세요. 핵심 사실만 포함하세요.
@@ -1016,8 +1183,51 @@ public class UnifiedSearchService {
                 * 이 분석은 수집된 자료를 기반으로 작성되었으며, 모든 주장은 출처와 함께 제공됩니다.
                 * 최종 판단은 독자의 몫입니다.
                 
-                한국어로 답변해주세요. 마크다운 형식을 사용하세요.
-                """.formatted(query, timeFrame);
+                한국어로 답변해주세요. 마크다운 형식을 사용하고, "### [요약]"부터 바로 시작하세요.
+                """.formatted(query, timeFrame, currencyContext);
+    }
+    
+    /**
+     * 쿼리에서 통화/단위 맥락을 분석하여 AI에게 힌트 제공
+     * 
+     * 예: "비트코인 10억" → 한국어 맥락에서 원화(KRW)일 가능성 높음
+     * 예: "Bitcoin $1B" → 달러(USD)로 명시됨
+     */
+    private String buildCurrencyContext(String query) {
+        StringBuilder context = new StringBuilder();
+        
+        // 숫자 + 억/만/조 패턴 감지 (한국어 숫자 단위)
+        boolean hasKoreanNumber = query.matches(".*\\d+\\s*(억|만|조|천).*");
+        
+        // 명시적 통화 기호 감지
+        boolean hasExplicitUsd = query.matches(".*\\$|USD|달러|dollar.*");
+        boolean hasExplicitKrw = query.matches(".*₩|KRW|원화|won.*");
+        boolean hasExplicitBtc = query.matches(".*BTC|비트코인|bitcoin.*");
+        
+        // 가격/금액 관련 키워드 감지
+        boolean hasPriceKeyword = query.matches(".*(가격|price|도달|목표|전망|예측|forecast).*");
+        
+        if (hasKoreanNumber && !hasExplicitUsd && hasPriceKeyword) {
+            context.append("""
+                
+                ## 통화/단위 주의사항
+                - **중요**: 이 쿼리에 한국어 숫자 단위(억, 만 등)가 포함되어 있습니다
+                - 한국어 맥락에서 단위 없는 숫자는 **한국 원화(KRW)**일 가능성이 높습니다
+                - 예: "10억" = 10억 원(KRW) ≈ $670,000 USD (환율에 따라 변동)
+                - 분석 시 **원화와 달러 양쪽 해석**을 모두 고려하여 작성해주세요
+                - 현재 환율 정보도 함께 제공하면 좋습니다
+                """);
+        } else if (hasExplicitBtc && hasPriceKeyword && !hasExplicitUsd && !hasExplicitKrw) {
+            context.append("""
+                
+                ## 통화/단위 주의사항
+                - 암호화폐 가격 분석 시 **USD와 KRW 양쪽 기준**을 모두 언급해주세요
+                - 현재 시세와 비교하여 현실적인 분석을 제공해주세요
+                - 명시되지 않은 금액은 맥락에 따라 해석하되, 양쪽 가능성을 모두 제시하세요
+                """);
+        }
+        
+        return context.toString();
     }
 
     // ============================================
@@ -1025,14 +1235,88 @@ public class UnifiedSearchService {
     // ============================================
 
     private LocalDateTime calculateSinceDate(String window) {
+        return calculateSinceDate(window, null, null);
+    }
+
+    /**
+     * Calculate the start date for search based on window or custom date range.
+     * 
+     * @param window Time window (1d, 3d, 7d, 14d, 30d, 90d, 180d, 365d, all)
+     * @param startDate Custom start date (ISO 8601 format)
+     * @param endDate Custom end date (ISO 8601 format) - currently unused for "since" calculation
+     * @return LocalDateTime representing the start date for search
+     */
+    private LocalDateTime calculateSinceDate(String window, String startDate, String endDate) {
+        // If custom startDate is provided, use it
+        if (startDate != null && !startDate.isBlank()) {
+            try {
+                return LocalDateTime.parse(startDate, DateTimeFormatter.ISO_DATE_TIME);
+            } catch (DateTimeParseException e) {
+                log.warn("Invalid startDate format: '{}', falling back to window: {}", startDate, window);
+            }
+        }
+
         LocalDateTime now = LocalDateTime.now();
         return switch (window) {
+            case "1h" -> now.minusHours(1);
             case "1d" -> now.minusDays(1);
+            case "3d" -> now.minusDays(3);
+            case "14d" -> now.minusDays(14);
             case "30d" -> now.minusDays(30);
-            default -> now.minusDays(7);
+            case "90d" -> now.minusDays(90);
+            case "180d" -> now.minusDays(180);
+            case "365d" -> now.minusDays(365);
+            case "all" -> LocalDateTime.of(2000, 1, 1, 0, 0);  // Effectively no time limit
+            default -> now.minusDays(7);  // Default to 7 days
         };
     }
 
+    /**
+     * Calculate the end date for search (for custom date range support).
+     * 
+     * @param endDate Custom end date (ISO 8601 format)
+     * @return LocalDateTime representing the end date for search, or null for "now"
+     */
+    private LocalDateTime calculateEndDate(String endDate) {
+        if (endDate != null && !endDate.isBlank()) {
+            try {
+                return LocalDateTime.parse(endDate, DateTimeFormatter.ISO_DATE_TIME);
+            } catch (DateTimeParseException e) {
+                log.warn("Invalid endDate format: '{}', using current time", endDate);
+            }
+        }
+        return null;  // null means "now" (no upper limit)
+    }
+
+    /**
+     * 이미 정제된 텍스트에서 snippet 생성 (HTML 파싱 불필요)
+     */
+    private String buildSnippetFromCleanText(String cleanText) {
+        if (cleanText == null || cleanText.isBlank()) {
+            return null;
+        }
+
+        if (cleanText.length() <= SNIPPET_MAX_LENGTH) {
+            return cleanText;
+        }
+
+        // 단어 경계에서 자르기
+        int cut = SNIPPET_MAX_LENGTH;
+        for (int i = Math.min(SNIPPET_MAX_LENGTH - 1, cleanText.length() - 1); 
+             i > SNIPPET_MAX_LENGTH * 0.6 && i >= 0; i--) {
+            if (Character.isWhitespace(cleanText.charAt(i))) {
+                cut = i;
+                break;
+            }
+        }
+
+        return cleanText.substring(0, cut).trim() + "...";
+    }
+
+    /**
+     * 레거시 호환성을 위한 buildSnippet (HTML 파싱 포함)
+     * 웹 크롤링 결과 등에서 사용
+     */
     private String buildSnippet(String content) {
         if (content == null || content.isBlank()) {
             return null;
@@ -1069,9 +1353,12 @@ public class UnifiedSearchService {
     /**
      * HTML 태그를 제거하고 정리된 전체 텍스트를 반환합니다.
      * snippet과 달리 길이 제한 없이 전체 내용을 반환합니다.
+     * 
+     * 중요: 이 메서드는 원본 텍스트 내용을 최대한 보존하며,
+     * HTML 태그만 제거하고 실제 텍스트 데이터는 변경하지 않습니다.
      *
      * @param content 원본 콘텐츠 (HTML 포함 가능)
-     * @return 정리된 전체 텍스트
+     * @return 정리된 전체 텍스트 (원본 데이터 보존)
      */
     private String cleanContent(String content) {
         if (content == null || content.isBlank()) {
@@ -1080,12 +1367,14 @@ public class UnifiedSearchService {
 
         String text;
         try {
+            // Jsoup을 사용하여 HTML 태그만 제거, 텍스트 내용은 보존
             text = Jsoup.parse(content).text();
         } catch (Exception e) {
+            // HTML 파싱 실패 시 원본 그대로 사용
             text = content;
         }
 
-        // 연속 공백 정리
+        // 연속 공백만 정리 (실제 텍스트 내용은 변경하지 않음)
         text = text.replaceAll("\\s+", " ").trim();
         
         return text.isEmpty() ? null : text;
@@ -1106,11 +1395,14 @@ public class UnifiedSearchService {
      * @param query Search query
      * @param window Time window (1d, 7d, 30d)
      * @param priorityUrls Optional list of URLs to prioritize for web crawling
+     * @param startDate Custom start date (ISO 8601 format) - overrides window if provided
+     * @param endDate Custom end date (ISO 8601 format)
      */
     @Async
-    public void executeSearchAsync(String jobId, String query, String window, List<String> priorityUrls) {
-        log.info("Starting async search for job: {}, query: '{}', window: {}, priorityUrls: {}", 
-                jobId, query, window, priorityUrls != null ? priorityUrls.size() : 0);
+    public void executeSearchAsync(String jobId, String query, String window, List<String> priorityUrls, 
+                                   String startDate, String endDate) {
+        log.info("Starting async search for job: {}, query: '{}', window: {}, priorityUrls: {}, startDate: {}, endDate: {}", 
+                jobId, query, window, priorityUrls != null ? priorityUrls.size() : 0, startDate, endDate);
         
         // Advanced Intent Analysis
         AnalyzedQuery analyzedQuery = advancedIntentAnalyzer.analyzeQuery(query);
@@ -1128,10 +1420,17 @@ public class UnifiedSearchService {
         // Collect discovered URLs for AutoCrawl integration
         List<String> discoveredUrls = new ArrayList<>();
         
+        // Calculate effective date range
+        LocalDateTime effectiveStartDate = calculateSinceDate(window, startDate, endDate);
+        LocalDateTime effectiveEndDate = calculateEndDate(endDate);
+        
+        log.info("Effective date range for job {}: {} to {}", jobId, effectiveStartDate, 
+                effectiveEndDate != null ? effectiveEndDate : "now");
+        
         try {
             // Execute all three searches in parallel
             CompletableFuture<Void> dbFuture = CompletableFuture.runAsync(() -> 
-                    executeDbSearchWithFallback(jobId, analyzedQuery, window, totalResults, discoveredUrls));
+                    executeDbSearchWithFallback(jobId, analyzedQuery, window, startDate, endDate, totalResults, discoveredUrls));
             
             CompletableFuture<Void> webFuture = CompletableFuture.runAsync(() -> 
                     executeWebSearch(jobId, query, window, totalResults, priorityUrls, discoveredUrls));
@@ -1174,12 +1473,22 @@ public class UnifiedSearchService {
     }
 
     /**
+     * Execute search asynchronously (backward compatible - without custom date range).
+     */
+    @Async
+    public void executeSearchAsync(String jobId, String query, String window, List<String> priorityUrls) {
+        executeSearchAsync(jobId, query, window, priorityUrls, null, null);
+    }
+
+    /**
      * DB 검색 with 폴백 전략
      */
     private void executeDbSearchWithFallback(
             String jobId, 
             AnalyzedQuery analyzedQuery, 
-            String window, 
+            String window,
+            String startDate,
+            String endDate,
             AtomicInteger totalResults,
             List<String> discoveredUrls) {
         
@@ -1199,7 +1508,7 @@ public class UnifiedSearchService {
             unifiedSearchEventService.publishStatusUpdate(jobId, "database", 
                     "검색 전략 " + (attempt + 1) + "/" + maxFallbackAttempts + ": " + strategyDesc);
             
-            int found = executeDbSearchForQuery(jobId, currentQuery, window, totalResults, discoveredUrls);
+            int found = executeDbSearchForQuery(jobId, currentQuery, window, startDate, endDate, totalResults, discoveredUrls);
             resultsFound += found;
             
             if (resultsFound >= 3) {
@@ -1228,16 +1537,18 @@ public class UnifiedSearchService {
     private int executeDbSearchForQuery(
             String jobId, 
             String query, 
-            String window, 
+            String window,
+            String startDate,
+            String endDate,
             AtomicInteger totalResults,
             List<String> discoveredUrls) {
         
         try {
             // Use hybrid search if available
             if (hybridSearchService.isEnabled() && hybridSearchService.isSemanticSearchAvailable()) {
-                return executeDbSearchHybridForQuery(jobId, query, window, totalResults, discoveredUrls);
+                return executeDbSearchHybridForQuery(jobId, query, window, startDate, endDate, totalResults, discoveredUrls);
             } else {
-                return executeDbSearchKeywordForQuery(jobId, query, window, totalResults, discoveredUrls);
+                return executeDbSearchKeywordForQuery(jobId, query, window, startDate, endDate, totalResults, discoveredUrls);
             }
         } catch (Exception e) {
             log.error("DB search failed for query '{}': {}", query, e.getMessage());
@@ -1248,12 +1559,17 @@ public class UnifiedSearchService {
     private int executeDbSearchHybridForQuery(
             String jobId, 
             String query, 
-            String window, 
+            String window,
+            String startDate,
+            String endDate,
             AtomicInteger totalResults,
             List<String> discoveredUrls) {
         
         try {
-            HybridSearchService.HybridSearchResult hybridResult = hybridSearchService.search(query, window).block();
+            // Use custom date range if provided, otherwise use window
+            String effectiveWindow = (startDate != null && !startDate.isBlank()) ? "custom" : window;
+            HybridSearchService.HybridSearchResult hybridResult = hybridSearchService
+                    .search(query, effectiveWindow, startDate, endDate).block();
             
             if (hybridResult == null || hybridResult.getResults().isEmpty()) {
                 return 0;
@@ -1309,17 +1625,27 @@ public class UnifiedSearchService {
     private int executeDbSearchKeywordForQuery(
             String jobId, 
             String query, 
-            String window, 
+            String window,
+            String startDate,
+            String endDate,
             AtomicInteger totalResults,
             List<String> discoveredUrls) {
         
         try {
-            LocalDateTime since = calculateSinceDate(window);
+            LocalDateTime since = calculateSinceDate(window, startDate, endDate);
+            LocalDateTime until = calculateEndDate(endDate);
+            
             PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
                     Sort.by(Sort.Direction.DESC, "publishedDate")
                             .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
 
-            Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(query, since, pageRequest);
+            // Use date range query if endDate is specified
+            Page<CollectedData> page;
+            if (until != null) {
+                page = collectedDataRepository.searchByQueryAndDateRange(query, since, until, pageRequest);
+            } else {
+                page = collectedDataRepository.searchByQueryAndSince(query, since, pageRequest);
+            }
 
             List<Long> articleIds = page.getContent().stream()
                     .map(CollectedData::getId)

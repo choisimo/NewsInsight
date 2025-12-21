@@ -120,18 +120,23 @@ public class SearchHistoryController {
             @RequestParam(defaultValue = "createdAt") String sortBy,
             @RequestParam(defaultValue = "DESC") String sortDirection,
             @RequestParam(required = false) String type,
-            @RequestParam(required = false) String userId
+            @RequestParam(required = false) String userId,
+            @RequestHeader(value = "X-User-Id", required = false) String headerUserId,
+            @RequestHeader(value = "X-Session-Id", required = false) String sessionId
     ) {
+        // Use header userId if not provided in query param
+        String effectiveUserId = userId != null ? userId : headerUserId;
+        
         Page<SearchHistory> result;
         
-        if (type != null && userId != null) {
+        if (type != null && effectiveUserId != null) {
             SearchType searchType = SearchType.valueOf(type.toUpperCase());
-            result = searchHistoryService.findByUserAndType(userId, searchType, page, size);
+            result = searchHistoryService.findByUserAndType(effectiveUserId, searchType, page, size);
         } else if (type != null) {
             SearchType searchType = SearchType.valueOf(type.toUpperCase());
             result = searchHistoryService.findByType(searchType, page, size);
-        } else if (userId != null) {
-            result = searchHistoryService.findByUser(userId, page, size);
+        } else if (effectiveUserId != null) {
+            result = searchHistoryService.findByUser(effectiveUserId, page, size);
         } else {
             result = searchHistoryService.findAll(page, size, sortBy, sortDirection);
         }
@@ -391,13 +396,21 @@ public class SearchHistoryController {
      */
     @GetMapping("/continue-work")
     public ResponseEntity<Map<String, Object>> getContinueWorkItems(
-            @RequestParam(required = false, defaultValue = "anonymous") String userId,
+            @RequestParam(required = false) String userId,
             @RequestParam(required = false) String sessionId,
-            @RequestParam(required = false, defaultValue = "10") int limit
+            @RequestParam(required = false, defaultValue = "10") int limit,
+            @RequestHeader(value = "X-User-Id", required = false) String headerUserId,
+            @RequestHeader(value = "X-Session-Id", required = false) String headerSessionId
     ) {
+        // Use headers if not provided in query params
+        String effectiveUserId = userId != null ? userId : headerUserId;
+        String effectiveSessionId = sessionId != null ? sessionId : headerSessionId;
+        
+        log.debug("Continue work request: userId={}, sessionId={}", effectiveUserId, effectiveSessionId);
+        
         List<SearchHistory> items = searchHistoryService.findContinueWorkItems(
-                userId, 
-                sessionId != null ? sessionId : "", 
+                effectiveUserId != null ? effectiveUserId : "", 
+                effectiveSessionId != null ? effectiveSessionId : "", 
                 limit
         );
         
@@ -406,8 +419,8 @@ public class SearchHistoryController {
                 .toList();
 
         Map<String, Object> stats = searchHistoryService.getContinueWorkStats(
-                userId, 
-                sessionId != null ? sessionId : ""
+                effectiveUserId != null ? effectiveUserId : "", 
+                effectiveSessionId != null ? effectiveSessionId : ""
         );
 
         return ResponseEntity.ok(Map.of(

@@ -10,6 +10,17 @@ import type {
   User,
   Token,
   HealthCheck,
+  ServiceInfo,
+  ServiceHealth,
+  InfrastructureHealth,
+  OverallSystemHealth,
+  DataSource,
+  DataSourceTestResult,
+  DatabaseInfo,
+  PostgresDatabaseStats,
+  MongoDatabaseStats,
+  RedisStats,
+  KafkaClusterInfo,
 } from '../types';
 
 // Auth
@@ -225,4 +236,239 @@ export const usersApi = {
   
   delete: (id: string) =>
     apiClient.delete(`/auth/users/${id}`),
+};
+
+// LLM Provider Settings Types
+export type LlmProviderType = 
+  | 'OPENAI' 
+  | 'ANTHROPIC' 
+  | 'GOOGLE' 
+  | 'OPENROUTER' 
+  | 'OLLAMA' 
+  | 'AZURE_OPENAI' 
+  | 'CUSTOM';
+
+export interface LlmProviderTypeInfo {
+  value: LlmProviderType;
+  displayName: string;
+  description: string;
+  requiresApiKey: boolean;
+  defaultBaseUrl?: string;
+}
+
+export interface LlmProviderSettings {
+  id: number;
+  providerType: LlmProviderType;
+  userId?: string;
+  hasApiKey: boolean;
+  maskedApiKey?: string;
+  defaultModel: string;
+  baseUrl?: string;
+  enabled: boolean;
+  priority: number;
+  maxTokens: number;
+  temperature: number;
+  timeoutMs: number;
+  azureDeploymentName?: string;
+  azureApiVersion?: string;
+  lastTestedAt?: string;
+  lastTestSuccess?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LlmProviderSettingsRequest {
+  providerType: LlmProviderType;
+  apiKey?: string;
+  defaultModel: string;
+  baseUrl?: string;
+  enabled?: boolean;
+  priority?: number;
+  maxTokens?: number;
+  temperature?: number;
+  timeoutMs?: number;
+  azureDeploymentName?: string;
+  azureApiVersion?: string;
+}
+
+export interface LlmTestResult {
+  providerType: LlmProviderType;
+  success: boolean;
+  message: string;
+  latencyMs?: number;
+  testedAt: string;
+}
+
+// LLM Providers (Admin)
+export const llmProvidersApi = {
+  // Get provider type metadata
+  getTypes: () =>
+    apiClient.get<LlmProviderTypeInfo[]>('/llm-providers/types'),
+  
+  // Get all global settings
+  listGlobal: () =>
+    apiClient.get<LlmProviderSettings[]>('/llm-providers/global'),
+  
+  // Get global setting for specific provider
+  getGlobal: (providerType: LlmProviderType) =>
+    apiClient.get<LlmProviderSettings>(`/llm-providers/global/${providerType}`),
+  
+  // Save/update global setting
+  saveGlobal: (providerType: LlmProviderType, data: LlmProviderSettingsRequest) =>
+    apiClient.put<LlmProviderSettings>(`/llm-providers/global/${providerType}`, data),
+  
+  // Delete global setting
+  deleteGlobal: (providerType: LlmProviderType) =>
+    apiClient.delete(`/llm-providers/global/${providerType}`),
+  
+  // Test connection
+  testConnection: (providerType: LlmProviderType, model?: string) => {
+    const params = new URLSearchParams({ providerType });
+    if (model) params.append('model', model);
+    return apiClient.post<LlmTestResult>(`/llm-providers/test?${params}`);
+  },
+  
+  // Get effective settings (global + user overrides)
+  getEffective: (userId?: string) => {
+    const params = userId ? `?userId=${userId}` : '';
+    return apiClient.get<LlmProviderSettings[]>(`/llm-providers/effective${params}`);
+  },
+  
+  // Get enabled providers
+  getEnabled: (userId?: string) => {
+    const params = userId ? `?userId=${userId}` : '';
+    return apiClient.get<LlmProviderSettings[]>(`/llm-providers/enabled${params}`);
+  },
+};
+
+// Health Monitor API
+export const healthMonitorApi = {
+  // Get all registered services
+  listServices: () =>
+    apiClient.get<ServiceInfo[]>('/health-monitor/services'),
+  
+  // Get infrastructure services
+  listInfrastructure: () =>
+    apiClient.get<Record<string, unknown>[]>('/health-monitor/infrastructure'),
+  
+  // Check specific service health
+  checkService: (serviceId: string) =>
+    apiClient.get<ServiceHealth>(`/health-monitor/check/${serviceId}`),
+  
+  // Check all services health
+  checkAllServices: () =>
+    apiClient.get<ServiceHealth[]>('/health-monitor/check-all'),
+  
+  // Check infrastructure health
+  checkInfrastructure: () =>
+    apiClient.get<InfrastructureHealth[]>('/health-monitor/check-infrastructure'),
+  
+  // Get overall system health
+  getOverallHealth: () =>
+    apiClient.get<OverallSystemHealth>('/health-monitor/overall'),
+  
+  // Get last check result (cached)
+  getLastCheck: (serviceId: string) =>
+    apiClient.get<ServiceHealth>(`/health-monitor/last-check/${serviceId}`),
+  
+  // SSE stream URL builder
+  getStreamUrl: (interval = 10) => {
+    const token = apiClient.getToken();
+    const baseUrl = '/api/v1/admin';
+    return `${baseUrl}/health-monitor/stream?interval=${interval}&token=${token}`;
+  },
+};
+
+// Data Sources API
+export const dataSourcesApi = {
+  // List all data sources
+  list: (filters?: { type?: string; status?: string; category?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.type) params.append('type', filters.type);
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.category) params.append('category', filters.category);
+    return apiClient.get<DataSource[]>(`/data-sources?${params}`);
+  },
+  
+  // Get single data source
+  get: (id: string) =>
+    apiClient.get<DataSource>(`/data-sources/${id}`),
+  
+  // Create new data source
+  create: (data: Partial<DataSource>) =>
+    apiClient.post<DataSource>('/data-sources', data),
+  
+  // Update data source
+  update: (id: string, data: Partial<DataSource>) =>
+    apiClient.patch<DataSource>(`/data-sources/${id}`, data),
+  
+  // Delete data source
+  delete: (id: string) =>
+    apiClient.delete(`/data-sources/${id}`),
+  
+  // Test data source connection
+  test: (id: string) =>
+    apiClient.post<DataSourceTestResult>(`/data-sources/${id}/test`),
+  
+  // Trigger crawl for data source
+  triggerCrawl: (id: string) =>
+    apiClient.post(`/data-sources/${id}/crawl`),
+  
+  // Toggle active status
+  toggleActive: (id: string, isActive: boolean) =>
+    apiClient.patch<DataSource>(`/data-sources/${id}`, { is_active: isActive }),
+  
+  // Get categories
+  getCategories: () =>
+    apiClient.get<string[]>('/data-sources/categories'),
+  
+  // Get statistics
+  getStats: () =>
+    apiClient.get<Record<string, unknown>>('/data-sources/stats'),
+};
+
+// Database Management API
+export const databaseApi = {
+  // Get all database info
+  listDatabases: () =>
+    apiClient.get<DatabaseInfo[]>('/databases'),
+  
+  // Get PostgreSQL stats
+  getPostgresStats: () =>
+    apiClient.get<PostgresDatabaseStats>('/databases/postgres/stats'),
+  
+  // Get MongoDB stats
+  getMongoStats: () =>
+    apiClient.get<MongoDatabaseStats>('/databases/mongo/stats'),
+  
+  // Get Redis stats
+  getRedisStats: () =>
+    apiClient.get<RedisStats>('/databases/redis/stats'),
+  
+  // Health check specific database
+  checkDatabase: (dbType: 'postgres' | 'mongo' | 'redis') =>
+    apiClient.get<DatabaseInfo>(`/databases/${dbType}/health`),
+};
+
+// Kafka/Redpanda API
+export const kafkaApi = {
+  // Get cluster info
+  getClusterInfo: () =>
+    apiClient.get<KafkaClusterInfo>('/kafka/cluster'),
+  
+  // List topics
+  listTopics: () =>
+    apiClient.get<KafkaClusterInfo['topics']>('/kafka/topics'),
+  
+  // Get topic details
+  getTopic: (topicName: string) =>
+    apiClient.get<KafkaClusterInfo['topics'][0]>(`/kafka/topics/${topicName}`),
+  
+  // List consumer groups
+  listConsumerGroups: () =>
+    apiClient.get<KafkaClusterInfo['consumer_groups']>('/kafka/consumer-groups'),
+  
+  // Get consumer group details
+  getConsumerGroup: (groupId: string) =>
+    apiClient.get<KafkaClusterInfo['consumer_groups'][0]>(`/kafka/consumer-groups/${groupId}`),
 };

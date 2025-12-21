@@ -307,7 +307,7 @@ const CollectedDataPage: React.FC = () => {
     setPage: setAllPage,
     markAsProcessed: markAllAsProcessed,
   } = useCollectedData({
-    size: 12,
+    size: 20,
     processed: processedFilter === 'all' ? undefined : processedFilter === 'processed',
     query: debouncedQuery || undefined,
     autoRefresh: true,
@@ -326,7 +326,7 @@ const CollectedDataPage: React.FC = () => {
     setPage: setUnprocessedPage,
     markAsProcessed: markUnprocessedAsProcessed,
   } = useUnprocessedData({
-    size: 12,
+    size: 20,
     autoRefresh: true,
     refreshInterval: 10000,
   });

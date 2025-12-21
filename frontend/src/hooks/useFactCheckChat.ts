@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { API_BASE_URL } from '@/lib/api';
+import { getApiClient } from '@/lib/api';
 
 interface ChatEvent {
   type: string;
@@ -24,7 +24,26 @@ interface UseFactCheckChatReturn {
   isStreaming: boolean;
   sessionId: string | null;
   disconnect: () => void;
+  reconnect: () => void;
 }
+
+/**
+ * Resolve the base URL for API calls
+ * In development, uses empty string (Vite proxy)
+ * In production, uses environment variable or current origin
+ */
+const resolveBaseUrl = (): string => {
+  if (import.meta.env.DEV) {
+    return '';
+  }
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL as string;
+  }
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+  return '';
+};
 
 export const useFactCheckChat = (options: UseFactCheckChatOptions): UseFactCheckChatReturn => {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -32,48 +51,60 @@ export const useFactCheckChat = (options: UseFactCheckChatOptions): UseFactCheck
   const [isStreaming, setIsStreaming] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const optionsRef = useRef(options);
+  const mountedRef = useRef(true);
+  const sessionIdRef = useRef<string | null>(null);
 
   // 옵션 업데이트
   useEffect(() => {
     optionsRef.current = options;
   }, [options]);
 
-  // 세션 생성
-  useEffect(() => {
-    const createSession = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/factcheck-chat/session`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ message: 'init' }),
-        });
+  // 세션 생성 함수
+  const createSession = useCallback(async () => {
+    try {
+      const client = await getApiClient();
+      const response = await client.post('/api/v1/factcheck-chat/session', { message: 'init' });
 
-        if (!response.ok) {
-          throw new Error('Failed to create session');
-        }
-
-        const data = await response.json();
-        setSessionId(data.sessionId);
+      if (mountedRef.current) {
+        const newSessionId = response.data.sessionId;
+        setSessionId(newSessionId);
+        sessionIdRef.current = newSessionId;
         setIsConnected(true);
-      } catch (error) {
-        console.error('Failed to create fact-check chat session:', error);
-        optionsRef.current.onError?.('세션 생성에 실패했습니다.');
+        console.log('[FactCheckChat] Session created:', newSessionId);
       }
-    };
+    } catch (error) {
+      console.error('Failed to create fact-check chat session:', error);
+      if (mountedRef.current) {
+        optionsRef.current.onError?.('세션 생성에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      }
+    }
+  }, []);
 
+  // 세션 재연결
+  const reconnect = useCallback(() => {
+    setIsConnected(false);
+    setSessionId(null);
+    sessionIdRef.current = null;
+    createSession();
+  }, [createSession]);
+
+  // 초기 세션 생성
+  useEffect(() => {
+    mountedRef.current = true;
     createSession();
 
     // 컴포넌트 언마운트 시 세션 종료
     return () => {
-      if (sessionId) {
-        fetch(`${API_BASE_URL}/factcheck-chat/session/${sessionId}`, {
+      mountedRef.current = false;
+      const currentSessionId = sessionIdRef.current;
+      if (currentSessionId) {
+        const baseUrl = resolveBaseUrl();
+        fetch(`${baseUrl}/api/v1/factcheck-chat/session/${currentSessionId}`, {
           method: 'DELETE',
         }).catch(console.error);
       }
     };
-  }, []);
+  }, [createSession]);
 
   // SSE 연결 해제
   const disconnect = useCallback(() => {
@@ -103,7 +134,8 @@ export const useFactCheckChat = (options: UseFactCheckChatOptions): UseFactCheck
       disconnect();
 
       // SSE 연결 생성
-      const url = `${API_BASE_URL}/factcheck-chat/session/${sessionId}/message`;
+      const baseUrl = resolveBaseUrl();
+      const url = `${baseUrl}/api/v1/factcheck-chat/session/${sessionId}/message`;
       
       // POST 요청으로 메시지 전송 및 SSE 스트림 수신
       const response = await fetch(url, {
@@ -187,5 +219,6 @@ export const useFactCheckChat = (options: UseFactCheckChatOptions): UseFactCheck
     isStreaming,
     sessionId,
     disconnect,
+    reconnect,
   };
 };

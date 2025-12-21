@@ -21,6 +21,7 @@ volumes:
   embedding_model_cache:
   ip_rotation_data:
   maigret_reports:
+  workspace_data:
 
 services:
   # ============================================================================
@@ -314,8 +315,15 @@ services:
       AUTOCRAWL_DISCOVER_FROM_SEARCH: ${AUTOCRAWL_DISCOVER_FROM_SEARCH:-true}
       AUTOCRAWL_DISCOVER_FROM_ARTICLES: ${AUTOCRAWL_DISCOVER_FROM_ARTICLES:-true}
       AUTOCRAWL_DISCOVER_FROM_DEEP_SEARCH: ${AUTOCRAWL_DISCOVER_FROM_DEEP_SEARCH:-true}
+      # Workspace file storage
+      WORKSPACE_STORAGE_PATH: /data/workspace
+      WORKSPACE_MAX_FILE_SIZE: ${WORKSPACE_MAX_FILE_SIZE:-104857600}
+      WORKSPACE_MAX_FILES_PER_SESSION: ${WORKSPACE_MAX_FILES_PER_SESSION:-100}
+      WORKSPACE_SESSION_FILE_TTL_HOURS: ${WORKSPACE_SESSION_FILE_TTL_HOURS:-24}
       # JVM settings
       JAVA_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - workspace_data:/data/workspace
     networks:
       newsinsight-prod:
         ipv4_address: 172.20.0.21
@@ -576,13 +584,12 @@ services:
         max-file: "3"
 
   # ============================================================================
-  # ML Addons (Optional - can be enabled when needed)
+  # ML Addons - 뉴스 분석을 위한 ML 서비스
   # ============================================================================
   sentiment-addon:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/sentiment-addon:${TAG:-latest}
     container_name: newsinsight-prod-sentiment
     restart: unless-stopped
-    profiles: ["ml-addons"]
     environment:
       MODEL_NAME: ${SENTIMENT_MODEL:-cardiffnlp/twitter-roberta-base-sentiment-latest}
     networks:
@@ -604,7 +611,6 @@ services:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/factcheck-addon:${TAG:-latest}
     container_name: newsinsight-prod-factcheck
     restart: unless-stopped
-    profiles: ["ml-addons"]
     networks:
       newsinsight-prod:
         ipv4_address: 172.20.0.41
@@ -624,7 +630,6 @@ services:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/bias-addon:${TAG:-latest}
     container_name: newsinsight-prod-bias
     restart: unless-stopped
-    profiles: ["ml-addons"]
     networks:
       newsinsight-prod:
         ipv4_address: 172.20.0.42

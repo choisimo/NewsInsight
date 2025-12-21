@@ -133,3 +133,192 @@ export interface HealthCheck {
   version: string;
   timestamp: string;
 }
+
+// Service Health Monitoring Types
+export type ServiceHealthStatus = 'healthy' | 'unhealthy' | 'degraded' | 'unreachable' | 'unknown';
+
+export interface ServiceHealth {
+  service_id: string;
+  name: string;
+  status: ServiceHealthStatus;
+  message?: string;
+  response_time_ms?: number;
+  url?: string;
+  checked_at: string;
+  details?: Record<string, unknown>;
+}
+
+export interface InfrastructureHealth {
+  service_id: string;
+  name: string;
+  status: ServiceHealthStatus;
+  message?: string;
+  port?: number;
+  checked_at: string;
+  details?: Record<string, unknown>;
+}
+
+export interface OverallSystemHealth {
+  status: ServiceHealthStatus;
+  total_services: number;
+  healthy_services: number;
+  unhealthy_services: number;
+  degraded_services: number;
+  total_infrastructure: number;
+  healthy_infrastructure: number;
+  average_response_time_ms?: number;
+  services: ServiceHealth[];
+  infrastructure: InfrastructureHealth[];
+  checked_at: string;
+}
+
+export interface ServiceInfo {
+  id: string;
+  name: string;
+  description?: string;
+  port?: number;
+  healthcheck: string;
+  hostname: string;
+  type: string;
+  tags: string[];
+}
+
+// Data Source Types
+export type DataSourceType = 'rss' | 'web' | 'api' | 'social';
+export type DataSourceStatus = 'active' | 'inactive' | 'error' | 'testing';
+
+export interface DataSource {
+  id: string;
+  name: string;
+  source_type: DataSourceType;
+  url: string;
+  description?: string;
+  category?: string;
+  language: string;
+  is_active: boolean;
+  crawl_interval_minutes: number;
+  priority: number;
+  config: Record<string, unknown>;
+  status: DataSourceStatus;
+  last_crawled_at?: string;
+  total_articles: number;
+  success_rate: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DataSourceTestResult {
+  source_id: string;
+  success: boolean;
+  message: string;
+  response_time_ms?: number;
+  sample_data?: Record<string, unknown>;
+  tested_at: string;
+}
+
+// Database Types
+export type DatabaseType = 'postgresql' | 'mongodb' | 'redis';
+
+export interface DatabaseInfo {
+  db_type: DatabaseType;
+  name: string;
+  host: string;
+  port: number;
+  status: ServiceHealthStatus;
+  version?: string;
+  size_bytes?: number;
+  size_human?: string;
+  connection_count?: number;
+  max_connections?: number;
+  uptime_seconds?: number;
+  checked_at: string;
+}
+
+export interface PostgresTableInfo {
+  schema_name: string;
+  table_name: string;
+  row_count: number;
+  size_bytes: number;
+  size_human: string;
+  index_size_bytes?: number;
+  last_vacuum?: string;
+  last_analyze?: string;
+}
+
+export interface PostgresDatabaseStats {
+  database_name: string;
+  size_bytes: number;
+  size_human: string;
+  tables: PostgresTableInfo[];
+  total_tables: number;
+  total_rows: number;
+  connection_count: number;
+  max_connections: number;
+  checked_at: string;
+}
+
+export interface MongoCollectionInfo {
+  collection_name: string;
+  document_count: number;
+  size_bytes: number;
+  size_human: string;
+  avg_document_size_bytes?: number;
+  index_count: number;
+  total_index_size_bytes?: number;
+}
+
+export interface MongoDatabaseStats {
+  database_name: string;
+  size_bytes: number;
+  size_human: string;
+  collections: MongoCollectionInfo[];
+  total_collections: number;
+  total_documents: number;
+  checked_at: string;
+}
+
+export interface RedisStats {
+  used_memory_bytes: number;
+  used_memory_human: string;
+  max_memory_bytes?: number;
+  connected_clients: number;
+  total_keys: number;
+  expired_keys: number;
+  keyspace_hits: number;
+  keyspace_misses: number;
+  hit_rate: number;
+  uptime_seconds: number;
+  checked_at: string;
+}
+
+// Kafka Types
+export interface KafkaTopicInfo {
+  name: string;
+  partition_count: number;
+  replication_factor: number;
+  message_count?: number;
+  size_bytes?: number;
+  retention_ms?: number;
+  is_internal: boolean;
+}
+
+export interface KafkaConsumerGroupInfo {
+  group_id: string;
+  state: string;
+  members_count: number;
+  topics: string[];
+  total_lag: number;
+  lag_per_partition: Record<string, number>;
+}
+
+export interface KafkaClusterInfo {
+  broker_count: number;
+  controller_id?: number;
+  cluster_id?: string;
+  topics: KafkaTopicInfo[];
+  consumer_groups: KafkaConsumerGroupInfo[];
+  total_topics: number;
+  total_partitions: number;
+  total_messages?: number;
+  checked_at: string;
+}

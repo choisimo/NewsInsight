@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Bot, User, AlertCircle, CheckCircle2, XCircle, Scale, Shield } from 'lucide-react';
+import { useState, useRef, useEffect, useImperativeHandle, forwardRef, useCallback } from 'react';
+import { Send, Loader2, Bot, User, AlertCircle, CheckCircle2, XCircle, Scale, Shield, Download, Copy, Check, FileText, FileCode, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,15 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { useFactCheckChat } from '@/hooks/useFactCheckChat';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { toast } from 'sonner';
 
 interface Message {
   id: string;
@@ -21,13 +30,39 @@ interface Message {
   credibility?: any;
 }
 
-export const FactCheckChatbot = () => {
+interface FactCheckChatbotProps {
+  /** Initial query to send when component mounts */
+  initialQuery?: string;
+  /** Initial claims to verify (will be combined into a query) */
+  initialClaims?: string[];
+  /** Compact mode for embedding in tabs */
+  compact?: boolean;
+  /** Custom height class (default: h-[calc(100vh-12rem)] or h-[500px] in compact mode) */
+  heightClass?: string;
+  /** Hide header in compact mode */
+  hideHeader?: boolean;
+}
+
+export interface FactCheckChatbotRef {
+  sendQuery: (query: string) => void;
+  sendClaims: (claims: string[]) => void;
+  clearMessages: () => void;
+}
+
+export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbotProps>(({
+  initialQuery,
+  initialClaims,
+  compact = false,
+  heightClass,
+  hideHeader = false,
+}, ref) => {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
+  const initialSentRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const { sendMessage, isConnected, isStreaming, sessionId } = useFactCheckChat({
+  const { sendMessage, isConnected, isStreaming, sessionId, reconnect } = useFactCheckChat({
     onMessage: (event) => {
       setMessages((prev) => [...prev, {
         id: `${Date.now()}-${Math.random()}`,
@@ -52,6 +87,12 @@ export const FactCheckChatbot = () => {
     },
   });
 
+  // 세션 재연결 핸들러
+  const handleReconnect = useCallback(() => {
+    setMessages([]);
+    reconnect();
+  }, [reconnect]);
+
   // 자동 스크롤
   useEffect(() => {
     if (scrollRef.current) {
@@ -59,20 +100,64 @@ export const FactCheckChatbot = () => {
     }
   }, [messages]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isStreaming) return;
+  // Helper function to send a query
+  const sendQueryInternal = async (query: string) => {
+    if (!query.trim() || isStreaming) return;
 
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content: input,
+      content: query,
       timestamp: Date.now(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    setInput('');
+    await sendMessage(query);
+  };
 
-    await sendMessage(input);
+  // Helper function to send claims
+  const sendClaimsInternal = async (claims: string[]) => {
+    const validClaims = claims.filter(c => c.trim());
+    if (validClaims.length === 0) return;
+
+    const query = validClaims.length === 1
+      ? `다음 주장을 팩트체크해주세요: "${validClaims[0]}"`
+      : `다음 주장들을 팩트체크해주세요:\n${validClaims.map((c, i) => `${i + 1}. ${c}`).join('\n')}`;
+
+    await sendQueryInternal(query);
+  };
+
+  // Expose methods via ref for parent components
+  useImperativeHandle(ref, () => ({
+    sendQuery: (query: string) => {
+      sendQueryInternal(query);
+    },
+    sendClaims: (claims: string[]) => {
+      sendClaimsInternal(claims);
+    },
+    clearMessages: () => {
+      setMessages([]);
+    },
+  }), [isStreaming, sendMessage]);
+
+  // Handle initial query or claims on mount
+  useEffect(() => {
+    if (initialSentRef.current || !isConnected) return;
+
+    if (initialClaims && initialClaims.length > 0) {
+      initialSentRef.current = true;
+      sendClaimsInternal(initialClaims);
+    } else if (initialQuery) {
+      initialSentRef.current = true;
+      sendQueryInternal(initialQuery);
+    }
+  }, [isConnected, initialQuery, initialClaims]);
+
+  const handleSend = async () => {
+    if (!input.trim() || isStreaming) return;
+    const query = input;
+    setInput('');
+    await sendQueryInternal(query);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -82,41 +167,248 @@ export const FactCheckChatbot = () => {
     }
   };
 
-  return (
-    <div className="flex flex-col h-[calc(100vh-12rem)] max-w-5xl mx-auto">
-      <Card className="flex-1 flex flex-col">
-        <CardHeader className="border-b">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-primary/10 rounded-lg">
-              <Shield className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <CardTitle>팩트체크 챗봇</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">
-                궁금한 주장이나 뉴스를 입력하면 실시간으로 팩트체크 결과를 제공합니다
-              </p>
-            </div>
-            {isConnected && (
-              <Badge variant="outline" className="ml-auto">
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse" />
-                연결됨
-              </Badge>
-            )}
-          </div>
-        </CardHeader>
+  // Export functionality
+  const [copied, setCopied] = useState(false);
 
-        <CardContent className="flex-1 flex flex-col p-0">
+  const exportToMarkdown = useCallback(() => {
+    if (messages.length === 0) return;
+    
+    const timestamp = new Date().toLocaleString('ko-KR');
+    let md = `# 팩트체크 결과 보고서\n\n`;
+    md += `**생성 시간**: ${timestamp}\n`;
+    md += `**세션 ID**: ${sessionId || 'N/A'}\n\n`;
+    md += `---\n\n`;
+
+    messages.forEach((msg) => {
+      if (msg.role === 'user') {
+        md += `## 사용자 질문\n\n${msg.content}\n\n`;
+      } else if (msg.role === 'assistant') {
+        md += `## AI 응답\n\n${msg.content}\n\n`;
+        
+        if (msg.verificationResult) {
+          const result = msg.verificationResult;
+          md += `### 검증 결과\n\n`;
+          md += `- **주장**: ${result.originalClaim}\n`;
+          md += `- **판정**: ${getVerificationLabel(result.status)}\n`;
+          md += `- **신뢰도**: ${Math.round((result.confidenceScore || 0) * 100)}%\n`;
+          md += `- **요약**: ${result.verificationSummary}\n\n`;
+        }
+        
+        if (msg.evidence && msg.evidence.length > 0) {
+          md += `### 증거 자료\n\n`;
+          msg.evidence.forEach((ev: any, idx: number) => {
+            md += `${idx + 1}. **${ev.sourceName}**\n`;
+            md += `   - ${ev.excerpt}\n`;
+            if (ev.url) md += `   - URL: ${ev.url}\n`;
+            md += `\n`;
+          });
+        }
+      }
+    });
+
+    md += `---\n\n*이 보고서는 NewsInsight 팩트체크 챗봇에 의해 자동 생성되었습니다.*\n`;
+
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `팩트체크_결과_${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('Markdown 파일이 다운로드되었습니다.');
+  }, [messages, sessionId]);
+
+  const exportToText = useCallback(() => {
+    if (messages.length === 0) return;
+    
+    const timestamp = new Date().toLocaleString('ko-KR');
+    let text = `팩트체크 결과 보고서\n`;
+    text += `========================================\n\n`;
+    text += `생성 시간: ${timestamp}\n`;
+    text += `세션 ID: ${sessionId || 'N/A'}\n\n`;
+    text += `========================================\n\n`;
+
+    messages.forEach((msg) => {
+      if (msg.role === 'user') {
+        text += `[사용자 질문]\n${msg.content}\n\n`;
+      } else if (msg.role === 'assistant') {
+        text += `[AI 응답]\n${msg.content}\n\n`;
+        
+        if (msg.verificationResult) {
+          const result = msg.verificationResult;
+          text += `[검증 결과]\n`;
+          text += `- 주장: ${result.originalClaim}\n`;
+          text += `- 판정: ${getVerificationLabel(result.status)}\n`;
+          text += `- 신뢰도: ${Math.round((result.confidenceScore || 0) * 100)}%\n`;
+          text += `- 요약: ${result.verificationSummary}\n\n`;
+        }
+      }
+    });
+
+    text += `========================================\n`;
+    text += `이 보고서는 NewsInsight 팩트체크 챗봇에 의해 자동 생성되었습니다.\n`;
+
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `팩트체크_결과_${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('텍스트 파일이 다운로드되었습니다.');
+  }, [messages, sessionId]);
+
+  const exportToJson = useCallback(() => {
+    if (messages.length === 0) return;
+    
+    const exportData = {
+      exportedAt: new Date().toISOString(),
+      sessionId: sessionId || null,
+      messages: messages.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        type: msg.type,
+        verificationResult: msg.verificationResult,
+        evidence: msg.evidence,
+      })),
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `팩트체크_결과_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('JSON 파일이 다운로드되었습니다.');
+  }, [messages, sessionId]);
+
+  const copyToClipboard = useCallback(async () => {
+    if (messages.length === 0) return;
+    
+    const text = messages
+      .filter(m => m.role !== 'system' || m.type !== 'status')
+      .map(m => {
+        if (m.role === 'user') return `사용자: ${m.content}`;
+        if (m.role === 'assistant') return `AI: ${m.content}`;
+        return m.content;
+      })
+      .join('\n\n');
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      toast.success('클립보드에 복사되었습니다.');
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('복사에 실패했습니다.');
+    }
+  }, [messages]);
+
+  // Determine height class
+  const containerHeightClass = heightClass || (compact ? 'h-[500px]' : 'h-[calc(100vh-12rem)]');
+
+  return (
+    <div className={`flex flex-col ${containerHeightClass} ${compact ? '' : 'max-w-5xl mx-auto'}`}>
+      <Card className="flex-1 flex flex-col">
+        {!hideHeader && (
+          <CardHeader className={`border-b ${compact ? 'py-3' : ''}`}>
+            <div className="flex items-center gap-3">
+              <div className={`${compact ? 'p-1.5' : 'p-2'} bg-primary/10 rounded-lg`}>
+                <Shield className={`${compact ? 'h-5 w-5' : 'h-6 w-6'} text-primary`} />
+              </div>
+              <div>
+                <CardTitle className={compact ? 'text-base' : ''}>팩트체크 챗봇</CardTitle>
+                {!compact && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    궁금한 주장이나 뉴스를 입력하면 실시간으로 팩트체크 결과를 제공합니다
+                  </p>
+                )}
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                {/* Export Menu */}
+                {messages.length > 0 && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size={compact ? 'sm' : 'default'}>
+                        <Download className="h-4 w-4 mr-1" />
+                        내보내기
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuLabel>내보내기 형식</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={exportToMarkdown}>
+                        <FileCode className="h-4 w-4 mr-2 text-blue-600" />
+                        Markdown (.md)
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={exportToText}>
+                        <FileText className="h-4 w-4 mr-2 text-gray-600" />
+                        텍스트 (.txt)
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={exportToJson}>
+                        <FileText className="h-4 w-4 mr-2 text-yellow-600" />
+                        JSON (.json)
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={copyToClipboard}>
+                        {copied ? (
+                          <Check className="h-4 w-4 mr-2 text-green-600" />
+                        ) : (
+                          <Copy className="h-4 w-4 mr-2" />
+                        )}
+                        클립보드 복사
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+                {isConnected && (
+                  <Badge variant="outline">
+                    <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse" />
+                    연결됨
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+        )}
+
+        <CardContent className="flex-1 flex flex-col p-0 min-h-0">
           {/* 메시지 영역 */}
           <ScrollArea ref={scrollRef} className="flex-1 p-4">
-            {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center p-8">
-                <Bot className="h-16 w-16 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">팩트체크 챗봇에 오신 것을 환영합니다!</h3>
-                <p className="text-muted-foreground max-w-md">
-                  검증하고 싶은 주장이나 뉴스를 입력해주세요. 
-                  신뢰할 수 있는 출처를 기반으로 실시간 팩트체크를 수행합니다.
+            {/* 연결 오류 상태 */}
+            {!isConnected && messages.length === 0 ? (
+              <div className={`flex flex-col items-center justify-center h-full text-center ${compact ? 'p-4' : 'p-8'}`}>
+                <AlertCircle className={`${compact ? 'h-12 w-12' : 'h-16 w-16'} text-destructive mb-4`} />
+                <h3 className={`${compact ? 'text-base' : 'text-lg'} font-semibold mb-2`}>
+                  세션 연결 중...
+                </h3>
+                <p className={`text-muted-foreground ${compact ? 'text-sm' : ''} max-w-md mb-4`}>
+                  팩트체크 서버에 연결하고 있습니다. 잠시만 기다려주세요.
                 </p>
-                <div className="mt-6 grid grid-cols-1 gap-2 w-full max-w-md">
+                <Button onClick={handleReconnect} variant="outline" size="sm">
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  다시 연결
+                </Button>
+              </div>
+            ) : messages.length === 0 ? (
+              <div className={`flex flex-col items-center justify-center h-full text-center ${compact ? 'p-4' : 'p-8'}`}>
+                <Bot className={`${compact ? 'h-12 w-12' : 'h-16 w-16'} text-muted-foreground mb-4`} />
+                <h3 className={`${compact ? 'text-base' : 'text-lg'} font-semibold mb-2`}>
+                  {compact ? '팩트체크를 시작하세요' : '팩트체크 챗봇에 오신 것을 환영합니다!'}
+                </h3>
+                <p className={`text-muted-foreground ${compact ? 'text-sm' : ''} max-w-md`}>
+                  검증하고 싶은 주장이나 뉴스를 입력해주세요. 
+                  {!compact && '신뢰할 수 있는 출처를 기반으로 실시간 팩트체크를 수행합니다.'}
+                </p>
+                <div className={`${compact ? 'mt-4' : 'mt-6'} grid grid-cols-1 gap-2 w-full max-w-md`}>
                   <Button
                     variant="outline"
                     className="justify-start"
@@ -187,7 +479,7 @@ export const FactCheckChatbot = () => {
       </Card>
     </div>
   );
-};
+});
 
 // 메시지 버블 컴포넌트
 const MessageBubble = ({ message }: { message: Message }) => {
@@ -392,3 +684,6 @@ const getVerificationLabel = (status: string) => {
       return status;
   }
 };
+
+// Set displayName for forwardRef
+FactCheckChatbot.displayName = 'FactCheckChatbot';

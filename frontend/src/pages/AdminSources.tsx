@@ -80,6 +80,10 @@ const AdminSources = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingSource, setDeletingSource] = useState<DataSource | null>(null);
 
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(0);
+  const pageSize = 20;
+
   // React Query: 소스 목록 조회
   const {
     data: sourcesPage,
@@ -88,8 +92,8 @@ const AdminSources = () => {
     isFetching,
     refetch,
   } = useQuery({
-    queryKey: ['sources'],
-    queryFn: () => listSources(0, 100, 'id', 'DESC'),
+    queryKey: ['sources', currentPage, pageSize],
+    queryFn: () => listSources(currentPage, pageSize, 'id', 'DESC'),
     staleTime: 30_000, // 30초간 fresh
     gcTime: 5 * 60_000, // 5분간 캐시 유지
     refetchInterval: 60_000, // 1분마다 자동 갱신
@@ -97,6 +101,8 @@ const AdminSources = () => {
   });
 
   const sources = sourcesPage?.content ?? [];
+  const totalPages = sourcesPage?.totalPages ?? 0;
+  const totalElements = sourcesPage?.totalElements ?? 0;
 
   // React Query: 소스 생성 Mutation
   const createMutation = useMutation({
@@ -592,6 +598,52 @@ const AdminSources = () => {
                       ))}
                     </TableBody>
                   </Table>
+                </div>
+              )}
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-4">
+                  <div className="text-sm text-muted-foreground">
+                    총 {totalElements}개 중 {currentPage * pageSize + 1}-{Math.min((currentPage + 1) * pageSize, totalElements)}개 표시
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(0)}
+                      disabled={currentPage === 0 || isFetching}
+                    >
+                      처음
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                      disabled={currentPage === 0 || isFetching}
+                    >
+                      이전
+                    </Button>
+                    <span className="text-sm px-2">
+                      {currentPage + 1} / {totalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
+                      disabled={currentPage >= totalPages - 1 || isFetching}
+                    >
+                      다음
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(totalPages - 1)}
+                      disabled={currentPage >= totalPages - 1 || isFetching}
+                    >
+                      마지막
+                    </Button>
+                  </div>
                 </div>
               )}
             </CardContent>

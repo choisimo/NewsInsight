@@ -15,6 +15,7 @@ Features:
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Any
 import time
@@ -24,6 +25,20 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 from functools import lru_cache
+
+# Prometheus metrics
+try:
+    from prometheus_client import (
+        Counter,
+        Histogram,
+        Gauge,
+        CONTENT_TYPE_LATEST,
+        generate_latest,
+    )
+
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -129,6 +144,44 @@ def get_ml_models():
     return _ml_models
 
 
+# Model loading status for health checks
+_model_warmup_complete = False
+_model_warmup_error = None
+
+
+async def _warmup_models():
+    """Warm up models and track completion status"""
+    global _model_warmup_complete, _model_warmup_error
+    try:
+        logger.info("Starting bias model warm-up...")
+        start_time = time.time()
+
+        # Load models synchronously in thread
+        models = await asyncio.to_thread(get_ml_models)
+
+        if models.get("loaded"):
+            # Run a dummy inference to fully warm up the model
+            if "stance_pipeline" in models:
+                try:
+                    dummy_text = "테스트 문장입니다."
+                    _ = models["stance_pipeline"](dummy_text)
+                    logger.info("Stance pipeline warm-up inference complete")
+                except Exception as e:
+                    logger.warning(f"Stance pipeline warm-up failed: {e}")
+
+            elapsed = time.time() - start_time
+            logger.info(f"Bias model warm-up completed in {elapsed:.2f}s")
+            _model_warmup_complete = True
+        else:
+            logger.warning("Models not loaded, running in heuristic mode")
+            _model_warmup_complete = True
+
+    except Exception as e:
+        logger.error(f"Bias model warm-up failed: {e}")
+        _model_warmup_error = str(e)
+        _model_warmup_complete = True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler"""
@@ -137,7 +190,7 @@ async def lifespan(app: FastAPI):
 
     # Preload models in background if ML is enabled
     if os.getenv("ENABLE_ML_MODELS", "true").lower() == "true":
-        asyncio.create_task(asyncio.to_thread(get_ml_models))
+        asyncio.create_task(_warmup_models())
 
     yield
 
@@ -160,6 +213,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ========== Prometheus Metrics ==========
+
+if PROMETHEUS_AVAILABLE:
+    # Request metrics
+    REQUEST_COUNT = Counter(
+        "bias_requests_total",
+        "Total number of bias analysis requests",
+        ["endpoint", "status"],
+    )
+    REQUEST_LATENCY = Histogram(
+        "bias_request_latency_seconds",
+        "Request latency in seconds",
+        ["endpoint"],
+        buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    )
+
+    # Analysis metrics
+    ANALYSIS_COUNT = Counter(
+        "bias_analysis_total",
+        "Total number of bias analyses performed",
+        ["direction", "mode"],
+    )
+
+    # Model metrics
+    MODEL_LOADED = Gauge(
+        "bias_model_loaded", "Whether ML models are loaded (1=yes, 0=no)"
+    )
+    MODEL_WARMUP_COMPLETE = Gauge(
+        "bias_model_warmup_complete", "Whether model warm-up is complete (1=yes, 0=no)"
+    )
+
+    # Error metrics
+    ERROR_COUNT = Counter("bias_errors_total", "Total number of errors", ["error_type"])
+
+    @app.get("/metrics")
+    async def metrics():
+        """Prometheus metrics endpoint"""
+        models = get_ml_models() if not _model_loading else {}
+        MODEL_LOADED.set(1 if models.get("loaded") else 0)
+        MODEL_WARMUP_COMPLETE.set(1 if _model_warmup_complete else 0)
+
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # ========== Request/Response Models ==========
@@ -821,12 +917,29 @@ async def health_check():
         "service": "bias-addon",
         "version": "2.0.0",
         "ml_status": ml_status,
+        "warmup_complete": _model_warmup_complete,
+        "warmup_error": _model_warmup_error,
         "device": models.get("device", "cpu"),
         "models": {
             "zero_shot_pipeline": "zero_shot_pipeline" in models,
             "stance_pipeline": "stance_pipeline" in models,
             "base_model": "base_model" in models,
         },
+    }
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness check - only returns healthy when models are warmed up"""
+    if not _model_warmup_complete:
+        return {"status": "warming_up", "ready": False}
+
+    models = get_ml_models()
+    return {
+        "status": "ready",
+        "ready": True,
+        "ml_enabled": models.get("loaded", False),
+        "warmup_error": _model_warmup_error,
     }
 
 
@@ -914,6 +1027,15 @@ async def analyze(request: AddonRequest):
             "koelectra-bias-hybrid-v2" if models.get("loaded") else "bias-heuristic-v1"
         )
 
+        # Track Prometheus metrics
+        if PROMETHEUS_AVAILABLE:
+            REQUEST_COUNT.labels(endpoint="analyze", status="success").inc()
+            REQUEST_LATENCY.labels(endpoint="analyze").observe(time.time() - start_time)
+            ANALYSIS_COUNT.labels(
+                direction=bias_result.political_lean,
+                mode="ml" if models.get("loaded") and use_ml else "heuristic",
+            ).inc()
+
         return AddonResponse(
             request_id=request.request_id,
             addon_id=request.addon_id,
@@ -938,6 +1060,13 @@ async def analyze(request: AddonRequest):
 
     except ValueError as e:
         latency_ms = int((time.time() - start_time) * 1000)
+
+        # Track error metrics
+        if PROMETHEUS_AVAILABLE:
+            REQUEST_COUNT.labels(endpoint="analyze", status="error").inc()
+            REQUEST_LATENCY.labels(endpoint="analyze").observe(time.time() - start_time)
+            ERROR_COUNT.labels(error_type="ValidationError").inc()
+
         return AddonResponse(
             request_id=request.request_id,
             addon_id=request.addon_id,
@@ -954,6 +1083,13 @@ async def analyze(request: AddonRequest):
     except Exception as e:
         logger.error(f"Analysis error: {e}", exc_info=True)
         latency_ms = int((time.time() - start_time) * 1000)
+
+        # Track error metrics
+        if PROMETHEUS_AVAILABLE:
+            REQUEST_COUNT.labels(endpoint="analyze", status="error").inc()
+            REQUEST_LATENCY.labels(endpoint="analyze").observe(time.time() - start_time)
+            ERROR_COUNT.labels(error_type=type(e).__name__).inc()
+
         return AddonResponse(
             request_id=request.request_id,
             addon_id=request.addon_id,
@@ -1002,12 +1138,22 @@ async def analyze_simple(text: str, source: Optional[str] = None):
     }
 
 
+class SourceAnalysisRequest(BaseModel):
+    """Request model for source-only analysis"""
+
+    source: str
+
+
 @app.post("/analyze/source")
-async def analyze_source_only(source: str):
+async def analyze_source_only(request: SourceAnalysisRequest):
     """
     Analyze bias based on source name only.
     Quick lookup without content analysis.
+
+    Request body:
+        {"source": "조선일보"}
     """
+    source = request.source
     source_bias = get_source_bias(source)
 
     if source_bias.known_lean == "unknown":

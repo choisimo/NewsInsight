@@ -121,10 +121,12 @@ public class AnalysisService {
         }
 
         String url = data.getUrl();
-        String snippet = buildSnippet(data.getContent());
-        String content = cleanContent(data.getContent());  // 전체 본문 추가
+        // 원본 콘텐츠를 보존하면서 정제된 텍스트 생성
+        String rawContent = data.getContent();
+        String cleanedContent = cleanContent(rawContent);
+        String snippet = buildSnippetFromCleanText(cleanedContent);
 
-        return new ArticleDto(id, title, sourceName, publishedAt, url, snippet, content);
+        return new ArticleDto(id, title, sourceName, publishedAt, url, snippet, cleanedContent);
     }
 
     private List<KeywordDataDto> extractTopKeywords(List<CollectedData> documents, String query) {
@@ -183,6 +185,34 @@ public class AnalysisService {
                 .toList();
     }
 
+    /**
+     * 이미 정제된 텍스트에서 snippet 생성 (HTML 파싱 불필요)
+     */
+    private String buildSnippetFromCleanText(String cleanText) {
+        if (cleanText == null || cleanText.isBlank()) {
+            return null;
+        }
+
+        if (cleanText.length() <= SNIPPET_MAX_LENGTH) {
+            return cleanText;
+        }
+
+        // 단어 경계에서 자르기
+        int cut = SNIPPET_MAX_LENGTH;
+        for (int i = Math.min(SNIPPET_MAX_LENGTH - 1, cleanText.length() - 1); 
+             i > SNIPPET_MAX_LENGTH * 0.6 && i >= 0; i--) {
+            if (Character.isWhitespace(cleanText.charAt(i))) {
+                cut = i;
+                break;
+            }
+        }
+
+        return cleanText.substring(0, cut).trim() + "...";
+    }
+
+    /**
+     * 레거시 호환성을 위한 buildSnippet (HTML 파싱 포함)
+     */
     private String buildSnippet(String content) {
         if (content == null || content.isBlank()) {
             return null;
@@ -219,9 +249,12 @@ public class AnalysisService {
     /**
      * HTML 태그를 제거하고 정리된 전체 텍스트를 반환합니다.
      * snippet과 달리 길이 제한 없이 전체 내용을 반환합니다.
+     * 
+     * 중요: 이 메서드는 원본 텍스트 내용을 최대한 보존하며,
+     * HTML 태그만 제거하고 실제 텍스트 데이터는 변경하지 않습니다.
      *
      * @param content 원본 콘텐츠 (HTML 포함 가능)
-     * @return 정리된 전체 텍스트
+     * @return 정리된 전체 텍스트 (원본 데이터 보존)
      */
     private String cleanContent(String content) {
         if (content == null || content.isBlank()) {
@@ -230,12 +263,14 @@ public class AnalysisService {
 
         String text;
         try {
+            // Jsoup을 사용하여 HTML 태그만 제거, 텍스트 내용은 보존
             text = Jsoup.parse(content).text();
         } catch (Exception e) {
+            // HTML 파싱 실패 시 원본 그대로 사용
             text = content;
         }
 
-        // 연속 공백 정리
+        // 연속 공백만 정리 (실제 텍스트 내용은 변경하지 않음)
         text = text.replaceAll("\\s+", " ").trim();
         
         return text.isEmpty() ? null : text;

@@ -10,6 +10,11 @@ import {
   LogOut,
   Menu,
   X,
+  Bot,
+  Activity,
+  Rss,
+  Database,
+  Radio,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
@@ -22,8 +27,13 @@ interface LayoutProps {
 const navigation = [
   { name: '대시보드', href: '/', icon: LayoutDashboard },
   { name: '환경 관리', href: '/environments', icon: Server },
+  { name: '헬스 모니터', href: '/health-monitor', icon: Activity },
+  { name: '데이터 소스', href: '/data-sources', icon: Rss },
+  { name: '데이터베이스', href: '/databases', icon: Database },
+  { name: 'Kafka', href: '/kafka', icon: Radio },
   { name: '스크립트', href: '/scripts', icon: Terminal },
   { name: '문서', href: '/documents', icon: FileText },
+  { name: 'LLM 설정', href: '/llm-settings', icon: Bot, adminOnly: true },
   { name: '감사 로그', href: '/audit', icon: ClipboardList },
   { name: '사용자', href: '/users', icon: Users, adminOnly: true },
 ];

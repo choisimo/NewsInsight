@@ -100,14 +100,22 @@ export function useSearchJobsExtended(options: UseSearchJobsOptions = {}): UseSe
 
   // Polling for active jobs (backup when SSE is not available)
   useEffect(() => {
-    if (pollInterval <= 0 || context.isConnected) return;
+    // Only poll if explicitly enabled, SSE is disconnected, and there are active jobs
+    if (pollInterval <= 0 || context.isConnected || context.activeJobs.length === 0) {
+      return;
+    }
 
+    console.log('[useSearchJobs] Starting polling fallback (SSE disconnected)');
     const intervalId = setInterval(() => {
       context.refreshJobs();
     }, pollInterval);
 
-    return () => clearInterval(intervalId);
-  }, [pollInterval, context.isConnected, context.refreshJobs]);
+    return () => {
+      console.log('[useSearchJobs] Stopping polling fallback');
+      clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pollInterval, context.isConnected, context.activeJobs.length]);
 
   /**
    * Watch a specific job with SSE

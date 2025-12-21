@@ -64,6 +64,22 @@ public interface SearchHistoryRepository extends JpaRepository<SearchHistory, Lo
      * Find searches by session
      */
     List<SearchHistory> findBySessionIdOrderByCreatedAtDesc(String sessionId);
+    
+    /**
+     * Find searches by userId and sessionId (for anonymous user isolation)
+     * This ensures that each anonymous session only sees their own data
+     */
+    Page<SearchHistory> findByUserIdAndSessionId(String userId, String sessionId, Pageable pageable);
+    
+    /**
+     * Find searches by userId OR sessionId (fallback for migration)
+     */
+    @Query("SELECT sh FROM SearchHistory sh WHERE sh.userId = :userId OR sh.sessionId = :sessionId ORDER BY sh.createdAt DESC")
+    Page<SearchHistory> findByUserIdOrSessionId(
+            @Param("userId") String userId,
+            @Param("sessionId") String sessionId,
+            Pageable pageable
+    );
 
     /**
      * Search by query text (case-insensitive, partial match)

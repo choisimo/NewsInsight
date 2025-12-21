@@ -19,12 +19,13 @@ import java.util.UUID;
  * 
  * 사용자와 대화하며 실시간으로 팩트체크 결과를 제공합니다.
  * SSE를 통해 스트리밍 방식으로 응답을 전송합니다.
+ * 
+ * NOTE: CORS is handled by API Gateway - do not add @CrossOrigin here
  */
 @RestController
 @RequestMapping("/api/v1/factcheck-chat")
 @RequiredArgsConstructor
 @Slf4j
-@CrossOrigin(origins = "*")
 public class FactCheckChatController {
 
     private final FactCheckChatService factCheckChatService;

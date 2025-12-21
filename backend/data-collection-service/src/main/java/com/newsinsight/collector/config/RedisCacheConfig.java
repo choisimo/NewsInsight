@@ -137,6 +137,14 @@ public class RedisCacheConfig implements CachingConfigurer {
         // 유사 질문 검색 캐시: 1시간
         cacheConfigurations.put("similarQuestions", 
                 defaultConfig.entryTtl(Duration.ofHours(1)));
+        
+        // 검색 결과 캐시: 5분 (자주 업데이트되는 데이터)
+        cacheConfigurations.put("searchResults", 
+                defaultConfig.entryTtl(Duration.ofMinutes(5)));
+        
+        // DB 검색 결과 캐시: 10분
+        cacheConfigurations.put("dbSearchResults", 
+                defaultConfig.entryTtl(Duration.ofMinutes(10)));
 
         RedisCacheManager cacheManager = RedisCacheManager.builder(connectionFactory)
                 .cacheDefaults(defaultConfig)
@@ -165,7 +173,9 @@ public class RedisCacheConfig implements CachingConfigurer {
                 "chatMessages", 
                 "userSessions",
                 "factCheckResults",
-                "similarQuestions"
+                "similarQuestions",
+                "searchResults",
+                "dbSearchResults"
         ));
 
         log.info("Caffeine Cache Manager initialized (fallback)");

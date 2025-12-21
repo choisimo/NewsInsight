@@ -534,3 +534,85 @@ export interface FactcheckAddonResponse {
     models_loaded?: string[];
   };
 }
+
+// ============================================
+// LLM Provider Settings Types (Backend: /api/v1/llm-providers)
+// ============================================
+
+/**
+ * LLM Provider 타입
+ */
+export type LlmProviderType = 
+  | 'OPENAI'
+  | 'ANTHROPIC'
+  | 'GOOGLE'
+  | 'OPENROUTER'
+  | 'OLLAMA'
+  | 'AZURE_OPENAI'
+  | 'CUSTOM';
+
+/**
+ * LLM Provider 타입 정보
+ */
+export interface LlmProviderTypeInfo {
+  value: LlmProviderType;
+  displayName: string;
+  defaultBaseUrl: string;
+}
+
+/**
+ * LLM Provider 설정 DTO
+ */
+export interface LlmProviderSettings {
+  id: number;
+  providerType: LlmProviderType;
+  providerDisplayName: string;
+  userId?: string;
+  isGlobal: boolean;
+  apiKeyMasked: string;
+  hasApiKey: boolean;
+  defaultModel?: string;
+  baseUrl?: string;
+  enabled: boolean;
+  priority: number;
+  maxTokens: number;
+  temperature: number;
+  timeoutMs: number;
+  maxRequestsPerMinute: number;
+  azureDeploymentName?: string;
+  azureApiVersion?: string;
+  lastTestedAt?: string;
+  lastTestSuccess?: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+/**
+ * LLM Provider 설정 요청
+ */
+export interface LlmProviderSettingsRequest {
+  providerType: LlmProviderType;
+  apiKey?: string;
+  defaultModel?: string;
+  baseUrl?: string;
+  enabled?: boolean;
+  priority?: number;
+  maxTokens?: number;
+  temperature?: number;
+  timeoutMs?: number;
+  maxRequestsPerMinute?: number;
+  azureDeploymentName?: string;
+  azureApiVersion?: string;
+}
+
+/**
+ * LLM Provider 연결 테스트 결과
+ */
+export interface LlmTestResult {
+  success: boolean;
+  providerType: LlmProviderType;
+  message: string;
+  error?: string;
+  responseTime?: number;
+  availableModels?: string[];
+}
