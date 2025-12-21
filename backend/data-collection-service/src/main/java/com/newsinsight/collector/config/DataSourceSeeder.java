@@ -113,14 +113,23 @@ public class DataSourceSeeder implements ApplicationRunner {
             metadataJson = "{}";
         }
         
-        return DataSource.builder()
+        DataSource.DataSourceBuilder builder = DataSource.builder()
                 .name(entry.getName())
                 .url(entry.getUrl())
                 .sourceType(parseSourceType(entry.getSourceType()))
                 .isActive(entry.isActive())
                 .collectionFrequency(entry.getCollectionFrequency())
-                .metadataJson(metadataJson)
-                .build();
+                .metadataJson(metadataJson);
+        
+        // Add search-related fields for WEB_SEARCH sources
+        if (entry.getSearchUrlTemplate() != null) {
+            builder.searchUrlTemplate(entry.getSearchUrlTemplate());
+        }
+        if (entry.getSearchPriority() != null) {
+            builder.searchPriority(entry.getSearchPriority());
+        }
+        
+        return builder.build();
     }
 
     private SourceType parseSourceType(String type) {
@@ -358,6 +367,51 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .collectionFrequency(7200)
                 .browserAgentConfig(BrowserAgentConfig.forNewsArchive())
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"medium\",\"category\":\"newspaper\",\"crawler\":\"browser_agent\",\"stance\":\"progressive\"}")
+                .build(),
+                
+            // ========== WEB_SEARCH Sources (Portal Search Integration) ==========
+            DataSource.builder()
+                .name("네이버 뉴스 검색")
+                .url("https://search.naver.com")
+                .sourceType(SourceType.WEB_SEARCH)
+                .searchUrlTemplate("https://search.naver.com/search.naver?where=news&query={query}")
+                .searchPriority(1)
+                .isActive(true)
+                .collectionFrequency(0) // 검색은 주기적 수집 없음
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"high\",\"category\":\"portal_search\"}")
+                .build(),
+                
+            DataSource.builder()
+                .name("다음 뉴스 검색")
+                .url("https://search.daum.net")
+                .sourceType(SourceType.WEB_SEARCH)
+                .searchUrlTemplate("https://search.daum.net/search?w=news&q={query}")
+                .searchPriority(2)
+                .isActive(true)
+                .collectionFrequency(0)
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"high\",\"category\":\"portal_search\"}")
+                .build(),
+                
+            DataSource.builder()
+                .name("구글 뉴스 검색 (한국)")
+                .url("https://news.google.com")
+                .sourceType(SourceType.WEB_SEARCH)
+                .searchUrlTemplate("https://news.google.com/search?q={query}&hl=ko&gl=KR")
+                .searchPriority(3)
+                .isActive(true)
+                .collectionFrequency(0)
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"high\",\"category\":\"aggregator_search\"}")
+                .build(),
+                
+            DataSource.builder()
+                .name("빙 뉴스 검색 (한국)")
+                .url("https://www.bing.com")
+                .sourceType(SourceType.WEB_SEARCH)
+                .searchUrlTemplate("https://www.bing.com/news/search?q={query}&cc=kr")
+                .searchPriority(4)
+                .isActive(true)
+                .collectionFrequency(0)
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"medium\",\"category\":\"aggregator_search\"}")
                 .build()
         );
     }

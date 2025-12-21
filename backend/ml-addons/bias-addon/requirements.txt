@@ -3,7 +3,16 @@ fastapi>=0.104.0
 uvicorn>=0.24.0
 pydantic>=2.5.0
 
-# Optional: ML 기반 편향 분석시 필요
-# transformers>=4.35.0    # 사전학습 모델
-# torch>=2.0.0            # PyTorch
-# kobert-transformers     # 한국어 BERT
+# ML Dependencies for Korean Bias/Stance Analysis
+transformers>=4.35.0
+torch>=2.0.0
+sentencepiece>=0.1.99
+
+# Prometheus metrics
+prometheus-client>=0.19.0
+
+# Korean language models
+# Note: Models are downloaded from HuggingFace Hub at runtime
+# - monologg/koelectra-base-v3-discriminator
+# - snunlp/KR-FinBert-SC
+# - MoritzLaworski/korean-text-classification-zero-shot (optional)

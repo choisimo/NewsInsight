@@ -48,6 +48,10 @@ interface UseUsageStreakReturn {
   error: string | null;
   refresh: () => Promise<void>;
   recordActivity: () => void;
+  // 편의를 위한 개별 값들 (WorkspaceHub에서 사용)
+  streak: number;
+  weeklyStats: DayActivity[];
+  totalSearches: number;
 }
 
 const STORAGE_KEY = 'newsinsight_usage_streak';
@@ -329,6 +333,10 @@ export function useUsageStreak(): UseUsageStreakReturn {
     error,
     refresh,
     recordActivity,
+    // 편의를 위한 개별 값들 (WorkspaceHub에서 사용)
+    streak: stats.currentStreak,
+    weeklyStats: stats.weeklyActivity,
+    totalSearches: stats.weeklyTotal,
   };
 }
 

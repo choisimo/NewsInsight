@@ -5,7 +5,7 @@ import { toast } from '@/hooks/use-toast';
 // Types
 // ============================================
 
-export type TaskType = 'deep-search' | 'browser-agent' | 'fact-check';
+export type TaskType = 'deep-search' | 'browser-agent' | 'fact-check' | 'ml-analysis';
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface BackgroundTask {
@@ -23,6 +23,10 @@ export interface BackgroundTask {
   evidenceCount?: number;
   // For navigation
   resultUrl?: string;
+  // ML Analysis specific
+  articleId?: number;
+  batchId?: string;
+  addonCategory?: string;
 }
 
 interface BackgroundTaskState {
@@ -196,6 +200,7 @@ export function BackgroundTaskProvider({ children }: { children: React.ReactNode
       const taskType = currentTask.type === 'deep-search' ? 'Deep Search' 
         : currentTask.type === 'browser-agent' ? 'Browser Agent'
         : currentTask.type === 'fact-check' ? 'Fact Check'
+        : currentTask.type === 'ml-analysis' ? 'ML 분석'
         : currentTask.type;
 
       if (updates.status === 'completed') {

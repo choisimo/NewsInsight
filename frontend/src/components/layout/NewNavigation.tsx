@@ -109,6 +109,12 @@ const navConfig: NavItem[] = [
         description: '편향성, 감정 분석'
       },
       {
+        to: '/ml-results',
+        icon: <Sparkles className="h-4 w-4" />,
+        label: 'ML 분석 결과',
+        description: '분석 결과 확인'
+      },
+      {
         to: '/ai-agent',
         icon: <Bot className="h-4 w-4" />,
         label: '브라우저 에이전트',
@@ -230,7 +236,8 @@ function DropdownMenu({ items, isOpen, onClose }: DropdownMenuProps) {
             to={item.to}
             onClick={onClose}
             className={cn(
-              "flex items-start gap-3 px-4 py-3 hover:bg-accent transition-colors",
+              // Minimum 44px touch target height for accessibility
+              "flex items-start gap-3 px-4 py-3 min-h-[44px] hover:bg-accent transition-colors",
               isActive && "bg-accent"
             )}
           >
@@ -274,7 +281,8 @@ function NavButton({ item, isActive }: NavButtonProps) {
       <Link
         to={item.to}
         className={cn(
-          "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+          // Minimum 44px touch target for accessibility
+          "flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-lg text-sm font-medium transition-all",
           isActive
             ? "bg-primary text-primary-foreground shadow-sm"
             : "text-muted-foreground hover:text-foreground hover:bg-accent"
@@ -292,7 +300,8 @@ function NavButton({ item, isActive }: NavButtonProps) {
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+          // Minimum 44px touch target for accessibility
+          "flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-lg text-sm font-medium transition-all",
           isActive
             ? "bg-primary text-primary-foreground shadow-sm"
             : "text-muted-foreground hover:text-foreground hover:bg-accent"
@@ -359,8 +368,12 @@ export function MobileBottomNav() {
   };
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-background border-t md:hidden z-50">
-      <div className="flex items-center justify-around py-2">
+    <nav 
+      className="fixed bottom-0 left-0 right-0 bg-background border-t md:hidden z-50 safe-area-inset-bottom"
+      role="navigation"
+      aria-label="모바일 내비게이션"
+    >
+      <div className="flex items-center justify-around py-1 pb-safe">
         {mobileItems.map((item) => {
           const isActive = isNavActive(item);
           const to = item.to || item.subItems?.[0]?.to || '/';
@@ -370,14 +383,22 @@ export function MobileBottomNav() {
               key={item.id}
               to={to}
               className={cn(
-                "flex flex-col items-center gap-1 px-3 py-2 rounded-lg transition-colors",
+                // Minimum 44x44px touch target for WCAG 2.1 AA compliance
+                "flex flex-col items-center justify-center gap-1 min-w-[48px] min-h-[48px] px-3 py-2 rounded-lg transition-colors",
+                // Active indicator with visual feedback
                 isActive
-                  ? "text-primary"
-                  : "text-muted-foreground"
+                  ? "text-primary bg-primary/10"
+                  : "text-muted-foreground active:bg-accent"
               )}
+              aria-current={isActive ? "page" : undefined}
             >
-              {item.icon}
-              <span className="text-[10px] font-medium">{item.label}</span>
+              <span className={cn(
+                "flex items-center justify-center w-6 h-6",
+                isActive && "scale-110 transition-transform"
+              )}>
+                {item.icon}
+              </span>
+              <span className="text-[10px] font-medium leading-tight">{item.label}</span>
             </Link>
           );
         })}

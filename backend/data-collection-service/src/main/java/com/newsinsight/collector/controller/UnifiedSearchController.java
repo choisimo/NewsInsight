@@ -169,16 +169,19 @@ public class UnifiedSearchController {
         String jobId = UUID.randomUUID().toString();
         String window = request.getWindow() != null ? request.getWindow() : "7d";
         List<String> priorityUrls = request.getPriorityUrls();
+        String startDate = request.getStartDate();
+        String endDate = request.getEndDate();
         
-        log.info("Starting search job: {} for query: '{}', window: {}, priorityUrls: {}", 
+        log.info("Starting search job: {} for query: '{}', window: {}, priorityUrls: {}, startDate: {}, endDate: {}", 
                 jobId, request.getQuery(), window, 
-                priorityUrls != null ? priorityUrls.size() : 0);
+                priorityUrls != null ? priorityUrls.size() : 0,
+                startDate, endDate);
 
         // Create job in event service
         var metadata = unifiedSearchEventService.createJob(jobId, request.getQuery(), window);
         
-        // Start async search execution with priorityUrls
-        unifiedSearchService.executeSearchAsync(jobId, request.getQuery(), window, priorityUrls);
+        // Start async search execution with priorityUrls and custom date range
+        unifiedSearchService.executeSearchAsync(jobId, request.getQuery(), window, priorityUrls, startDate, endDate);
 
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
                 "jobId", jobId,
@@ -355,6 +358,8 @@ public class UnifiedSearchController {
         private String query;
         private String window;
         private List<String> priorityUrls;
+        private String startDate;  // ISO 8601 format (e.g., "2024-01-01T00:00:00")
+        private String endDate;    // ISO 8601 format (e.g., "2024-01-31T23:59:59")
 
         public String getQuery() {
             return query;
@@ -378,6 +383,22 @@ public class UnifiedSearchController {
 
         public void setPriorityUrls(List<String> priorityUrls) {
             this.priorityUrls = priorityUrls;
+        }
+
+        public String getStartDate() {
+            return startDate;
+        }
+
+        public void setStartDate(String startDate) {
+            this.startDate = startDate;
+        }
+
+        public String getEndDate() {
+            return endDate;
+        }
+
+        public void setEndDate(String endDate) {
+            this.endDate = endDate;
         }
     }
 }

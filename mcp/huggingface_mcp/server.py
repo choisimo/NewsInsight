@@ -19,13 +19,35 @@ from pathlib import Path
 
 import aiohttp
 import aiofiles
-from mcp.server import Server
+from mcp.server import FastMCP
+from starlette.responses import JSONResponse
+from starlette.requests import Request
 
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-server = Server("huggingface-nlp-mcp", version="1.0.0")
+# 포트 설정 (환경변수에서 읽음)
+PORT = int(os.environ.get("PORT", "5011"))
+
+server = FastMCP(
+    "huggingface-nlp-mcp",
+    host="0.0.0.0",
+    port=PORT,
+)
+
+
+# Health check endpoint
+@server.custom_route("/health", methods=["GET"])
+async def health_endpoint(request: Request) -> JSONResponse:
+    return JSONResponse(
+        {
+            "status": "healthy",
+            "server": "huggingface-nlp-mcp",
+            "version": "1.0.0",
+        }
+    )
+
 
 # Hugging Face API 설정
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
@@ -1118,9 +1140,8 @@ if __name__ == "__main__":
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    port = int(os.environ.get("PORT", "5011"))
-    print(f"Starting HuggingFace NLP MCP Server v1.0.0 on port {port}")
+    print(f"Starting HuggingFace NLP MCP Server v1.0.0 on port {PORT}")
     print(f"HF Token configured: {bool(HF_TOKEN)}")
     print(f"Data directory: {DATA_DIR}")
 
-    server.run_http(host="0.0.0.0", port=port, path="/mcp")
+    server.run(transport="streamable-http")

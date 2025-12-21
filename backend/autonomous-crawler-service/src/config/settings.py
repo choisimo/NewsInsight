@@ -399,6 +399,23 @@ class CaptchaSettings(BaseSettings):
         default=3,
         description="Maximum CAPTCHA solve attempts",
     )
+    # Paid CAPTCHA solver settings (more reliable for search portals)
+    capsolver_api_key: str = Field(
+        default="",
+        description="CapSolver API key (https://capsolver.com) - Recommended for Turnstile",
+    )
+    twocaptcha_api_key: str = Field(
+        default="",
+        description="2Captcha API key (https://2captcha.com)",
+    )
+    prefer_paid_solver: bool = Field(
+        default=True,
+        description="Prefer paid solvers over free ones when API key is available",
+    )
+    paid_solver_timeout: float = Field(
+        default=120.0,
+        description="Timeout for paid CAPTCHA solving (seconds)",
+    )
 
 
 class RedisSettings(BaseSettings):

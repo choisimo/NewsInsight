@@ -5,6 +5,7 @@ package com.newsinsight.collector.entity;
  * 
  * - RSS: RSS/Atom feed parsing (Rome library)
  * - WEB: Static HTML scraping (Crawl4AI/Jsoup)
+ * - WEB_SEARCH: Web search portal integration (Naver, Daum, Google, etc.)
  * - API: External API integration (future)
  * - WEBHOOK: Passive event reception (future)
  * - BROWSER_AGENT: AI-driven autonomous browser exploration (Browser-use/Puppeteer)
@@ -12,6 +13,7 @@ package com.newsinsight.collector.entity;
 public enum SourceType {
     RSS("rss"),
     WEB("web"),
+    WEB_SEARCH("web_search"),
     API("api"),
     WEBHOOK("webhook"),
     BROWSER_AGENT("browser_agent");
@@ -38,6 +40,13 @@ public enum SourceType {
      */
     public boolean supportsAutonomousExploration() {
         return this == BROWSER_AGENT;
+    }
+
+    /**
+     * Check if this source type is for web search portals.
+     */
+    public boolean isWebSearch() {
+        return this == WEB_SEARCH;
     }
 
     public static SourceType fromValue(String value) {

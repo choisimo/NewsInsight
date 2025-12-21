@@ -331,4 +331,122 @@ public class SearchHistoryService {
         
         return saveFromMessage(message);
     }
+
+    // ============================================
+    // Continue Work Feature
+    // ============================================
+
+    /**
+     * Find actionable items for "Continue Work" feature.
+     * Returns searches that need user attention:
+     * - IN_PROGRESS: Still running
+     * - FAILED: Need retry
+     * - PARTIAL: Incomplete results
+     * - DRAFT: Not executed yet
+     * - COMPLETED but not viewed: Need review
+     */
+    public List<SearchHistory> findContinueWorkItems(String userId, String sessionId, int limit) {
+        Pageable pageable = PageRequest.of(0, limit);
+        return searchHistoryRepository.findContinueWorkItems(userId, sessionId, pageable);
+    }
+
+    /**
+     * Mark search as viewed.
+     */
+    @Transactional
+    public SearchHistory markAsViewed(Long id) {
+        SearchHistory history = searchHistoryRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Search history not found: " + id));
+        
+        history.markViewed();
+        return searchHistoryRepository.save(history);
+    }
+
+    /**
+     * Mark search as viewed by external ID.
+     */
+    @Transactional
+    public SearchHistory markAsViewedByExternalId(String externalId) {
+        SearchHistory history = searchHistoryRepository.findByExternalId(externalId)
+                .orElseThrow(() -> new IllegalArgumentException("Search history not found for externalId: " + externalId));
+        
+        history.markViewed();
+        return searchHistoryRepository.save(history);
+    }
+
+    /**
+     * Update completion status.
+     */
+    @Transactional
+    public SearchHistory updateCompletionStatus(Long id, SearchHistory.CompletionStatus status) {
+        SearchHistory history = searchHistoryRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Search history not found: " + id));
+        
+        history.setCompletionStatus(status);
+        return searchHistoryRepository.save(history);
+    }
+
+    /**
+     * Find by completion status.
+     */
+    public Page<SearchHistory> findByCompletionStatus(SearchHistory.CompletionStatus status, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by("updatedAt").descending());
+        return searchHistoryRepository.findByCompletionStatus(status, pageable);
+    }
+
+    /**
+     * Find by project ID.
+     */
+    public Page<SearchHistory> findByProjectId(Long projectId, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+        return searchHistoryRepository.findByProjectId(projectId, pageable);
+    }
+
+    /**
+     * Find failed searches for potential retry.
+     */
+    public List<SearchHistory> findFailedSearches(int daysBack, int limit) {
+        LocalDateTime after = LocalDateTime.now().minusDays(daysBack);
+        Pageable pageable = PageRequest.of(0, limit);
+        return searchHistoryRepository.findFailedSearches(after, pageable);
+    }
+
+    /**
+     * Count in-progress searches for a user.
+     */
+    public long countInProgressByUser(String userId) {
+        return searchHistoryRepository.countInProgressByUser(userId);
+    }
+
+    /**
+     * Get continue work statistics.
+     */
+    public Map<String, Object> getContinueWorkStats(String userId, String sessionId) {
+        List<SearchHistory> items = findContinueWorkItems(userId, sessionId, 100);
+        
+        long inProgress = items.stream()
+                .filter(h -> h.getCompletionStatus() == SearchHistory.CompletionStatus.IN_PROGRESS)
+                .count();
+        long failed = items.stream()
+                .filter(h -> h.getCompletionStatus() == SearchHistory.CompletionStatus.FAILED)
+                .count();
+        long draft = items.stream()
+                .filter(h -> h.getCompletionStatus() == SearchHistory.CompletionStatus.DRAFT)
+                .count();
+        long partial = items.stream()
+                .filter(h -> h.getCompletionStatus() == SearchHistory.CompletionStatus.PARTIAL)
+                .count();
+        long unviewed = items.stream()
+                .filter(h -> h.getCompletionStatus() == SearchHistory.CompletionStatus.COMPLETED && !h.getViewed())
+                .count();
+
+        return Map.of(
+                "total", items.size(),
+                "inProgress", inProgress,
+                "failed", failed,
+                "draft", draft,
+                "partial", partial,
+                "unviewedCompleted", unviewed
+        );
+    }
 }

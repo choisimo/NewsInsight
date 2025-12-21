@@ -42,7 +42,7 @@ public class DataSourcesConfig {
         private String url;
 
         /**
-         * Type of source: RSS, API, WEB_SCRAPER, BROWSER_AGENT
+         * Type of source: RSS, API, WEB_SCRAPER, WEB_SEARCH, BROWSER_AGENT
          */
         private String sourceType = "RSS";
 
@@ -55,6 +55,18 @@ public class DataSourcesConfig {
          * Collection frequency in seconds
          */
         private int collectionFrequency = 3600;
+
+        /**
+         * Search URL template for WEB_SEARCH sources.
+         * Use {query} as placeholder for the encoded search query.
+         * Example: "https://search.naver.com/search.naver?where=news&query={query}"
+         */
+        private String searchUrlTemplate;
+
+        /**
+         * Priority for web search sources (lower = higher priority).
+         */
+        private Integer searchPriority = 100;
 
         /**
          * Additional metadata as key-value pairs

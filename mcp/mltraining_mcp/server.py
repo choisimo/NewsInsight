@@ -20,13 +20,35 @@ from enum import Enum
 import aiohttp
 import aiofiles
 import yaml
-from mcp.server import Server
+from mcp.server import FastMCP
+from starlette.responses import JSONResponse
+from starlette.requests import Request
 
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-server = Server("ml-training-orchestrator", version="1.0.0")
+# 포트 설정 (환경변수에서 읽음)
+PORT = int(os.environ.get("PORT", "5020"))
+
+server = FastMCP(
+    "ml-training-orchestrator",
+    host="0.0.0.0",
+    port=PORT,
+)
+
+
+# Health check endpoint
+@server.custom_route("/health", methods=["GET"])
+async def health_endpoint(request: Request) -> JSONResponse:
+    return JSONResponse(
+        {
+            "status": "healthy",
+            "server": "ml-training-orchestrator",
+            "version": "1.0.0",
+        }
+    )
+
 
 # 하위 MCP 서버 URL
 ROBOFLOW_MCP_URL = os.environ.get("ROBOFLOW_MCP_URL", "http://roboflow-mcp:5010")
@@ -863,11 +885,10 @@ if __name__ == "__main__":
     WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
     PIPELINES_DIR.mkdir(parents=True, exist_ok=True)
 
-    port = int(os.environ.get("PORT", "5020"))
-    print(f"Starting ML Training Orchestrator v1.0.0 on port {port}")
+    print(f"Starting ML Training Orchestrator v1.0.0 on port {PORT}")
     print(f"Roboflow MCP: {ROBOFLOW_MCP_URL}")
     print(f"HuggingFace MCP: {HUGGINGFACE_MCP_URL}")
     print(f"Kaggle MCP: {KAGGLE_MCP_URL}")
     print(f"Data directory: {DATA_DIR}")
 
-    server.run_http(host="0.0.0.0", port=port, path="/mcp")
+    server.run(transport="streamable-http")

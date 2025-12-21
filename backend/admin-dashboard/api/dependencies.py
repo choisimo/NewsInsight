@@ -1,6 +1,7 @@
 """
 FastAPI Dependencies - 의존성 주입
 """
+
 import os
 from functools import lru_cache
 from typing import Callable
@@ -14,6 +15,10 @@ from .services.auth_service import AuthService
 from .services.document_service import DocumentService
 from .services.environment_service import EnvironmentService
 from .services.script_service import ScriptService
+from .services.health_service import HealthService
+from .services.data_source_service import DataSourceService
+from .services.database_service import DatabaseService
+from .services.kafka_service import KafkaService
 
 # OAuth2 스킴
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/admin/auth/token")
@@ -21,13 +26,28 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/admin/auth/token")
 # 프로젝트 경로 설정
 PROJECT_ROOT = os.environ.get(
     "PROJECT_ROOT",
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+    os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    ),
 )
 CONFIG_DIR = os.environ.get(
     "ADMIN_CONFIG_DIR",
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "config")
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "config"),
 )
-SECRET_KEY = os.environ.get("ADMIN_SECRET_KEY", "your-secret-key-change-in-production")
+# SECRET_KEY는 반드시 환경변수로 설정해야 합니다
+# 프로덕션 환경에서는 강력한 랜덤 키를 사용하세요 (예: openssl rand -hex 32)
+_default_secret = "your-secret-key-change-in-production"
+SECRET_KEY = os.environ.get("ADMIN_SECRET_KEY", _default_secret)
+
+# 프로덕션 환경에서 기본 시크릿 키 사용 시 경고
+if SECRET_KEY == _default_secret:
+    import warnings
+    warnings.warn(
+        "🔴 SECURITY WARNING: Using default SECRET_KEY! "
+        "Set ADMIN_SECRET_KEY environment variable in production. "
+        "Generate a secure key with: openssl rand -hex 32",
+        UserWarning,
+    )
 
 
 @lru_cache()
@@ -70,6 +90,42 @@ def get_document_service() -> DocumentService:
 def get_audit_service() -> AuditService:
     """감사 서비스 인스턴스"""
     return AuditService(config_dir=CONFIG_DIR)
+
+
+@lru_cache()
+def get_health_service() -> HealthService:
+    """헬스 모니터링 서비스 인스턴스"""
+    return HealthService(
+        project_root=PROJECT_ROOT,
+        config_dir=CONFIG_DIR,
+    )
+
+
+@lru_cache()
+def get_data_source_service() -> DataSourceService:
+    """데이터 소스 서비스 인스턴스"""
+    return DataSourceService(
+        project_root=PROJECT_ROOT,
+        config_dir=CONFIG_DIR,
+    )
+
+
+@lru_cache()
+def get_database_service() -> DatabaseService:
+    """데이터베이스 관리 서비스 인스턴스"""
+    return DatabaseService(
+        project_root=PROJECT_ROOT,
+        config_dir=CONFIG_DIR,
+    )
+
+
+@lru_cache()
+def get_kafka_service() -> KafkaService:
+    """Kafka/Redpanda 모니터링 서비스 인스턴스"""
+    return KafkaService(
+        project_root=PROJECT_ROOT,
+        config_dir=CONFIG_DIR,
+    )
 
 
 async def get_current_user(

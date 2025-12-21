@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchHistory, useSearchHistorySSE } from '@/hooks/useSearchHistory';
 import type { SearchHistoryRecord, SearchHistoryType } from '@/lib/api';
-import { updateSearchNotes } from '@/lib/api';
+import { updateSearchNotes, getSearchHistoryById } from '@/lib/api';
 import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
+import { toast } from 'sonner';
 
 interface SearchHistoryPanelProps {
   onSelectSearch?: (search: SearchHistoryRecord) => void;
@@ -206,6 +207,138 @@ export function SearchHistoryPanel({
     setNotesValue('');
   }, []);
 
+  // Export AI report from search history
+  const handleExportAiReport = useCallback(async (item: SearchHistoryRecord, format: 'markdown' | 'html' | 'text', e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    try {
+      // Fetch full record with aiSummary if not already loaded
+      let aiContent: string | undefined;
+      
+      if (item.aiSummary && typeof item.aiSummary === 'object') {
+        const summary = item.aiSummary as Record<string, unknown>;
+        aiContent = summary.content as string || summary.summary as string;
+      }
+      
+      // If no content in the current item, fetch from server
+      if (!aiContent && item.id) {
+        const fullRecord = await getSearchHistoryById(item.id);
+        if (fullRecord.aiSummary && typeof fullRecord.aiSummary === 'object') {
+          const summary = fullRecord.aiSummary as Record<string, unknown>;
+          aiContent = summary.content as string || summary.summary as string;
+        }
+      }
+      
+      if (!aiContent) {
+        toast.error('내보낼 AI 분석 내용이 없습니다.');
+        return;
+      }
+      
+      const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const safeQuery = item.query.replace(/[^가-힣a-zA-Z0-9]/g, '_').slice(0, 30);
+      const baseFilename = `NewsInsight_${searchTypeLabels[item.searchType]}_${safeQuery}_${timestamp}`;
+      
+      let content: string;
+      let mimeType: string;
+      let extension: string;
+      
+      if (format === 'markdown') {
+        content = `# NewsInsight AI 분석 보고서
+
+**검색어**: ${item.query}  
+**검색 유형**: ${searchTypeLabels[item.searchType]}  
+**생성 시간**: ${new Date(item.createdAt).toLocaleString('ko-KR')}
+
+---
+
+${aiContent}
+
+---
+
+*이 보고서는 NewsInsight AI에 의해 자동 생성되었습니다.*
+`;
+        mimeType = 'text/markdown;charset=utf-8';
+        extension = 'md';
+      } else if (format === 'html') {
+        content = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NewsInsight AI 분석 - ${item.query}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; line-height: 1.6; }
+    h1 { color: #7c3aed; border-bottom: 2px solid #7c3aed; padding-bottom: 0.5rem; }
+    h2, h3 { color: #374151; margin-top: 1.5rem; }
+    .meta { color: #6b7280; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    pre { background: #f3f4f6; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>NewsInsight AI 분석 보고서</h1>
+  <div class="meta">
+    <p><strong>검색어:</strong> ${item.query}</p>
+    <p><strong>검색 유형:</strong> ${searchTypeLabels[item.searchType]}</p>
+    <p><strong>생성 시간:</strong> ${new Date(item.createdAt).toLocaleString('ko-KR')}</p>
+  </div>
+  <hr>
+  <div class="content">
+    ${aiContent.replace(/\n/g, '<br>')}
+  </div>
+  <hr>
+  <footer style="color: #9ca3af; font-size: 0.8rem; text-align: center; margin-top: 2rem;">
+    이 보고서는 NewsInsight AI에 의해 자동 생성되었습니다.
+  </footer>
+</body>
+</html>`;
+        mimeType = 'text/html;charset=utf-8';
+        extension = 'html';
+      } else {
+        // Plain text
+        content = `NewsInsight AI 분석 보고서
+========================================
+
+검색어: ${item.query}
+검색 유형: ${searchTypeLabels[item.searchType]}
+생성 시간: ${new Date(item.createdAt).toLocaleString('ko-KR')}
+
+========================================
+
+${aiContent.replace(/[#*`]/g, '')}
+
+========================================
+
+이 보고서는 NewsInsight AI에 의해 자동 생성되었습니다.
+`;
+        mimeType = 'text/plain;charset=utf-8';
+        extension = 'txt';
+      }
+      
+      // Download file
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${baseFilename}.${extension}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      toast.success(`${format === 'markdown' ? 'Markdown' : format === 'html' ? 'HTML' : '텍스트'} 파일이 다운로드되었습니다.`);
+    } catch (err) {
+      console.error('Failed to export AI report:', err);
+      toast.error('AI 보고서 내보내기에 실패했습니다.');
+    }
+  }, []);
+
+  // Check if item has AI content
+  const hasAiContent = useCallback((item: SearchHistoryRecord): boolean => {
+    if (!item.aiSummary || typeof item.aiSummary !== 'object') return false;
+    const summary = item.aiSummary as Record<string, unknown>;
+    return !!(summary.content || summary.summary);
+  }, []);
+
   // Render a single history item
   const renderHistoryItem = (item: SearchHistoryRecord, isChild = false) => {
     const isNew = newItemIds.has(item.id);
@@ -287,6 +420,51 @@ export function SearchHistoryPanel({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
             </svg>
           </button>
+          
+          {/* Export AI Report dropdown */}
+          {hasAiContent(item) && (
+            <div className="relative group">
+              <button
+                onClick={(e) => e.stopPropagation()}
+                className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-green-500 hover:text-green-600"
+                title="AI 보고서 내보내기"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              </button>
+              {/* Dropdown menu */}
+              <div className="absolute right-0 top-full mt-1 w-40 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                <button
+                  onClick={(e) => handleExportAiReport(item, 'markdown', e)}
+                  className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 rounded-t-lg flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Markdown
+                </button>
+                <button
+                  onClick={(e) => handleExportAiReport(item, 'html', e)}
+                  className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                  </svg>
+                  HTML
+                </button>
+                <button
+                  onClick={(e) => handleExportAiReport(item, 'text', e)}
+                  className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 rounded-b-lg flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  텍스트
+                </button>
+              </div>
+            </div>
+          )}
           
           {onDeriveSearch && (
             <button

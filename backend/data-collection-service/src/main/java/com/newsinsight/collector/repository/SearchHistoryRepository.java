@@ -26,6 +26,11 @@ public interface SearchHistoryRepository extends JpaRepository<SearchHistory, Lo
     Optional<SearchHistory> findByExternalId(String externalId);
 
     /**
+     * Find by external ID containing (for jobId + suffix patterns)
+     */
+    List<SearchHistory> findByExternalIdContaining(String externalIdPart);
+
+    /**
      * Find all searches by type
      */
     Page<SearchHistory> findBySearchType(SearchType searchType, Pageable pageable);
@@ -59,6 +64,22 @@ public interface SearchHistoryRepository extends JpaRepository<SearchHistory, Lo
      * Find searches by session
      */
     List<SearchHistory> findBySessionIdOrderByCreatedAtDesc(String sessionId);
+    
+    /**
+     * Find searches by userId and sessionId (for anonymous user isolation)
+     * This ensures that each anonymous session only sees their own data
+     */
+    Page<SearchHistory> findByUserIdAndSessionId(String userId, String sessionId, Pageable pageable);
+    
+    /**
+     * Find searches by userId OR sessionId (fallback for migration)
+     */
+    @Query("SELECT sh FROM SearchHistory sh WHERE sh.userId = :userId OR sh.sessionId = :sessionId ORDER BY sh.createdAt DESC")
+    Page<SearchHistory> findByUserIdOrSessionId(
+            @Param("userId") String userId,
+            @Param("sessionId") String sessionId,
+            Pageable pageable
+    );
 
     /**
      * Search by query text (case-insensitive, partial match)
@@ -155,4 +176,101 @@ public interface SearchHistoryRepository extends JpaRepository<SearchHistory, Lo
         Long getCount();
         Double getAvgResults();
     }
+
+    // ============ New methods for Continue Work feature ============
+
+    /**
+     * Find searches that need continuation (for "Continue Work" feature)
+     * Includes: IN_PROGRESS, PARTIAL, FAILED, DRAFT, or COMPLETED but not viewed
+     */
+    @Query("""
+            SELECT sh FROM SearchHistory sh
+            WHERE (sh.userId = :userId OR sh.sessionId = :sessionId)
+            AND (
+                sh.completionStatus IN ('DRAFT', 'IN_PROGRESS', 'PARTIAL', 'FAILED')
+                OR (sh.completionStatus = 'COMPLETED' AND sh.viewed = false)
+            )
+            AND sh.bookmarked = false
+            AND sh.reportGenerated = false
+            ORDER BY 
+                CASE sh.completionStatus 
+                    WHEN 'IN_PROGRESS' THEN 1
+                    WHEN 'FAILED' THEN 2
+                    WHEN 'DRAFT' THEN 3
+                    WHEN 'PARTIAL' THEN 4
+                    ELSE 5
+                END,
+                sh.updatedAt DESC
+            """)
+    List<SearchHistory> findContinueWorkItems(
+            @Param("userId") String userId,
+            @Param("sessionId") String sessionId,
+            Pageable pageable
+    );
+
+    /**
+     * Find searches by completion status
+     */
+    Page<SearchHistory> findByCompletionStatus(
+            SearchHistory.CompletionStatus completionStatus,
+            Pageable pageable
+    );
+
+    /**
+     * Find searches by user and completion status
+     */
+    Page<SearchHistory> findByUserIdAndCompletionStatus(
+            String userId,
+            SearchHistory.CompletionStatus completionStatus,
+            Pageable pageable
+    );
+
+    /**
+     * Find unviewed completed searches
+     */
+    @Query("SELECT sh FROM SearchHistory sh WHERE sh.completionStatus = 'COMPLETED' AND sh.viewed = false")
+    Page<SearchHistory> findUnviewedCompleted(Pageable pageable);
+
+    /**
+     * Find searches by project ID
+     */
+    Page<SearchHistory> findByProjectId(Long projectId, Pageable pageable);
+
+    /**
+     * Find searches by project ID and type
+     */
+    Page<SearchHistory> findByProjectIdAndSearchType(Long projectId, SearchType searchType, Pageable pageable);
+
+    /**
+     * Count in-progress searches by user
+     */
+    @Query("SELECT COUNT(sh) FROM SearchHistory sh WHERE sh.userId = :userId AND sh.completionStatus = 'IN_PROGRESS'")
+    long countInProgressByUser(@Param("userId") String userId);
+
+    /**
+     * Update viewed status
+     */
+    @Query("UPDATE SearchHistory sh SET sh.viewed = true, sh.viewedAt = :viewedAt WHERE sh.id = :id")
+    void markAsViewed(@Param("id") Long id, @Param("viewedAt") LocalDateTime viewedAt);
+
+    /**
+     * Update completion status
+     */
+    @Query("UPDATE SearchHistory sh SET sh.completionStatus = :status, sh.updatedAt = :updatedAt WHERE sh.id = :id")
+    void updateCompletionStatus(
+            @Param("id") Long id,
+            @Param("status") SearchHistory.CompletionStatus status,
+            @Param("updatedAt") LocalDateTime updatedAt
+    );
+
+    /**
+     * Find failed searches for retry
+     */
+    @Query("""
+            SELECT sh FROM SearchHistory sh 
+            WHERE sh.completionStatus = 'FAILED' 
+            AND sh.createdAt > :after
+            ORDER BY sh.createdAt DESC
+            """)
+    List<SearchHistory> findFailedSearches(@Param("after") LocalDateTime after, Pageable pageable);
 }

@@ -54,6 +54,9 @@ dependencies = [
     
     # Utilities
     "tenacity>=9.0.0",
+    
+    # Authentication
+    "PyJWT>=2.8.0",
 ]
 
 [project.optional-dependencies]

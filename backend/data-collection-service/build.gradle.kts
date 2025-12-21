@@ -10,6 +10,17 @@ dependencies {
     // Spring Boot Web
     implementation("org.springframework.boot:spring-boot-starter-web")
     
+    // Spring Security
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    
+    // JWT Support
+    implementation("io.jsonwebtoken:jjwt-api:0.12.3")
+    runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.3")
+    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.3")
+    
+    // OpenAPI / Swagger
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0")
+    
     // Spring Data JPA
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     
@@ -45,11 +56,31 @@ dependencies {
     // Kafka (for AI integration and asynchronous messaging)
     implementation("org.springframework.kafka:spring-kafka")
     
+    // PDF Generation - iText 7 (AGPL License)
+    implementation("com.itextpdf:itext7-core:8.0.2")
+    implementation("com.itextpdf:html2pdf:5.0.2")
+    
+    // Chart Generation - JFreeChart for server-side charts
+    implementation("org.jfree:jfreechart:1.5.4")
+    
+    // Spring Boot Actuator (Health Check, Metrics)
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    
+    // Micrometer for Prometheus metrics
+    implementation("io.micrometer:micrometer-registry-prometheus")
+    
+    // Caffeine Cache (Local cache fallback)
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
+    
+    // Spring Retry (재시도 로직)
+    implementation("org.springframework.retry:spring-retry")
+    
     // Test
     testImplementation("com.h2database:h2")
     testImplementation("org.testcontainers:testcontainers:1.19.3")
     testImplementation("org.testcontainers:postgresql:1.19.3")
     testImplementation("org.testcontainers:junit-jupiter:1.19.3")
+    testImplementation("org.testcontainers:mongodb:1.19.3")
 }
 
 tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {

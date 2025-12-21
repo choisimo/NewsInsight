@@ -33,6 +33,38 @@ services:
       "
     restart: "no"
 
+  # Admin Dashboard API - 관리자 인증/환경 관리
+  admin-dashboard:
+    build:
+      context: ../../backend/admin-dashboard
+      dockerfile: Dockerfile
+    image: newsinsight/admin-dashboard:local
+    restart: unless-stopped
+    environment:
+      - PORT=8888
+      - PROJECT_ROOT=/workspace
+      - ADMIN_CONFIG_DIR=/app/config
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:8810,http://frontend:8080
+    volumes:
+      # Docker socket for environment management (docker-compose operations)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Project root for accessing docker-compose files
+      - ../../:/workspace:ro
+      # Persist admin config (users, etc.)
+      - admin-config:/app/config
+    expose:
+      - "8888"
+    ports:
+      - "8888:8888"  # Direct access for debugging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - default
+
   api-gateway:
     build:
       context: ../../
@@ -55,6 +87,12 @@ services:
         condition: service_started
       bot-detector:
         condition: service_started
+      admin-dashboard:
+        condition: service_started
+      ml-trainer:
+        condition: service_started
+      autonomous-crawler:
+        condition: service_started
     environment:
       # Consul access for config loading in the app
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -65,6 +103,8 @@ services:
       - REDIS_PORT=${REDIS_PORT:-6379}
       # Service port
       - PORT=${API_GATEWAY_PORT:-8000}
+      # Admin Dashboard URL (for routing)
+      - ADMIN_DASHBOARD_URL=http://admin-dashboard:8888
       # Browser-Use API URLs (for routing)
       - BROWSER_USE_URL=http://browser-use-api:8500
       - BROWSER_USE_WS_URL=ws://browser-use-api:8500
@@ -73,6 +113,7 @@ services:
       - ML_ADDON_FACTCHECK_URL=http://factcheck-addon:8101
       - ML_ADDON_BIAS_URL=http://bias-addon:8102
       - ML_ADDON_BOT_DETECTOR_URL=http://bot-detector:8041
+      - ML_TRAINER_URL=http://ml-trainer:8090
     ports:
       - "8112:8000"  # keep gateway reachable from host
     networks:
@@ -99,7 +140,7 @@ services:
       start_period: 60s
     networks:
       - default
-      - capstone-net
+      - newsinsight-shared-net
 
   frontend:
     image: node:20-alpine
@@ -142,8 +183,10 @@ services:
         condition: service_started
       redpanda-dev:
         condition: service_started
+      # Use service_started to avoid blocking on autonomous-crawler healthcheck
+      # collector-service will retry connections internally
       autonomous-crawler:
-        condition: service_healthy
+        condition: service_started
     environment:
       # Consul configuration
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -191,17 +234,17 @@ services:
       - DB_USER=${DB_USER:-postgres}
       - DB_PASSWORD=${DB_PASSWORD:-postgres}
       - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
-      # Kafka configuration - connecting to redpanda-dev on capstone-net
+      # Kafka configuration - connecting to redpanda-dev on newsinsight-shared-net
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-redpanda-dev:9092}
       # Service port
       - SERVER_PORT=${COLLECTOR_PORT:-8081}
-      # Force Consul to register with newsinsight-net IP (not capstone-net IP)
+      # Force Consul to register with newsinsight-net IP (not newsinsight-shared-net IP)
       - SPRING_CLOUD_INETUTILS_PREFERRED_NETWORKS=172.20
     expose:
       - "8081"
     networks:
       - default
-      - capstone-net
+      - newsinsight-shared-net
 
   # Crawl4AI web-crawler service
   web-crawler:
@@ -275,7 +318,7 @@ services:
       - "19644:9644"
     networks:
       - default
-      - capstone-net
+      - newsinsight-shared-net
 
   # Redis for API Gateway rate limiting
   redis:
@@ -307,6 +350,26 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
+      # MCP servers - use service_started to avoid long dependency chains
+      # MCP healthchecks will retry internally if services aren't ready
+      newsinsight-mcp:
+        condition: service_started
+      bias-mcp:
+        condition: service_started
+      factcheck-mcp:
+        condition: service_started
+      topic-mcp:
+        condition: service_started
+      aiagent-mcp:
+        condition: service_started
+      huggingface-mcp:
+        condition: service_started
+      kaggle-mcp:
+        condition: service_started
+      mltraining-mcp:
+        condition: service_started
+      roboflow-mcp:
+        condition: service_started
     environment:
       # Consul configuration
       - CONSUL_HOST=${CONSUL_HOST:-consul}
@@ -355,6 +418,13 @@ services:
       # Stealth/CAPTCHA settings
       - STEALTH_ENABLED=${STEALTH_ENABLED:-true}
       - CAPTCHA_ENABLED=${CAPTCHA_ENABLED:-true}
+      # Paid CAPTCHA solver API keys (for reliable search portal bypass)
+      # Get CapSolver key at: https://capsolver.com (recommended for Turnstile)
+      - CAPTCHA_CAPSOLVER_API_KEY=${CAPTCHA_CAPSOLVER_API_KEY:-}
+      # Get 2Captcha key at: https://2captcha.com
+      - CAPTCHA_TWOCAPTCHA_API_KEY=${CAPTCHA_TWOCAPTCHA_API_KEY:-}
+      - CAPTCHA_PREFER_PAID_SOLVER=${CAPTCHA_PREFER_PAID_SOLVER:-true}
+      - CAPTCHA_PAID_SOLVER_TIMEOUT=${CAPTCHA_PAID_SOLVER_TIMEOUT:-120}
       # Redis for task state persistence
       - REDIS_ENABLED=true
       - REDIS_URL=redis://redis:6379/4
@@ -363,6 +433,16 @@ services:
       - METRICS_PORT=${CRAWLER_METRICS_PORT:-9090}
       - LOG_LEVEL=${CRAWLER_LOG_LEVEL:-INFO}
       - LOG_FORMAT=${CRAWLER_LOG_FORMAT:-json}
+      # MCP Server URLs for integrated analysis
+      - BIAS_MCP_URL=http://bias-mcp:5001
+      - FACTCHECK_MCP_URL=http://factcheck-mcp:5002
+      - TOPIC_MCP_URL=http://topic-mcp:5003
+      - NEWSINSIGHT_MCP_URL=http://newsinsight-mcp:5000
+      - HUGGINGFACE_MCP_URL=http://huggingface-mcp:5011
+      - KAGGLE_MCP_URL=http://kaggle-mcp:5012
+      - MLTRAINING_MCP_URL=http://mltraining-mcp:5013
+      - ROBOFLOW_MCP_URL=http://roboflow-mcp:5014
+      - AIAGENT_MCP_URL=http://aiagent-mcp:5004
     expose:
       - "9090"
     ports:
@@ -370,14 +450,15 @@ services:
       - "8030:8030"  # REST API
     shm_size: 2g  # Shared memory for browser
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/metrics"]
+      # Use python socket check instead of curl (curl not installed in container)
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 9090)); s.close()"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
     networks:
       - default
-      - capstone-net
+      - newsinsight-shared-net
 
   # Browser-Use API Server with AI Dove Integration
   browser-use-api:
@@ -404,7 +485,7 @@ services:
       retries: 3
     networks:
       - default
-      - capstone-net
+      - newsinsight-shared-net
 
   # ML Add-ons - 감정 분석 (Sentiment Analysis)
   sentiment-addon:
@@ -521,7 +602,8 @@ services:
       ip-rotation:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      # Use wget instead of curl (wget available in slim images via playwright deps)
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8040/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -554,11 +636,313 @@ services:
       ip-rotation:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8020/health"]
+      # Use python urllib instead of curl (curl may not be available)
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8020/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    networks:
+      - default
+
+  # ============================================================================
+  # MCP Servers - Analysis Tool Servers (Local Development)
+  # ============================================================================
+  newsinsight-mcp:
+    build:
+      context: ../../mcp/newsinsight_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/newsinsight-mcp:local
+    restart: unless-stopped
+    environment:
+      - DB_BACKEND=postgres
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - PORT=5000
+    expose:
+      - "5000"
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  bias-mcp:
+    build:
+      context: ../../mcp/bias_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/bias-mcp:local
+    restart: unless-stopped
+    environment:
+      - DB_BACKEND=postgres
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - PORT=5001
+    expose:
+      - "5001"
+    ports:
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  factcheck-mcp:
+    build:
+      context: ../../mcp/factcheck_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/factcheck-mcp:local
+    restart: unless-stopped
+    environment:
+      - DB_BACKEND=postgres
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - PORT=5002
+    expose:
+      - "5002"
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  topic-mcp:
+    build:
+      context: ../../mcp/topic_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/topic-mcp:local
+    restart: unless-stopped
+    environment:
+      - DB_BACKEND=postgres
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - PORT=5003
+    expose:
+      - "5003"
+    ports:
+      - "5003:5003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  aiagent-mcp:
+    build:
+      context: ../../mcp/aiagent_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/aiagent-mcp:local
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - ENCRYPTION_KEY=${AI_PROVIDER_ENCRYPTION_KEY:-}
+      - PORT=5004
+    expose:
+      - "5004"
+    ports:
+      - "5004:5004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  huggingface-mcp:
+    build:
+      context: ../../mcp/huggingface_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/huggingface-mcp:local
+    restart: unless-stopped
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - PORT=5011
+      - DATA_DIR=/app/data
+      - JOB_TIMEOUT=600
+    expose:
+      - "5011"
+    ports:
+      - "5011:5011"
+    volumes:
+      - huggingface-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5011/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  kaggle-mcp:
+    build:
+      context: ../../mcp/kaggle_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/kaggle-mcp:local
+    restart: unless-stopped
+    environment:
+      - KAGGLE_USERNAME=${KAGGLE_USERNAME:-}
+      - KAGGLE_KEY=${KAGGLE_KEY:-}
+      - PORT=5012
+      - DATA_DIR=/app/data
+    expose:
+      - "5012"
+    ports:
+      - "5012:5012"
+    volumes:
+      - kaggle-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5012/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  mltraining-mcp:
+    build:
+      context: ../../mcp/mltraining_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/mltraining-mcp:local
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - PORT=5013
+      - DATA_DIR=/app/data
+    expose:
+      - "5013"
+    ports:
+      - "5013:5013"
+    volumes:
+      - mltraining-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5013/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  roboflow-mcp:
+    build:
+      context: ../../mcp/roboflow_mcp
+      dockerfile: Dockerfile
+    image: newsinsight/roboflow-mcp:local
+    restart: unless-stopped
+    environment:
+      - ROBOFLOW_API_KEY=${ROBOFLOW_API_KEY:-}
+      - PORT=5014
+      - DATA_DIR=/app/data
+    expose:
+      - "5014"
+    ports:
+      - "5014:5014"
+    volumes:
+      - roboflow-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5014/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  # ============================================================================
+  # ML Trainer Service - Model Training and Management
+  # ============================================================================
+  ml-trainer:
+    build:
+      context: ../../backend/ml-addons/ml-trainer
+      dockerfile: Dockerfile
+    image: newsinsight/ml-trainer:local
+    restart: unless-stopped
+    environment:
+      - PORT=8090
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/newsinsight}
+      - REDIS_URL=redis://redis:6379/5
+      - HF_TOKEN=${HF_TOKEN:-}
+      - KAGGLE_USERNAME=${KAGGLE_USERNAME:-}
+      - KAGGLE_KEY=${KAGGLE_KEY:-}
+      - ROBOFLOW_API_KEY=${ROBOFLOW_API_KEY:-}
+      - MODEL_STORAGE_PATH=/app/models
+      - TRAINING_DATA_PATH=/app/data
+    expose:
+      - "8090"
+    ports:
+      - "8090:8090"
+    volumes:
+      - ml-trainer-models:/app/models
+      - ml-trainer-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kaggle-mcp:
+        condition: service_started
+      mltraining-mcp:
+        condition: service_started
+      roboflow-mcp:
+        condition: service_started
+      huggingface-mcp:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     networks:
       - default
 
@@ -569,10 +953,17 @@ volumes:
   mongo-data:
   ip-rotation-data:
   maigret-reports:
+  huggingface-data:
+  admin-config:
+  kaggle-data:
+  mltraining-data:
+  roboflow-data:
+  ml-trainer-models:
+  ml-trainer-data:
 
 networks:
   default:
     name: newsinsight-net
-  capstone-net:
-    name: compose_capstone-net
+  newsinsight-shared-net:
+    name: newsinsight-shared-net
     driver: bridge

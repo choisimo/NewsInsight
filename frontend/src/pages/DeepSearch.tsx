@@ -25,6 +25,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { ExportButton } from "@/components/ExportButton";
+import { ReportExportButton } from "@/components/ReportExportButton";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -481,8 +482,9 @@ const DeepSearch = () => {
   const { data: fetchedResult } = useQuery({
     queryKey: ['deepSearch', 'result', currentJobId],
     queryFn: () => getDeepSearchResult(currentJobId!),
-    enabled: !!currentJobId && !sseResult && jobStatus === 'COMPLETED',
+    enabled: !!currentJobId && !sseResult,
     staleTime: Infinity,
+    retry: 2,
   });
 
   const result = sseResult || fetchedResult;
@@ -967,6 +969,14 @@ const DeepSearch = () => {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="text-xl font-semibold">분석 결과</h2>
               <div className="flex items-center gap-2">
+                <ReportExportButton
+                  jobId={result.jobId}
+                  query={result.topic}
+                  reportType="DEEP_SEARCH"
+                  variant="default"
+                  size="sm"
+                  disabled={result.evidence.length === 0}
+                />
                 <ExportButton
                   data={result.evidence.map(e => ({
                     id: e.id,

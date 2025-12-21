@@ -6,6 +6,7 @@ import type {
   PageResponse,
   SourceType,
 } from '@/types/api';
+import { getSessionId, getDeviceId } from './anonymous-session';
 
 // Storage key for access token (shared with AuthContext)
 const ACCESS_TOKEN_KEY = 'access_token';
@@ -34,6 +35,11 @@ const resolveInitialBaseUrl = (): string => {
 
   return '';
 };
+
+/**
+ * Export API_BASE_URL for direct fetch usage (SSE, etc.)
+ */
+export const API_BASE_URL = resolveInitialBaseUrl();
 
 const fetchConfiguredBaseUrl = async (initialBaseUrl: string): Promise<string> => {
   // 개발 환경에서는 proxy 사용하므로 config fetch 불필요
@@ -88,13 +94,18 @@ export const getApiClient = async () => {
     withCredentials: true, // Include cookies in requests
   });
 
-  // Request interceptor to add Authorization header
+  // Request interceptor to add Authorization and Session headers
   apiInstance.interceptors.request.use(
     (config) => {
       const token = getAccessToken();
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
+      
+      // Always add session headers for anonymous user tracking
+      config.headers['X-Session-Id'] = getSessionId();
+      config.headers['X-Device-Id'] = getDeviceId();
+      
       return config;
     },
     (error) => {
@@ -180,6 +191,8 @@ export interface CreateDataSourcePayload {
   sourceType: SourceType;
   collectionFrequency?: number;
   metadata?: Record<string, unknown>;
+  searchUrlTemplate?: string;
+  searchPriority?: number;
 }
 
 export const listSources = async (
@@ -242,6 +255,8 @@ export interface UpdateDataSourcePayload {
   sourceType?: SourceType;
   collectionFrequency?: number;
   metadata?: Record<string, unknown>;
+  searchUrlTemplate?: string;
+  searchPriority?: number;
 }
 
 /**
@@ -907,19 +922,25 @@ export interface UnifiedSearchJob {
  * Returns immediately with job details; results are delivered via SSE.
  * 
  * @param query - Search query string
- * @param window - Time window (1d, 7d, 30d)
+ * @param window - Time window (1d, 7d, 30d, or 'custom' for custom date range)
  * @param priorityUrls - Optional array of URLs to prioritize for web crawling
+ * @param startDate - Optional start date for custom date range (ISO string)
+ * @param endDate - Optional end date for custom date range (ISO string)
  */
 export const startUnifiedSearchJob = async (
   query: string,
   window: string = '7d',
   priorityUrls?: string[],
+  startDate?: string,
+  endDate?: string,
 ): Promise<UnifiedSearchJob> => {
   const client = await getApiClient();
   const response = await client.post<UnifiedSearchJob>('/api/v1/search/jobs', {
     query,
     window,
     ...(priorityUrls && priorityUrls.length > 0 && { priorityUrls }),
+    ...(startDate && { startDate }),
+    ...(endDate && { endDate }),
   });
   return response.data;
 };
@@ -2088,5 +2109,1977 @@ export const getAnalysisStreamStatus = async (): Promise<{
 }> => {
   const client = await getApiClient();
   const response = await client.get('/api/v1/search/analysis/stream/status');
+  return response.data;
+};
+
+
+// ============================================
+// PDF Report API
+// ============================================
+
+/**
+ * Report type enumeration
+ */
+export type ReportType = 'UNIFIED_SEARCH' | 'DEEP_SEARCH' | 'ML_ANALYSIS' | 'ARTICLE_DETAIL';
+
+/**
+ * Report section enumeration
+ */
+export type ReportSection = 
+  | 'COVER'              // 표지
+  | 'EXECUTIVE_SUMMARY'  // 요약
+  | 'DATA_SOURCE'        // 데이터 소스 분석
+  | 'TREND_ANALYSIS'     // 시간별 트렌드
+  | 'KEYWORD_ANALYSIS'   // 키워드 분석
+  | 'SENTIMENT_ANALYSIS' // 감정 분석
+  | 'RELIABILITY'        // 신뢰도 분석
+  | 'BIAS_ANALYSIS'      // 편향성 분석
+  | 'FACTCHECK'          // 팩트체크
+  | 'EVIDENCE_LIST'      // 증거 목록
+  | 'DETAILED_RESULTS';  // 상세 결과
+
+/**
+ * Report generation status
+ */
+export type ReportStatus = 'PENDING' | 'GENERATING' | 'COMPLETED' | 'FAILED' | 'EXPIRED';
+
+/**
+ * Report generation request
+ */
+export interface ReportRequest {
+  reportType?: ReportType;
+  targetId?: string;
+  query?: string;
+  timeWindow?: string;
+  includeSections?: ReportSection[];
+  chartImages?: Record<string, string>;  // Base64 encoded chart images
+  customTitle?: string;
+  logoImage?: string;  // Base64 or URL
+  watermark?: string;
+  language?: 'ko' | 'en';
+}
+
+/**
+ * Report metadata response
+ */
+export interface ReportMetadata {
+  reportId: string;
+  title: string;
+  reportType: ReportType;
+  targetId: string;
+  query: string;
+  status: ReportStatus;
+  fileSize?: number;
+  pageCount?: number;
+  generationTimeMs?: number;
+  createdAt: string;
+  expiresAt?: string;
+  downloadUrl?: string;
+  errorMessage?: string;
+}
+
+/**
+ * Request unified search report generation (async)
+ * POST /api/v1/reports/unified-search/{jobId}
+ * 
+ * @param jobId - Unified search job ID
+ * @param request - Report generation options
+ * @returns Report metadata with status
+ */
+export const requestUnifiedSearchReport = async (
+  jobId: string,
+  request: ReportRequest = {}
+): Promise<ReportMetadata> => {
+  const client = await getApiClient();
+  const response = await client.post<ReportMetadata>(
+    `/api/v1/reports/unified-search/${jobId}`,
+    request
+  );
+  return response.data;
+};
+
+/**
+ * Export unified search report immediately (sync download)
+ * POST /api/v1/reports/unified-search/{jobId}/export
+ * 
+ * @param jobId - Unified search job ID
+ * @param request - Report generation options
+ * @returns PDF file as Blob
+ */
+export const exportUnifiedSearchReport = async (
+  jobId: string,
+  request: ReportRequest = {}
+): Promise<Blob> => {
+  const client = await getApiClient();
+  const response = await client.post(
+    `/api/v1/reports/unified-search/${jobId}/export`,
+    request,
+    {
+      responseType: 'blob',
+      timeout: 120000,  // 2 minute timeout for PDF generation
+    }
+  );
+  return response.data;
+};
+
+/**
+ * Get report status by report ID
+ * GET /api/v1/reports/{reportId}
+ * 
+ * @param reportId - Report ID
+ * @returns Report metadata
+ */
+export const getReportStatus = async (reportId: string): Promise<ReportMetadata> => {
+  const client = await getApiClient();
+  const response = await client.get<ReportMetadata>(`/api/v1/reports/${reportId}`);
+  return response.data;
+};
+
+/**
+ * Download generated report
+ * GET /api/v1/reports/{reportId}/download
+ * 
+ * @param reportId - Report ID
+ * @returns PDF file as Blob
+ */
+export const downloadReport = async (reportId: string): Promise<Blob> => {
+  const client = await getApiClient();
+  const response = await client.get(`/api/v1/reports/${reportId}/download`, {
+    responseType: 'blob',
+  });
+  return response.data;
+};
+
+/**
+ * Export DeepSearch report immediately (sync download)
+ * POST /api/v1/reports/deep-search/{jobId}/export
+ * 
+ * @param jobId - DeepSearch job ID
+ * @param request - Report generation options
+ * @returns PDF file as Blob
+ */
+export const exportDeepSearchReport = async (
+  jobId: string,
+  request: ReportRequest = {}
+): Promise<Blob> => {
+  const client = await getApiClient();
+  const response = await client.post(
+    `/api/v1/reports/deep-search/${jobId}/export`,
+    {
+      ...request,
+      reportType: 'DEEP_SEARCH',
+    },
+    {
+      responseType: 'blob',
+      timeout: 120000,
+    }
+  );
+  return response.data;
+};
+
+/**
+ * Export ML analysis report for an article (sync download)
+ * POST /api/v1/reports/ml-analysis/{articleId}/export
+ * 
+ * @param articleId - Article ID
+ * @param request - Report generation options
+ * @returns PDF file as Blob
+ */
+export const exportMlAnalysisReport = async (
+  articleId: number,
+  request: ReportRequest = {}
+): Promise<Blob> => {
+  const client = await getApiClient();
+  const response = await client.post(
+    `/api/v1/reports/ml-analysis/${articleId}/export`,
+    {
+      ...request,
+      reportType: 'ML_ANALYSIS',
+    },
+    {
+      responseType: 'blob',
+      timeout: 120000,
+    }
+  );
+  return response.data;
+};
+
+/**
+ * Poll for report completion
+ * 
+ * @param reportId - Report ID
+ * @param pollIntervalMs - Polling interval in milliseconds
+ * @param maxWaitMs - Maximum wait time in milliseconds
+ * @returns Completed report metadata
+ */
+export const pollReportCompletion = async (
+  reportId: string,
+  pollIntervalMs: number = 2000,
+  maxWaitMs: number = 120000
+): Promise<ReportMetadata> => {
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitMs) {
+    const metadata = await getReportStatus(reportId);
+    
+    if (metadata.status === 'COMPLETED') {
+      return metadata;
+    }
+    
+    if (metadata.status === 'FAILED' || metadata.status === 'EXPIRED') {
+      throw new Error(`Report generation ${metadata.status.toLowerCase()}: ${metadata.errorMessage || 'Unknown error'}`);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+  }
+  
+  throw new Error('Report generation timed out');
+};
+
+/**
+ * Helper function to trigger PDF download in browser
+ * 
+ * @param blob - PDF blob
+ * @param filename - Download filename
+ */
+export const triggerPdfDownload = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+/**
+ * Default report sections for different report types
+ */
+export const DEFAULT_REPORT_SECTIONS: Record<ReportType, ReportSection[]> = {
+  UNIFIED_SEARCH: [
+    'COVER',
+    'EXECUTIVE_SUMMARY',
+    'DATA_SOURCE',
+    'KEYWORD_ANALYSIS',
+    'SENTIMENT_ANALYSIS',
+    'RELIABILITY',
+    'DETAILED_RESULTS',
+  ],
+  DEEP_SEARCH: [
+    'COVER',
+    'EXECUTIVE_SUMMARY',
+    'DATA_SOURCE',
+    'EVIDENCE_LIST',
+    'SENTIMENT_ANALYSIS',
+    'FACTCHECK',
+    'DETAILED_RESULTS',
+  ],
+  ML_ANALYSIS: [
+    'COVER',
+    'EXECUTIVE_SUMMARY',
+    'SENTIMENT_ANALYSIS',
+    'BIAS_ANALYSIS',
+    'FACTCHECK',
+    'RELIABILITY',
+  ],
+  ARTICLE_DETAIL: [
+    'COVER',
+    'EXECUTIVE_SUMMARY',
+    'SENTIMENT_ANALYSIS',
+    'BIAS_ANALYSIS',
+    'FACTCHECK',
+  ],
+};
+
+
+// =============================================================================
+// ML Training Service API (Port 8090)
+// =============================================================================
+
+const ML_TRAINER_BASE_URL = import.meta.env.VITE_ML_TRAINER_URL || '/api/ml-trainer';
+
+/**
+ * 지원되는 ML 모델 타입
+ */
+export type MLModelType = 
+  | 'sentiment'     // 감정 분석
+  | 'absa'          // Aspect-Based Sentiment Analysis
+  | 'ner'           // Named Entity Recognition
+  | 'classification' // 텍스트 분류
+  | 'embedding'     // 임베딩 모델
+  | 'transformer';  // 기본 트랜스포머
+
+/**
+ * 학습 작업 상태
+ */
+export type TrainingJobState = 
+  | 'PENDING'
+  | 'INITIALIZING'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+/**
+ * 데이터셋 형식
+ */
+export type DatasetFormat = 'csv' | 'jsonl' | 'json' | 'parquet' | 'huggingface';
+
+/**
+ * 학습 메트릭
+ */
+export interface TrainingMetrics {
+  epoch: number;
+  total_epochs: number;
+  step: number;
+  total_steps: number;
+  loss: number;
+  accuracy: number;
+  validation_loss: number;
+  validation_accuracy: number;
+  learning_rate: number;
+  samples_processed: number;
+  total_samples: number;
+  f1_score: number;
+  precision: number;
+  recall: number;
+}
+
+/**
+ * 학습 요청
+ */
+export interface TrainingRequest {
+  model_name: string;
+  model_type: MLModelType;
+  dataset_path: string;
+  dataset_format: DatasetFormat;
+  base_model?: string;
+  max_epochs?: number;
+  validation_split?: number;
+  hyperparameters?: {
+    learning_rate?: number;
+    batch_size?: number;
+    warmup_steps?: number;
+    weight_decay?: number;
+    max_length?: number;
+    gradient_accumulation_steps?: number;
+  };
+  callbacks?: {
+    early_stopping?: boolean;
+    early_stopping_patience?: number;
+    save_best_model?: boolean;
+  };
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * 학습 응답
+ */
+export interface TrainingResponse {
+  job_id: string;
+  model_name: string;
+  model_type: string;
+  state: TrainingJobState;
+  progress: number;
+  created_at: string;
+  message: string;
+}
+
+/**
+ * 학습 작업 상태
+ */
+export interface TrainingJobStatus {
+  job_id: string;
+  model_name: string;
+  model_type: string;
+  state: TrainingJobState;
+  progress: number;
+  metrics: TrainingMetrics;
+  error_message?: string;
+  model_path?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  current_epoch: number;
+  total_epochs: number;
+}
+
+/**
+ * 모델 아티팩트 정보
+ */
+export interface ModelArtifact {
+  model_path: string;
+  model_name: string;
+  model_type: string;
+  framework: string;
+  version: string;
+  size_bytes: number;
+  checksum: string;
+  metrics: Record<string, number>;
+  model_filename: string;
+}
+
+/**
+ * ML Trainer 헬스 상태
+ */
+export interface MLTrainerHealth {
+  status: string;
+  version: string;
+  gpu_available: boolean;
+  active_jobs: number;
+  supported_model_types: string[];
+  max_concurrent_jobs: number;
+  redis_connected: boolean;
+  persisted_jobs: number;
+}
+
+/**
+ * 외부 학습 시작 요청 (Colab/Jupyter)
+ */
+export interface ExternalTrainingRequest {
+  model_name: string;
+  model_type?: MLModelType;
+  base_model?: string;
+  max_epochs?: number;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * 외부 학습 시작 응답
+ */
+export interface ExternalTrainingResponse {
+  job_id: string;
+  upload_token: string;
+  model_name: string;
+  model_type: string;
+  state: string;
+  created_at: string;
+  message: string;
+  api_endpoints: {
+    progress: string;
+    upload: string;
+    complete: string;
+    stream: string;
+  };
+}
+
+/**
+ * 외부 학습 진행 상황 업데이트
+ */
+export interface ExternalProgressUpdate {
+  upload_token: string;
+  progress: number;
+  epoch?: number;
+  total_epochs?: number;
+  step?: number;
+  total_steps?: number;
+  loss?: number;
+  accuracy?: number;
+  validation_loss?: number;
+  validation_accuracy?: number;
+  f1_score?: number;
+  learning_rate?: number;
+  message?: string;
+}
+
+/**
+ * 추론 요청
+ */
+export interface InferenceRequest {
+  text: string;
+  return_probabilities?: boolean;
+}
+
+/**
+ * 추론 응답
+ */
+export interface InferenceResponse {
+  job_id: string;
+  model_name: string;
+  model_type: string;
+  input_text: string;
+  predicted_label: string | number;
+  predicted_label_name?: string;
+  confidence: number;
+  probabilities?: Record<string, number>;
+  inference_time_ms: number;
+}
+
+/**
+ * HuggingFace 데이터셋 정보
+ */
+export interface HuggingFaceDataset {
+  id: string;
+  name: string;
+  description: string;
+  size: string;
+  downloads: number;
+  task: string;
+  language: string;
+}
+
+/**
+ * 사전 정의된 한국어 데이터셋 목록
+ */
+export const KOREAN_DATASETS: HuggingFaceDataset[] = [
+  {
+    id: 'e9t/nsmc',
+    name: 'Naver Sentiment Movie Corpus',
+    description: '네이버 영화 리뷰 감정 분석 데이터셋 (긍정/부정)',
+    size: '200K',
+    downloads: 500000,
+    task: 'sentiment',
+    language: 'ko',
+  },
+  {
+    id: 'klue',
+    name: 'KLUE NLI',
+    description: '한국어 자연어 추론 데이터셋 (config: nli)',
+    size: '28K',
+    downloads: 100000,
+    task: 'classification',
+    language: 'ko',
+  },
+  {
+    id: 'klue',
+    name: 'KLUE NER',
+    description: '한국어 개체명 인식 데이터셋 (config: ner)',
+    size: '26K',
+    downloads: 80000,
+    task: 'ner',
+    language: 'ko',
+  },
+  {
+    id: 'klue',
+    name: 'KLUE YNAT',
+    description: '연합뉴스 주제 분류 데이터셋 (config: ynat)',
+    size: '55K',
+    downloads: 90000,
+    task: 'classification',
+    language: 'ko',
+  },
+  {
+    id: 'jeanlee/kmhas_korean_hate_speech',
+    name: 'Korean Hate Speech',
+    description: '한국어 혐오 발언 데이터셋 (KMHAS)',
+    size: '110K',
+    downloads: 30000,
+    task: 'classification',
+    language: 'ko',
+  },
+  {
+    id: 'KorQuAD/squad_kor_v1',
+    name: 'KorQuAD',
+    description: '한국어 기계독해 데이터셋',
+    size: '66K',
+    downloads: 120000,
+    task: 'qa',
+    language: 'ko',
+  },
+];
+
+/**
+ * 기본 베이스 모델 목록
+ */
+export const DEFAULT_BASE_MODELS: Record<MLModelType, string[]> = {
+  sentiment: [
+    'klue/bert-base',
+    'klue/roberta-base',
+    'monologg/koelectra-base-v3-discriminator',
+    'beomi/kcbert-base',
+  ],
+  absa: [
+    'monologg/koelectra-base-v3-discriminator',
+    'klue/bert-base',
+  ],
+  ner: [
+    'klue/bert-base',
+    'klue/roberta-base',
+    'monologg/koelectra-base-v3-discriminator',
+  ],
+  classification: [
+    'klue/roberta-base',
+    'klue/bert-base',
+    'beomi/kcbert-base',
+  ],
+  embedding: [
+    'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+    'jhgan/ko-sroberta-multitask',
+    'BM-K/KoSimCSE-roberta',
+  ],
+  transformer: [
+    'klue/bert-base',
+    'klue/roberta-base',
+    'klue/roberta-large',
+  ],
+};
+
+// ML Trainer API Functions
+
+/**
+ * ML Trainer 헬스 체크
+ */
+export const checkMLTrainerHealth = async (): Promise<MLTrainerHealth> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/health`);
+  if (!response.ok) {
+    throw new Error('ML Trainer health check failed');
+  }
+  return response.json();
+};
+
+/**
+ * 학습 작업 시작
+ */
+export const startTraining = async (request: TrainingRequest): Promise<TrainingResponse> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/train`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Training start failed' }));
+    throw new Error(error.detail || 'Training start failed');
+  }
+  return response.json();
+};
+
+/**
+ * 학습 작업 상태 조회
+ */
+export const getTrainingJobStatus = async (jobId: string): Promise<TrainingJobStatus> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/status`);
+  if (!response.ok) {
+    throw new Error('Failed to get job status');
+  }
+  return response.json();
+};
+
+/**
+ * 학습 작업 취소
+ */
+export const cancelTrainingJob = async (jobId: string): Promise<{ message: string }> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/cancel`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to cancel job');
+  }
+  return response.json();
+};
+
+/**
+ * 모든 학습 작업 목록 조회
+ */
+export const listTrainingJobs = async (): Promise<TrainingJobStatus[]> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/jobs`);
+  if (!response.ok) {
+    throw new Error('Failed to list jobs');
+  }
+  return response.json();
+};
+
+/**
+ * 학습된 모델 목록 조회
+ */
+export const listTrainedModels = async (): Promise<ModelArtifact[]> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/models`);
+  if (!response.ok) {
+    throw new Error('Failed to list models');
+  }
+  return response.json();
+};
+
+/**
+ * 모델 아티팩트 다운로드
+ */
+export const downloadModelArtifact = async (jobId: string): Promise<Blob> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/artifact`);
+  if (!response.ok) {
+    throw new Error('Failed to download model artifact');
+  }
+  return response.blob();
+};
+
+/**
+ * 지원되는 모델 타입 조회
+ */
+export const getSupportedModelTypes = async (): Promise<string[]> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/supported-types`);
+  if (!response.ok) {
+    throw new Error('Failed to get supported types');
+  }
+  return response.json();
+};
+
+/**
+ * 외부 학습 시작 (Colab/Jupyter 연동)
+ */
+export const startExternalTraining = async (
+  request: ExternalTrainingRequest
+): Promise<ExternalTrainingResponse> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/train/external/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'External training start failed' }));
+    throw new Error(error.detail || 'External training start failed');
+  }
+  return response.json();
+};
+
+/**
+ * 외부 학습 진행 상황 업데이트
+ */
+export const updateExternalProgress = async (
+  jobId: string,
+  update: ExternalProgressUpdate
+): Promise<{ message: string }> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(update),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to update progress');
+  }
+  return response.json();
+};
+
+/**
+ * 외부 학습 모델 업로드
+ */
+export const uploadExternalModel = async (
+  jobId: string,
+  uploadToken: string,
+  modelFile: File
+): Promise<{ message: string; model_path: string }> => {
+  const formData = new FormData();
+  formData.append('model_file', modelFile);
+  formData.append('upload_token', uploadToken);
+
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error('Failed to upload model');
+  }
+  return response.json();
+};
+
+/**
+ * 외부 학습 완료 처리
+ */
+export const completeExternalTraining = async (
+  jobId: string,
+  uploadToken: string,
+  finalMetrics?: Record<string, number>
+): Promise<{ message: string }> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      upload_token: uploadToken,
+      final_metrics: finalMetrics || {},
+    }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to complete training');
+  }
+  return response.json();
+};
+
+/**
+ * 학습된 모델로 추론 실행
+ */
+export const runInference = async (
+  jobId: string,
+  request: InferenceRequest
+): Promise<InferenceResponse> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/inference/${jobId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Inference failed' }));
+    throw new Error(error.detail || 'Inference failed');
+  }
+  return response.json();
+};
+
+/**
+ * 모델 이름으로 추론 실행
+ */
+export const runInferenceByName = async (
+  modelName: string,
+  request: InferenceRequest
+): Promise<InferenceResponse> => {
+  const response = await fetch(`${ML_TRAINER_BASE_URL}/inference/by-name/${encodeURIComponent(modelName)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Inference failed' }));
+    throw new Error(error.detail || 'Inference failed');
+  }
+  return response.json();
+};
+
+/**
+ * 학습 진행 상황 SSE 스트림 연결
+ */
+export const connectTrainingStream = (
+  jobId: string,
+  onEvent: (event: {
+    type: string;
+    job_id: string;
+    progress: number;
+    state: TrainingJobState;
+    metrics: TrainingMetrics;
+    [key: string]: unknown;
+  }) => void,
+  onError?: (error: Error) => void
+): EventSource => {
+  const eventSource = new EventSource(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/stream`);
+
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      onEvent(data);
+    } catch (e) {
+      console.error('Failed to parse SSE event:', e);
+    }
+  };
+
+  eventSource.onerror = (event) => {
+    console.error('SSE error:', event);
+    onError?.(new Error('Training stream connection error'));
+  };
+
+  return eventSource;
+};
+
+/**
+ * HuggingFace 데이터셋으로 학습 시작 (편의 함수)
+ */
+export const startTrainingWithHuggingFaceDataset = async (
+  modelName: string,
+  modelType: MLModelType,
+  datasetId: string,
+  options?: {
+    baseModel?: string;
+    maxEpochs?: number;
+    validationSplit?: number;
+    hyperparameters?: TrainingRequest['hyperparameters'];
+  }
+): Promise<TrainingResponse> => {
+  const request: TrainingRequest = {
+    model_name: modelName,
+    model_type: modelType,
+    dataset_path: `huggingface:${datasetId}`,
+    dataset_format: 'huggingface',
+    base_model: options?.baseModel || DEFAULT_BASE_MODELS[modelType][0],
+    max_epochs: options?.maxEpochs || 3,
+    validation_split: options?.validationSplit || 0.1,
+    hyperparameters: options?.hyperparameters || {
+      learning_rate: 2e-5,
+      batch_size: 16,
+      warmup_steps: 500,
+      weight_decay: 0.01,
+    },
+    callbacks: {
+      early_stopping: true,
+      early_stopping_patience: 3,
+      save_best_model: true,
+    },
+    metadata: {
+      dataset_source: 'huggingface',
+      dataset_id: datasetId,
+    },
+  };
+  
+  return startTraining(request);
+};
+
+/**
+ * 분석된 기사 데이터로 학습 시작 (편의 함수)
+ */
+export const startTrainingWithAnalyzedData = async (
+  modelName: string,
+  modelType: MLModelType,
+  articleIds: number[],
+  options?: {
+    baseModel?: string;
+    maxEpochs?: number;
+    labelField?: string;
+  }
+): Promise<TrainingResponse> => {
+  // 분석된 기사 데이터를 데이터셋으로 변환하여 학습
+  const request: TrainingRequest = {
+    model_name: modelName,
+    model_type: modelType,
+    dataset_path: `newsinsight:analyzed_articles`,
+    dataset_format: 'json',
+    base_model: options?.baseModel || DEFAULT_BASE_MODELS[modelType][0],
+    max_epochs: options?.maxEpochs || 5,
+    validation_split: 0.15,
+    hyperparameters: {
+      learning_rate: 2e-5,
+      batch_size: 8,
+      warmup_steps: 100,
+      weight_decay: 0.01,
+    },
+    metadata: {
+      dataset_source: 'newsinsight',
+      article_ids: articleIds,
+      label_field: options?.labelField || 'sentiment_label',
+    },
+  };
+  
+  return startTraining(request);
+};
+
+// ============================================
+// Search Job Queue API (Concurrent Jobs)
+// ============================================
+
+/**
+ * Search job type
+ */
+export type SearchJobType = 'UNIFIED' | 'DEEP_SEARCH' | 'FACT_CHECK' | 'BROWSER_AGENT';
+
+/**
+ * Search job status
+ */
+export type SearchJobStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
+/**
+ * Search job record
+ */
+export interface SearchJob {
+  jobId: string;
+  type: SearchJobType;
+  query: string;
+  timeWindow?: string;
+  userId?: string;
+  sessionId?: string;
+  projectId?: number;
+  status: SearchJobStatus;
+  progress: number;
+  currentPhase?: string;
+  errorMessage?: string;
+  startedAt: string;
+  completedAt?: string;
+  result?: Record<string, unknown>;
+}
+
+/**
+ * Search job event from SSE
+ */
+export interface SearchJobEvent {
+  jobId: string;
+  eventType: 'started' | 'progress' | 'completed' | 'failed' | 'cancelled' | 'heartbeat';
+  status: SearchJobStatus;
+  progress: number;
+  currentPhase?: string;
+  message?: string;
+  timestamp: number;
+}
+
+/**
+ * Request payload for starting a search job
+ */
+export interface StartSearchJobRequest {
+  type: SearchJobType;
+  query: string;
+  timeWindow?: string;
+  userId?: string;
+  sessionId?: string;
+  projectId?: number;
+  options?: Record<string, unknown>;
+}
+
+/**
+ * Start a new search job
+ */
+export const startSearchJob = async (request: StartSearchJobRequest): Promise<{
+  jobId: string;
+  type: string;
+  query: string;
+  status: string;
+  message: string;
+}> => {
+  const client = await getApiClient();
+  const response = await client.post('/api/v1/jobs', request);
+  return response.data;
+};
+
+/**
+ * Start multiple search jobs concurrently (batch)
+ */
+export const startSearchJobsBatch = async (requests: StartSearchJobRequest[]): Promise<{
+  jobs: Array<{ jobId: string; type: string; query: string; status: string }>;
+  count: number;
+  message: string;
+}> => {
+  const client = await getApiClient();
+  const response = await client.post('/api/v1/jobs/batch', requests);
+  return response.data;
+};
+
+/**
+ * Get job status
+ */
+export const getSearchJobStatus = async (jobId: string): Promise<SearchJob> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchJob>(`/api/v1/jobs/${jobId}`);
+  return response.data;
+};
+
+/**
+ * Get active jobs for user
+ */
+export const getActiveSearchJobs = async (userId: string = 'anonymous'): Promise<SearchJob[]> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchJob[]>('/api/v1/jobs/active', { params: { userId } });
+  return response.data;
+};
+
+/**
+ * Get all jobs for user
+ */
+export const getAllSearchJobs = async (userId: string = 'anonymous', limit: number = 20): Promise<SearchJob[]> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchJob[]>('/api/v1/jobs', { params: { userId, limit } });
+  return response.data;
+};
+
+/**
+ * Cancel a job
+ */
+export const cancelSearchJob = async (jobId: string): Promise<{
+  jobId: string;
+  status: string;
+  message: string;
+}> => {
+  const client = await getApiClient();
+  const response = await client.post(`/api/v1/jobs/${jobId}/cancel`);
+  return response.data;
+};
+
+/**
+ * Get SSE stream URL for job updates
+ */
+export const getSearchJobStreamUrl = async (jobId: string): Promise<string> => {
+  const initialBase = resolveInitialBaseUrl();
+  const baseURL = await fetchConfiguredBaseUrl(initialBase);
+  const effectiveBaseURL = baseURL || (typeof globalThis.window !== 'undefined' ? globalThis.window.location.origin : '');
+  return `${effectiveBaseURL}/api/v1/jobs/${jobId}/stream`;
+};
+
+/**
+ * Open SSE stream for job updates
+ */
+export const openSearchJobStream = async (jobId: string): Promise<EventSource> => {
+  const url = await getSearchJobStreamUrl(jobId);
+  return new EventSource(url);
+};
+
+/**
+ * Get SSE stream URL for all user jobs
+ */
+export const getAllJobsStreamUrl = async (userId: string = 'anonymous'): Promise<string> => {
+  const initialBase = resolveInitialBaseUrl();
+  const baseURL = await fetchConfiguredBaseUrl(initialBase);
+  const effectiveBaseURL = baseURL || (typeof globalThis.window !== 'undefined' ? globalThis.window.location.origin : '');
+  return `${effectiveBaseURL}/api/v1/jobs/stream?userId=${encodeURIComponent(userId)}`;
+};
+
+/**
+ * Open SSE stream for all user jobs
+ */
+export const openAllJobsStream = async (userId: string = 'anonymous'): Promise<EventSource> => {
+  const url = await getAllJobsStreamUrl(userId);
+  return new EventSource(url);
+};
+
+/**
+ * Check job service health
+ */
+export const checkJobServiceHealth = async (): Promise<{
+  status: string;
+  features: Record<string, boolean>;
+  supportedTypes: string[];
+}> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/jobs/health');
+  return response.data;
+};
+
+// ============================================
+// Continue Work API (Improved)
+// ============================================
+
+/**
+ * Completion status for search history
+ */
+export type CompletionStatus = 'DRAFT' | 'IN_PROGRESS' | 'PARTIAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
+/**
+ * Continue work item (extended search history)
+ */
+export interface ContinueWorkItem extends SearchHistoryRecord {
+  completionStatus?: CompletionStatus;
+  viewed?: boolean;
+  viewedAt?: string;
+  reportGenerated?: boolean;
+  failurePhase?: string;
+  failureDetails?: string;
+  partialResults?: Record<string, unknown>;
+  progress?: number;
+  currentPhase?: string;
+  projectId?: number;
+}
+
+/**
+ * Get continue work items (actionable searches)
+ */
+export const getContinueWorkItems = async (
+  userId: string = 'anonymous',
+  sessionId?: string,
+  limit: number = 10
+): Promise<{
+  items: ContinueWorkItem[];
+  count: number;
+  stats: {
+    total: number;
+    inProgress: number;
+    failed: number;
+    draft: number;
+    partial: number;
+    unviewedCompleted: number;
+  };
+}> => {
+  const client = await getApiClient();
+  const params: Record<string, string | number> = { userId, limit };
+  if (sessionId) params.sessionId = sessionId;
+  const response = await client.get('/api/v1/search-history/continue-work', { params });
+  return response.data;
+};
+
+/**
+ * Mark search as viewed
+ */
+export const markSearchAsViewed = async (id: number): Promise<SearchHistoryRecord> => {
+  const client = await getApiClient();
+  const response = await client.post<SearchHistoryRecord>(`/api/v1/search-history/${id}/viewed`);
+  return response.data;
+};
+
+/**
+ * Mark search as viewed by external ID
+ */
+export const markSearchAsViewedByExternalId = async (externalId: string): Promise<SearchHistoryRecord> => {
+  const client = await getApiClient();
+  const response = await client.post<SearchHistoryRecord>(`/api/v1/search-history/external/${externalId}/viewed`);
+  return response.data;
+};
+
+/**
+ * Update completion status
+ */
+export const updateSearchCompletionStatus = async (id: number, status: CompletionStatus): Promise<SearchHistoryRecord> => {
+  const client = await getApiClient();
+  const response = await client.put<SearchHistoryRecord>(`/api/v1/search-history/${id}/status`, { status });
+  return response.data;
+};
+
+/**
+ * Get searches by completion status
+ */
+export const getSearchesByCompletionStatus = async (
+  status: CompletionStatus,
+  page: number = 0,
+  size: number = 20
+): Promise<PageResponse<SearchHistoryRecord>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<SearchHistoryRecord>>(
+    `/api/v1/search-history/status/${status}`,
+    { params: { page, size } }
+  );
+  return response.data;
+};
+
+/**
+ * Get searches by project ID
+ */
+export const getSearchesByProject = async (
+  projectId: number,
+  page: number = 0,
+  size: number = 20
+): Promise<PageResponse<SearchHistoryRecord>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<SearchHistoryRecord>>(
+    `/api/v1/search-history/project/${projectId}`,
+    { params: { page, size } }
+  );
+  return response.data;
+};
+
+/**
+ * Get failed searches
+ */
+export const getFailedSearches = async (
+  daysBack: number = 7,
+  limit: number = 20
+): Promise<SearchHistoryRecord[]> => {
+  const client = await getApiClient();
+  const response = await client.get<SearchHistoryRecord[]>('/api/v1/search-history/failed', {
+    params: { daysBack, limit }
+  });
+  return response.data;
+};
+
+// ============================================
+// Project API
+// ============================================
+
+/**
+ * Project category
+ */
+export type ProjectCategory = 'RESEARCH' | 'MONITORING' | 'FACT_CHECK' | 'TREND_ANALYSIS' | 'CUSTOM';
+
+/**
+ * Project status
+ */
+export type ProjectStatus = 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'ARCHIVED';
+
+/**
+ * Project visibility
+ */
+export type ProjectVisibility = 'PRIVATE' | 'TEAM' | 'PUBLIC';
+
+/**
+ * Member role
+ */
+export type MemberRole = 'ADMIN' | 'EDITOR' | 'VIEWER';
+
+/**
+ * Member status
+ */
+export type MemberStatus = 'ACTIVE' | 'PENDING' | 'LEFT';
+
+/**
+ * Project settings
+ */
+export interface ProjectSettings {
+  autoCollect?: boolean;
+  collectInterval?: 'hourly' | 'daily' | 'weekly';
+  collectSources?: string[];
+  timeWindow?: string;
+  notifications?: {
+    newArticles?: boolean;
+    importantUpdates?: boolean;
+    weeklyDigest?: boolean;
+    emailEnabled?: boolean;
+    slackWebhook?: string;
+  };
+  aiAnalysis?: {
+    enabled?: boolean;
+    autoSummarize?: boolean;
+    sentimentTracking?: boolean;
+    trendDetection?: boolean;
+    factCheck?: boolean;
+  };
+}
+
+/**
+ * Project record
+ */
+export interface Project {
+  id: number;
+  name: string;
+  description?: string;
+  keywords?: string[];
+  category: ProjectCategory;
+  status: ProjectStatus;
+  visibility: ProjectVisibility;
+  ownerId: string;
+  color?: string;
+  icon?: string;
+  isDefault?: boolean;
+  settings?: ProjectSettings;
+  stats?: Record<string, unknown>;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt?: string;
+  lastActivityAt?: string;
+  lastCollectedAt?: string;
+}
+
+/**
+ * Project member
+ */
+export interface ProjectMember {
+  id: number;
+  projectId: number;
+  userId: string;
+  role: MemberRole;
+  status: MemberStatus;
+  invitedBy?: string;
+  inviteToken?: string;
+  inviteExpiresAt?: string;
+  permissions?: Record<string, boolean>;
+  joinedAt?: string;
+  lastActiveAt?: string;
+}
+
+/**
+ * Project item type
+ */
+export type ProjectItemType = 'ARTICLE' | 'SEARCH_RESULT' | 'NOTE' | 'DOCUMENT' | 'URL' | 'EVIDENCE';
+
+/**
+ * Project item
+ */
+export interface ProjectItem {
+  id: number;
+  projectId: number;
+  itemType: ProjectItemType;
+  title: string;
+  summary?: string;
+  url?: string;
+  imageUrl?: string;
+  sourceName?: string;
+  sourceId?: string;
+  sourceType?: string;
+  publishedAt?: string;
+  category?: string;
+  tags?: string[];
+  sentiment?: string;
+  importance?: number;
+  isRead?: boolean;
+  bookmarked?: boolean;
+  addedBy?: string;
+  addedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Project activity log
+ */
+export interface ProjectActivityLog {
+  id: number;
+  projectId: number;
+  userId: string;
+  activityType: string;
+  description: string;
+  entityType?: string;
+  entityId?: string;
+  details?: Record<string, unknown>;
+  createdAt: string;
+}
+
+/**
+ * Project notification
+ */
+export interface ProjectNotification {
+  id: number;
+  projectId: number;
+  userId: string;
+  notificationType: string;
+  title: string;
+  message?: string;
+  actionUrl?: string;
+  isRead: boolean;
+  readAt?: string;
+  createdAt: string;
+}
+
+/**
+ * Create project request
+ */
+export interface CreateProjectRequest {
+  name: string;
+  description?: string;
+  keywords?: string[];
+  category?: ProjectCategory;
+  visibility?: ProjectVisibility;
+  ownerId: string;
+  color?: string;
+  icon?: string;
+  isDefault?: boolean;
+  settings?: ProjectSettings;
+  tags?: string[];
+}
+
+/**
+ * Update project request
+ */
+export interface UpdateProjectRequest {
+  name?: string;
+  description?: string;
+  keywords?: string[];
+  category?: ProjectCategory;
+  visibility?: ProjectVisibility;
+  color?: string;
+  icon?: string;
+  settings?: ProjectSettings;
+  tags?: string[];
+}
+
+/**
+ * Add project item request
+ */
+export interface AddProjectItemRequest {
+  itemType: ProjectItemType;
+  title: string;
+  summary?: string;
+  url?: string;
+  imageUrl?: string;
+  sourceName?: string;
+  sourceId?: string;
+  sourceType?: string;
+  publishedAt?: string;
+  category?: string;
+  tags?: string[];
+  sentiment?: string;
+  importance?: number;
+  metadata?: Record<string, unknown>;
+}
+
+// ============ Project CRUD ============
+
+/**
+ * Create a new project
+ */
+export const createProject = async (request: CreateProjectRequest): Promise<Project> => {
+  const client = await getApiClient();
+  const response = await client.post<Project>('/api/v1/projects', request);
+  return response.data;
+};
+
+/**
+ * Get project by ID
+ */
+export const getProject = async (id: number, userId?: string): Promise<Project> => {
+  const client = await getApiClient();
+  const params = userId ? { userId } : {};
+  const response = await client.get<Project>(`/api/v1/projects/${id}`, { params });
+  return response.data;
+};
+
+/**
+ * Update project
+ */
+export const updateProject = async (id: number, request: UpdateProjectRequest, userId: string): Promise<Project> => {
+  const client = await getApiClient();
+  const response = await client.put<Project>(`/api/v1/projects/${id}`, request, { params: { userId } });
+  return response.data;
+};
+
+/**
+ * Update project status
+ */
+export const updateProjectStatus = async (id: number, status: ProjectStatus, userId: string): Promise<Project> => {
+  const client = await getApiClient();
+  const response = await client.put<Project>(`/api/v1/projects/${id}/status`, { status }, { params: { userId } });
+  return response.data;
+};
+
+/**
+ * Delete project
+ */
+export const deleteProject = async (id: number, userId: string): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete(`/api/v1/projects/${id}`, { params: { userId } });
+};
+
+/**
+ * Get projects by owner
+ */
+export const getProjectsByOwner = async (
+  ownerId: string,
+  status?: ProjectStatus,
+  page: number = 0,
+  size: number = 20
+): Promise<PageResponse<Project>> => {
+  const client = await getApiClient();
+  const params: Record<string, string | number> = { ownerId, page, size };
+  if (status) params.status = status;
+  const response = await client.get<PageResponse<Project>>('/api/v1/projects', { params });
+  return response.data;
+};
+
+/**
+ * Search projects
+ */
+export const searchProjects = async (
+  q: string,
+  page: number = 0,
+  size: number = 20
+): Promise<PageResponse<Project>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<Project>>('/api/v1/projects/search', { params: { q, page, size } });
+  return response.data;
+};
+
+/**
+ * Get or create default project
+ */
+export const getDefaultProject = async (userId: string): Promise<Project> => {
+  const client = await getApiClient();
+  const response = await client.get<Project>('/api/v1/projects/default', { params: { userId } });
+  return response.data;
+};
+
+/**
+ * Get project statistics
+ */
+export const getProjectStats = async (id: number): Promise<{
+  itemCount: number;
+  unreadCount: number;
+  memberCount: number;
+  categories: string[];
+}> => {
+  const client = await getApiClient();
+  const response = await client.get(`/api/v1/projects/${id}/stats`);
+  return response.data;
+};
+
+// ============ Project Members ============
+
+/**
+ * Get project members
+ */
+export const getProjectMembers = async (projectId: number): Promise<ProjectMember[]> => {
+  const client = await getApiClient();
+  const response = await client.get<ProjectMember[]>(`/api/v1/projects/${projectId}/members`);
+  return response.data;
+};
+
+/**
+ * Get active members
+ */
+export const getActiveProjectMembers = async (projectId: number): Promise<ProjectMember[]> => {
+  const client = await getApiClient();
+  const response = await client.get<ProjectMember[]>(`/api/v1/projects/${projectId}/members/active`);
+  return response.data;
+};
+
+/**
+ * Invite member
+ */
+export const inviteProjectMember = async (
+  projectId: number,
+  userId: string,
+  role: MemberRole,
+  invitedBy: string
+): Promise<ProjectMember> => {
+  const client = await getApiClient();
+  const response = await client.post<ProjectMember>(
+    `/api/v1/projects/${projectId}/members/invite`,
+    { userId, role },
+    { params: { invitedBy } }
+  );
+  return response.data;
+};
+
+/**
+ * Accept invitation
+ */
+export const acceptProjectInvitation = async (token: string, userId: string): Promise<ProjectMember> => {
+  const client = await getApiClient();
+  const response = await client.post<ProjectMember>(
+    `/api/v1/projects/invitations/${token}/accept`,
+    null,
+    { params: { userId } }
+  );
+  return response.data;
+};
+
+/**
+ * Remove member
+ */
+export const removeProjectMember = async (projectId: number, userId: string, removedBy: string): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete(`/api/v1/projects/${projectId}/members/${userId}`, { params: { removedBy } });
+};
+
+/**
+ * Update member role
+ */
+export const updateProjectMemberRole = async (
+  projectId: number,
+  userId: string,
+  role: MemberRole,
+  updatedBy: string
+): Promise<ProjectMember> => {
+  const client = await getApiClient();
+  const response = await client.put<ProjectMember>(
+    `/api/v1/projects/${projectId}/members/${userId}/role`,
+    { role },
+    { params: { updatedBy } }
+  );
+  return response.data;
+};
+
+// ============ Project Items ============
+
+/**
+ * Add item to project
+ */
+export const addProjectItem = async (
+  projectId: number,
+  request: AddProjectItemRequest,
+  userId: string
+): Promise<ProjectItem> => {
+  const client = await getApiClient();
+  const response = await client.post<ProjectItem>(
+    `/api/v1/projects/${projectId}/items`,
+    request,
+    { params: { userId } }
+  );
+  return response.data;
+};
+
+/**
+ * Get project items
+ */
+export const getProjectItems = async (
+  projectId: number,
+  type?: ProjectItemType,
+  page: number = 0,
+  size: number = 20
+): Promise<PageResponse<ProjectItem>> => {
+  const client = await getApiClient();
+  const params: Record<string, string | number> = { page, size };
+  if (type) params.type = type;
+  const response = await client.get<PageResponse<ProjectItem>>(`/api/v1/projects/${projectId}/items`, { params });
+  return response.data;
+};
+
+/**
+ * Search project items
+ */
+export const searchProjectItems = async (
+  projectId: number,
+  q: string,
+  page: number = 0,
+  size: number = 20
+): Promise<PageResponse<ProjectItem>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<ProjectItem>>(
+    `/api/v1/projects/${projectId}/items/search`,
+    { params: { q, page, size } }
+  );
+  return response.data;
+};
+
+/**
+ * Mark item as read
+ */
+export const markProjectItemAsRead = async (projectId: number, itemId: number, userId: string): Promise<void> => {
+  const client = await getApiClient();
+  await client.post(`/api/v1/projects/${projectId}/items/${itemId}/read`, null, { params: { userId } });
+};
+
+/**
+ * Toggle item bookmark
+ */
+export const toggleProjectItemBookmark = async (projectId: number, itemId: number, userId: string): Promise<void> => {
+  const client = await getApiClient();
+  await client.post(`/api/v1/projects/${projectId}/items/${itemId}/bookmark`, null, { params: { userId } });
+};
+
+/**
+ * Delete item
+ */
+export const deleteProjectItem = async (projectId: number, itemId: number, userId: string): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete(`/api/v1/projects/${projectId}/items/${itemId}`, { params: { userId } });
+};
+
+// ============ Project Activities ============
+
+/**
+ * Get project activity log
+ */
+export const getProjectActivityLog = async (
+  projectId: number,
+  page: number = 0,
+  size: number = 20
+): Promise<PageResponse<ProjectActivityLog>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<ProjectActivityLog>>(
+    `/api/v1/projects/${projectId}/activities`,
+    { params: { page, size } }
+  );
+  return response.data;
+};
+
+/**
+ * Get recent activity
+ */
+export const getRecentProjectActivity = async (projectId: number): Promise<ProjectActivityLog[]> => {
+  const client = await getApiClient();
+  const response = await client.get<ProjectActivityLog[]>(`/api/v1/projects/${projectId}/activities/recent`);
+  return response.data;
+};
+
+// ============ Project Notifications ============
+
+/**
+ * Get user notifications
+ */
+export const getProjectNotifications = async (
+  userId: string,
+  page: number = 0,
+  size: number = 20
+): Promise<PageResponse<ProjectNotification>> => {
+  const client = await getApiClient();
+  const response = await client.get<PageResponse<ProjectNotification>>(
+    '/api/v1/projects/notifications',
+    { params: { userId, page, size } }
+  );
+  return response.data;
+};
+
+/**
+ * Get unread notifications
+ */
+export const getUnreadProjectNotifications = async (userId: string): Promise<ProjectNotification[]> => {
+  const client = await getApiClient();
+  const response = await client.get<ProjectNotification[]>('/api/v1/projects/notifications/unread', {
+    params: { userId }
+  });
+  return response.data;
+};
+
+/**
+ * Mark notification as read
+ */
+export const markProjectNotificationAsRead = async (notificationId: number): Promise<void> => {
+  const client = await getApiClient();
+  await client.post(`/api/v1/projects/notifications/${notificationId}/read`);
+};
+
+/**
+ * Mark all notifications as read
+ */
+export const markAllProjectNotificationsAsRead = async (userId: string): Promise<void> => {
+  const client = await getApiClient();
+  await client.post('/api/v1/projects/notifications/read-all', null, { params: { userId } });
+};
+
+/**
+ * Check project service health
+ */
+export const checkProjectServiceHealth = async (): Promise<{
+  status: string;
+  features: Record<string, boolean>;
+}> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/projects/health');
+  return response.data;
+};
+
+// ============================================
+// LLM Provider Settings API
+// Backend: /api/v1/llm-providers, /api/v1/admin/llm-providers
+// ============================================
+
+import type {
+  LlmProviderType as LlmProviderTypeEnum,
+  LlmProviderTypeInfo,
+  LlmProviderSettings,
+  LlmProviderSettingsRequest,
+  LlmTestResult,
+} from '@/types/api';
+
+/**
+ * 지원하는 LLM Provider 타입 목록 조회
+ */
+export const getLlmProviderTypes = async (): Promise<LlmProviderTypeInfo[]> => {
+  const client = await getApiClient();
+  const response = await client.get<LlmProviderTypeInfo[]>('/api/v1/llm-providers/types');
+  return response.data;
+};
+
+// ========== 관리자 전역 설정 API ==========
+
+/**
+ * 모든 전역(관리자) LLM 설정 조회
+ */
+export const getGlobalLlmSettings = async (): Promise<LlmProviderSettings[]> => {
+  const client = await getApiClient();
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/admin/llm-providers');
+  return response.data;
+};
+
+/**
+ * 특정 Provider의 전역 설정 조회
+ */
+export const getGlobalLlmSetting = async (providerType: LlmProviderTypeEnum): Promise<LlmProviderSettings | null> => {
+  const client = await getApiClient();
+  try {
+    const response = await client.get<LlmProviderSettings>(`/api/v1/admin/llm-providers/${providerType}`);
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+};
+
+/**
+ * 전역(관리자) LLM 설정 저장/수정
+ */
+export const saveGlobalLlmSetting = async (request: LlmProviderSettingsRequest): Promise<LlmProviderSettings> => {
+  const client = await getApiClient();
+  const response = await client.put<LlmProviderSettings>('/api/v1/admin/llm-providers', request);
+  return response.data;
+};
+
+/**
+ * 전역(관리자) LLM 설정 삭제
+ */
+export const deleteGlobalLlmSetting = async (providerType: LlmProviderTypeEnum): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete(`/api/v1/admin/llm-providers/${providerType}`);
+};
+
+/**
+ * 전역 설정 연결 테스트
+ */
+export const testGlobalLlmConnection = async (id: number): Promise<LlmTestResult> => {
+  const client = await getApiClient();
+  const response = await client.post<LlmTestResult>(`/api/v1/admin/llm-providers/${id}/test`);
+  return response.data;
+};
+
+/**
+ * 전역 설정 활성화/비활성화
+ */
+export const toggleGlobalLlmSetting = async (id: number, enabled: boolean): Promise<void> => {
+  const client = await getApiClient();
+  await client.post(`/api/v1/admin/llm-providers/${id}/toggle`, null, { params: { enabled } });
+};
+
+// ========== 사용자별 설정 API ==========
+
+/**
+ * 현재 사용자에게 유효한 모든 LLM 설정 조회 (사용자 설정 > 전역 설정)
+ */
+export const getEffectiveLlmSettings = async (userId?: string): Promise<LlmProviderSettings[]> => {
+  const client = await getApiClient();
+  const headers: Record<string, string> = {};
+  if (userId) headers['X-User-Id'] = userId;
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/llm-providers/effective', { headers });
+  return response.data;
+};
+
+/**
+ * 활성화된 Provider 목록 (Fallback 체인용)
+ */
+export const getEnabledLlmProviders = async (userId?: string): Promise<LlmProviderSettings[]> => {
+  const client = await getApiClient();
+  const headers: Record<string, string> = {};
+  if (userId) headers['X-User-Id'] = userId;
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/llm-providers/enabled', { headers });
+  return response.data;
+};
+
+/**
+ * 특정 Provider의 유효 설정 조회
+ */
+export const getEffectiveLlmSetting = async (
+  providerType: LlmProviderTypeEnum,
+  userId?: string
+): Promise<LlmProviderSettings | null> => {
+  const client = await getApiClient();
+  const headers: Record<string, string> = {};
+  if (userId) headers['X-User-Id'] = userId;
+  try {
+    const response = await client.get<LlmProviderSettings>(
+      `/api/v1/llm-providers/config/${providerType}`,
+      { headers }
+    );
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+};
+
+/**
+ * 사용자의 개인 LLM 설정만 조회
+ */
+export const getUserLlmSettings = async (userId: string): Promise<LlmProviderSettings[]> => {
+  const client = await getApiClient();
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/llm-providers/user', {
+    headers: { 'X-User-Id': userId },
+  });
+  return response.data;
+};
+
+/**
+ * 사용자 LLM 설정 저장/수정
+ */
+export const saveUserLlmSetting = async (
+  userId: string,
+  request: LlmProviderSettingsRequest
+): Promise<LlmProviderSettings> => {
+  const client = await getApiClient();
+  const response = await client.put<LlmProviderSettings>('/api/v1/llm-providers/user', request, {
+    headers: { 'X-User-Id': userId },
+  });
+  return response.data;
+};
+
+/**
+ * 사용자 LLM 설정 삭제 (전역 설정으로 폴백)
+ */
+export const deleteUserLlmSetting = async (userId: string, providerType: LlmProviderTypeEnum): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete(`/api/v1/llm-providers/user/${providerType}`, {
+    headers: { 'X-User-Id': userId },
+  });
+};
+
+/**
+ * 사용자의 모든 개인 설정 삭제
+ */
+export const deleteAllUserLlmSettings = async (userId: string): Promise<void> => {
+  const client = await getApiClient();
+  await client.delete('/api/v1/llm-providers/user', {
+    headers: { 'X-User-Id': userId },
+  });
+};
+
+/**
+ * 사용자 설정 연결 테스트
+ */
+export const testUserLlmConnection = async (id: number): Promise<LlmTestResult> => {
+  const client = await getApiClient();
+  const response = await client.post<LlmTestResult>(`/api/v1/llm-providers/user/${id}/test`);
+  return response.data;
+};
+
+/**
+ * 새 설정으로 연결 테스트 (저장 전)
+ */
+export const testNewLlmConnection = async (request: LlmProviderSettingsRequest): Promise<LlmTestResult> => {
+  const client = await getApiClient();
+  const response = await client.post<LlmTestResult>('/api/v1/llm-providers/test', request);
   return response.data;
 };

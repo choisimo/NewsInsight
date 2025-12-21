@@ -1,13 +1,14 @@
 """
 Auth Router - 인증/권한 API 엔드포인트
 """
+
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
-from ..models.schemas import AuditAction, Token, User, UserCreate, UserRole
+from ..models.schemas import AuditAction, Token, User, UserCreate, UserRole, SetupStatus
 from ..dependencies import (
     get_audit_service,
     get_auth_service,
@@ -293,3 +294,20 @@ async def delete_user(
         resource_id=user_id,
         resource_name=user.username,
     )
+
+
+# ============================================================================
+# Setup Status (Public - no auth required)
+# ============================================================================
+@router.get("/setup-status", response_model=SetupStatus)
+async def get_setup_status(
+    auth_service=Depends(get_auth_service),
+):
+    """초기 설정 상태 확인 (인증 불필요)
+
+    시스템이 초기 설정이 필요한 상태인지 확인합니다.
+    - setup_required: 초기 설정이 필요한지 여부
+    - has_users: 사용자가 존재하는지 여부
+    - is_default_admin: 기본 관리자 계정(admin/admin123)을 사용 중인지 여부
+    """
+    return auth_service.get_setup_status()

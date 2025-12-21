@@ -15,7 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 소스 코드 복사
 COPY api/ ./api/
-COPY config/ ./config/
+
+# config 디렉토리 생성 (런타임에 볼륨으로 마운트됨)
+RUN mkdir -p ./config
 
 # 환경 변수
 ENV PYTHONUNBUFFERED=1

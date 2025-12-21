@@ -5,8 +5,9 @@
  * - HeroSearchBar: 중앙 대형 검색창
  * - ContinueCard: 이어하기 카드
  * - QuickActionCards: 빠른 액션 (심층분석, 팩트체크, URL분석)
- * - 사이드: TrendingTopics, RecentSearches, UsageStreak
- * - 하단: DailyInsightCard, RecommendedTemplates
+ * - RecentActivities: 최근 활동 내역 (페이지네이션)
+ * - 사이드: TrendingTopics, UsageStreak
+ * - 하단: RecommendedTemplates
  */
 
 import { useEffect, useState } from 'react';
@@ -16,9 +17,8 @@ import {
   ContinueCard,
   QuickActionCards,
   TrendingTopicsCompact,
-  RecentSearchesCompact,
+  RecentActivities,
   RecommendedTemplates,
-  DailyInsightCard,
   UsageStreakCard,
 } from '@/components/home';
 import { useUsageStreak } from '@/hooks/useUsageStreak';
@@ -39,28 +39,6 @@ export function NewHome() {
   
   // 트렌딩 토픽이 없으면 개인화 토픽 사용
   const displayTopics = trending.length > 0 ? trending : recommended;
-
-  // 검색 기록 (localStorage에서)
-  const [recentSearches] = useState<any[]>(() => {
-    try {
-      const stored = localStorage.getItem('newsinsight_recent_searches');
-      const raw = stored ? JSON.parse(stored) : [];
-      if (!Array.isArray(raw)) return [];
-
-      const now = new Date().toISOString();
-      return raw
-        .filter((q) => typeof q === 'string' && q.trim())
-        .slice(0, 20)
-        .map((q, idx) => ({
-          id: idx + 1,
-          query: q,
-          searchType: 'UNIFIED',
-          createdAt: now,
-        }));
-    } catch {
-      return [];
-    }
-  });
 
   // 트렌드 클릭
   const handleTrendingClick = (keyword: string) => {
@@ -133,8 +111,12 @@ export function NewHome() {
               {/* 빠른 액션 카드들 */}
               <QuickActionCards />
 
-              {/* 오늘의 논쟁 이슈 */}
-              <DailyInsightCard />
+              {/* 최근 활동 내역 - 백엔드 API에서 가져옴 */}
+              <RecentActivities 
+                pageSize={5}
+                showFilters={true}
+                showHeader={true}
+              />
 
               {/* 추천 템플릿 */}
               <RecommendedTemplates
@@ -177,14 +159,6 @@ export function NewHome() {
                   )}
                 </CardContent>
               </Card>
-
-              {/* 최근 검색 */}
-              {recentSearches.length > 0 && (
-                <RecentSearchesCompact
-                  searches={recentSearches}
-                  maxItems={5}
-                />
-              )}
             </div>
           </div>
         </div>

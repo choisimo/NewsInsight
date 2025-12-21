@@ -24,8 +24,11 @@ import {
   BookmarkPlus,
   Maximize2,
   FileText,
+  Printer,
 } from "lucide-react";
 import { ExportButton } from "@/components/ExportButton";
+import { ReportExportButton } from "@/components/ReportExportButton";
+import { AnalysisExportMenu } from "@/components/AnalysisExportMenu";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -43,11 +46,12 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { AnalysisBadges, type AnalysisData } from "@/components/AnalysisBadges";
-import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+import { EnhancedMarkdownRenderer } from "@/components/EnhancedMarkdownRenderer";
 import { useUrlCollection } from "@/hooks/useUrlCollection";
 import { useAutoSaveSearch } from "@/hooks/useSearchHistory";
 import { SearchInputWithSuggestions } from "@/components/SearchInputWithSuggestions";
 import { AdvancedFilters, defaultFilters, type SearchFilters } from "@/components/AdvancedFilters";
+import { useLiveRegion } from "@/hooks/useAccessibility";
 import {
   openUnifiedSearchStream,
   checkUnifiedSearchHealth,
@@ -214,9 +218,11 @@ interface AIStreamCardProps {
   onSave?: () => void;
   isSaved?: boolean;
   evidence?: UnifiedSearchResult[];
+  jobId?: string;
+  query?: string;
 }
 
-const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence = [] }: AIStreamCardProps) => {
+const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence = [], jobId, query = '' }: AIStreamCardProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isFullViewOpen, setIsFullViewOpen] = useState(false);
   const [showFullContent, setShowFullContent] = useState(false);
@@ -245,6 +251,16 @@ const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence =
               )}
             </div>
             <div className="flex items-center gap-2">
+              {/* Export Menu */}
+              {isComplete && content && (
+                <AnalysisExportMenu
+                  content={content}
+                  query={query}
+                  jobId={jobId}
+                  size="sm"
+                  variant="outline"
+                />
+              )}
               {/* Full View Button */}
               {isComplete && (
                 <Dialog open={isFullViewOpen} onOpenChange={setIsFullViewOpen}>
@@ -254,36 +270,56 @@ const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence =
                       전체보기
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-                    <DialogHeader>
-                      <DialogTitle className="flex items-center gap-2">
-                        <Brain className="h-5 w-5 text-purple-600" />
-                        AI 분석 전체보기
-                      </DialogTitle>
+                  <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+                    <DialogHeader className="flex-shrink-0">
+                      <div className="flex items-center justify-between">
+                        <DialogTitle className="flex items-center gap-2">
+                          <Brain className="h-5 w-5 text-purple-600" />
+                          AI 분석 보고서
+                        </DialogTitle>
+                        <div className="flex items-center gap-2 mr-8">
+                          <AnalysisExportMenu
+                            content={content}
+                            query={query}
+                            jobId={jobId}
+                            size="sm"
+                            variant="default"
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => window.print()}
+                            className="gap-1"
+                          >
+                            <Printer className="h-4 w-4" />
+                            인쇄
+                          </Button>
+                        </div>
+                      </div>
                       <DialogDescription>
-                        AI 분석 결과와 참조된 모든 소스를 확인할 수 있습니다.
+                        "{query}" 검색에 대한 AI 분석 결과입니다. 내보내기 버튼으로 PDF, Markdown, HTML 형식으로 저장할 수 있습니다.
                       </DialogDescription>
                     </DialogHeader>
-                    <div className="flex-1 overflow-y-auto space-y-6 pr-2">
+                    <div className="flex-1 overflow-y-auto space-y-6 pr-2 mt-4">
                       {/* AI Analysis Content */}
-                      <div>
+                      <div className="print:break-inside-avoid">
                         <h3 className="font-semibold mb-3 flex items-center gap-2 text-purple-700 dark:text-purple-300">
                           <FileText className="h-4 w-4" />
                           분석 내용
                         </h3>
-                        <div className="bg-white/70 dark:bg-black/30 p-4 rounded-lg border">
-                          <MarkdownRenderer content={content} isStreaming={false} />
+                        <div className="bg-white/70 dark:bg-black/30 p-6 rounded-xl border shadow-sm">
+                          <EnhancedMarkdownRenderer content={content} isStreaming={false} variant="report" />
                         </div>
                       </div>
                       
                       {/* Evidence / Source URLs */}
                       {validEvidence.length > 0 && (
-                        <div>
+                        <div className="print:break-inside-avoid">
                           <h3 className="font-semibold mb-3 flex items-center gap-2 text-blue-700 dark:text-blue-300">
                             <Globe className="h-4 w-4" />
                             참조 소스 ({validEvidence.length}개)
                           </h3>
-                          <ScrollArea className="h-[300px]">
+                          <ScrollArea className="h-[300px] print:h-auto">
                             <div className="space-y-3 pr-4">
                               {validEvidence.map((item, index) => {
                                 const sourceConfig = SOURCE_CONFIG[item.source];
@@ -318,7 +354,7 @@ const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence =
                                           href={item.url}
                                           target="_blank"
                                           rel="noopener noreferrer"
-                                          className="shrink-0 p-2 rounded-md hover:bg-muted transition-colors"
+                                          className="shrink-0 p-2 rounded-md hover:bg-muted transition-colors print:hidden"
                                           title="원문 보기"
                                         >
                                           <ExternalLink className="h-4 w-4" />
@@ -379,7 +415,7 @@ const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence =
               {isLongContent && !showFullContent && isComplete ? (
                 <>
                   <div className="max-h-[400px] overflow-hidden relative">
-                    <MarkdownRenderer content={content} isStreaming={false} />
+                    <EnhancedMarkdownRenderer content={content} isStreaming={false} variant="compact" />
                     {/* Gradient fade at bottom */}
                     <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-white/90 dark:from-black/40 to-transparent pointer-events-none" />
                   </div>
@@ -395,7 +431,7 @@ const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence =
                 </>
               ) : (
                 <>
-                  <MarkdownRenderer content={content} isStreaming={!isComplete} />
+                  <EnhancedMarkdownRenderer content={content} isStreaming={!isComplete} />
                   {isLongContent && showFullContent && isComplete && (
                     <Button
                       variant="ghost"
@@ -566,6 +602,9 @@ const ParallelSearch = () => {
   const location = useLocation();
   const { addUrl, addFolder, collection, urlExists } = useUrlCollection();
   const { saveUnifiedSearch, saveFailedSearch } = useAutoSaveSearch();
+  
+  // Accessibility: Live region for screen reader announcements
+  const { announce, LiveRegion } = useLiveRegion();
   
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<SearchFilters>(defaultFilters);
@@ -1103,9 +1142,13 @@ const ParallelSearch = () => {
         // Clear stored job since it's complete
         sessionStorage.removeItem("parallelSearch_currentJobId");
         
+        // Announce completion for screen readers
+        const resultCount = data.totalResults || results.length;
+        announce(`검색 완료. ${resultCount}개의 결과를 찾았습니다.`, "polite");
+        
         toast({
           title: "검색 완료",
-          description: `${data.totalResults || results.length}개의 결과를 찾았습니다.`,
+          description: `${resultCount}개의 결과를 찾았습니다.`,
         });
       } catch (e) {
         console.error("Failed to parse done event:", e);
@@ -1124,6 +1167,9 @@ const ParallelSearch = () => {
         eventSourceRef.current = null;
         
         sessionStorage.removeItem("parallelSearch_currentJobId");
+        
+        // Announce error for screen readers
+        announce(`검색 오류가 발생했습니다. ${data.error || "다시 시도해주세요."}`, "assertive");
         
         toast({
           title: "검색 오류",
@@ -1213,6 +1259,10 @@ const ParallelSearch = () => {
       });
       
       setConnectionStatus("connected");
+      
+      // Announce search start for screen readers
+      announce(`"${effectiveQuery}" 검색을 시작합니다. 데이터베이스, 웹, AI에서 동시에 검색 중입니다.`, "polite");
+      
       toast({
         title: "검색 시작",
         description: `검색 Job이 생성되었습니다. (${job.jobId.substring(0, 8)}...)`,
@@ -1279,6 +1329,9 @@ const ParallelSearch = () => {
 
   return (
     <div className="min-h-screen py-8">
+      {/* Live Region for screen reader announcements */}
+      <LiveRegion />
+      
       <div className="container mx-auto px-4 max-w-6xl">
         {/* Header */}
         <header className="mb-8 text-center">
@@ -1492,6 +1545,8 @@ const ParallelSearch = () => {
                 onSave={handleSaveAnalysis}
                 isSaved={isAnalysisSaved}
                 evidence={results}
+                jobId={currentJobId || undefined}
+                query={query}
               />
             )}
 
@@ -1505,32 +1560,43 @@ const ParallelSearch = () => {
                       '{query}'에 대한 검색 결과입니다.
                     </CardDescription>
                   </div>
-                  <ExportButton
-                    data={results.map(r => ({
-                      id: r.id,
-                      title: r.title,
-                      snippet: r.snippet,
-                      content: r.content,
-                      url: r.url,
-                      source: r.source,
-                      publishedAt: r.publishedAt,
-                      reliabilityScore: r.reliabilityScore,
-                      sentimentLabel: r.sentimentLabel,
-                    }))}
-                    options={{
-                      filename: `newsinsight-search-${query.replace(/\s+/g, '-')}`,
-                      title: `"${query}" 검색 결과`,
-                      metadata: {
-                        검색어: query,
-                        총결과: results.length,
-                        DB결과: sourceStatus.database.count,
-                        웹결과: sourceStatus.web.count,
-                        AI분석: aiContent ? '포함됨' : '없음',
-                        ...(aiContent && { AI분석내용: aiContent }),
-                      },
-                    }}
-                    disabled={results.length === 0}
-                  />
+                  <div className="flex items-center gap-2">
+                    <ReportExportButton
+                      jobId={currentJobId || ''}
+                      query={query}
+                      timeWindow="7d"
+                      reportType="UNIFIED_SEARCH"
+                      variant="outline"
+                      size="default"
+                      disabled={!currentJobId || results.length === 0}
+                    />
+                    <ExportButton
+                      data={results.map(r => ({
+                        id: r.id,
+                        title: r.title,
+                        snippet: r.snippet,
+                        content: r.content,
+                        url: r.url,
+                        source: r.source,
+                        publishedAt: r.publishedAt,
+                        reliabilityScore: r.reliabilityScore,
+                        sentimentLabel: r.sentimentLabel,
+                      }))}
+                      options={{
+                        filename: `newsinsight-search-${query.replace(/\s+/g, '-')}`,
+                        title: `"${query}" 검색 결과`,
+                        metadata: {
+                          검색어: query,
+                          총결과: results.length,
+                          DB결과: sourceStatus.database.count,
+                          웹결과: sourceStatus.web.count,
+                          AI분석: aiContent ? '포함됨' : '없음',
+                          ...(aiContent && { AI분석내용: aiContent }),
+                        },
+                      }}
+                      disabled={results.length === 0}
+                    />
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>

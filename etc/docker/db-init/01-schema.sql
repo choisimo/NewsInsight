@@ -74,6 +74,47 @@ CREATE INDEX IF NOT EXISTS idx_collected_data_content_hash ON collected_data (co
 CREATE INDEX IF NOT EXISTS idx_collected_data_processed ON collected_data (processed);
 CREATE INDEX IF NOT EXISTS idx_collected_data_collected_at ON collected_data (collected_at);
 
+-- ============================================
+-- Full-Text Search Support for collected_data
+-- Uses 'simple' configuration for better Korean text handling
+-- ============================================
+
+-- Add tsvector column for full-text search
+ALTER TABLE collected_data ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
+
+-- GIN index for fast full-text search
+CREATE INDEX IF NOT EXISTS idx_collected_data_fts ON collected_data USING GIN(search_vector);
+
+-- Composite index for date-filtered FTS queries
+CREATE INDEX IF NOT EXISTS idx_collected_data_fts_date ON collected_data (published_date, collected_at) 
+    WHERE search_vector IS NOT NULL;
+
+-- Trigger function to update search_vector on INSERT/UPDATE
+CREATE OR REPLACE FUNCTION update_collected_data_search_vector()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Use 'simple' config for Korean (no stemming, just tokenization)
+    -- Weight 'A' for title (more important), 'B' for content
+    NEW.search_vector := 
+        setweight(to_tsvector('simple', COALESCE(NEW.title, '')), 'A') ||
+        setweight(to_tsvector('simple', COALESCE(LEFT(NEW.content, 10000), '')), 'B');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create trigger for auto-updating search_vector
+DROP TRIGGER IF EXISTS trg_collected_data_search_vector ON collected_data;
+CREATE TRIGGER trg_collected_data_search_vector
+    BEFORE INSERT OR UPDATE OF title, content ON collected_data
+    FOR EACH ROW EXECUTE FUNCTION update_collected_data_search_vector();
+
+-- Backfill existing data (runs on schema init)
+-- This updates rows where search_vector is NULL
+UPDATE collected_data SET search_vector = 
+    setweight(to_tsvector('simple', COALESCE(title, '')), 'A') ||
+    setweight(to_tsvector('simple', COALESCE(LEFT(content, 10000), '')), 'B')
+WHERE search_vector IS NULL;
+
 -- Seed data sources (optional example records)
 INSERT INTO data_sources (name, url, source_type, is_active, collection_frequency)
 VALUES
@@ -241,7 +282,7 @@ CREATE INDEX IF NOT EXISTS idx_addon_invoke_type ON ml_addon (invoke_type);
 -- Ensure addon category values
 ALTER TABLE ml_addon
     ADD CONSTRAINT ml_addon_category_check
-    CHECK (category IN ('SENTIMENT', 'FACTCHECK', 'BIAS', 'SUMMARIZATION', 'NER', 'TOPIC', 'TOXICITY', 'DISCUSSION', 'BOT_DETECTION', 'CUSTOM'));
+    CHECK (category IN ('SENTIMENT', 'FACTCHECK', 'BIAS', 'SUMMARIZATION', 'NER', 'TOPIC', 'TOXICITY', 'DISCUSSION', 'BOT_DETECTION', 'SOURCE_QUALITY', 'TOPIC_CLASSIFICATION', 'CUSTOM'));
 
 -- Ensure addon invoke type values
 ALTER TABLE ml_addon

@@ -19,6 +19,7 @@ import {
   Brain,
   Database,
   Gauge,
+  CheckCircle,
 } from "lucide-react";
 import { useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -77,6 +78,12 @@ export function Sidebar({ className }: SidebarProps) {
       title: "ML Add-ons",
       href: "/ml-addons",
       icon: Layers,
+      variant: "ghost",
+    },
+    {
+      title: "Fact Check",
+      href: "/factcheck",
+      icon: CheckCircle,
       variant: "ghost",
     },
     {

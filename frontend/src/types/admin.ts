@@ -1,7 +1,7 @@
 export type EnvironmentType = 'zerotrust' | 'local' | 'gcp' | 'aws' | 'production' | 'staging';
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export type TaskStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
-export type UserRole = 'viewer' | 'operator' | 'admin';
+export type UserRole = 'user' | 'viewer' | 'operator' | 'admin';
 export type ServiceStatus = 'up' | 'down' | 'starting' | 'stopping' | 'unknown';
 export type DocumentCategory = 'deployment' | 'troubleshooting' | 'architecture' | 'runbook' | 'general';
 export type AuditAction = 'login' | 'logout' | 'view' | 'create' | 'update' | 'delete' | 'execute' | 'deploy' | 'rollback';
@@ -118,6 +118,13 @@ export interface User {
   is_active: boolean;
   created_at: string;
   last_login?: string;
+  password_change_required?: boolean;
+}
+
+export interface SetupStatus {
+  setup_required: boolean;
+  has_users: boolean;
+  is_default_admin: boolean;
 }
 
 export interface Token {

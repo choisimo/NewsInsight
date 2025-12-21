@@ -53,6 +53,23 @@ public class DataSource {
     private String metadataJson;
 
     /**
+     * Search URL template for web search sources.
+     * Use {query} as placeholder for the encoded search query.
+     * Example: "https://search.naver.com/search.naver?where=news&query={query}"
+     * Only applicable when sourceType = WEB_SEARCH.
+     */
+    @Column(name = "search_url_template", columnDefinition = "TEXT")
+    private String searchUrlTemplate;
+
+    /**
+     * Priority for web search sources (lower = higher priority).
+     * Used for ordering when selecting search sources.
+     */
+    @Column(name = "search_priority")
+    @Builder.Default
+    private Integer searchPriority = 100;
+
+    /**
      * Browser agent configuration.
      * Only applicable when sourceType = BROWSER_AGENT.
      */
@@ -85,5 +102,25 @@ public class DataSource {
             return BrowserAgentConfig.forNewsExploration();
         }
         return null;
+    }
+
+    /**
+     * Check if this source supports web search.
+     */
+    public boolean supportsWebSearch() {
+        return sourceType == SourceType.WEB_SEARCH && searchUrlTemplate != null && !searchUrlTemplate.isBlank();
+    }
+
+    /**
+     * Generate search URL from template with the given query.
+     * 
+     * @param encodedQuery URL-encoded search query
+     * @return Generated search URL or null if template is not set
+     */
+    public String buildSearchUrl(String encodedQuery) {
+        if (searchUrlTemplate == null || searchUrlTemplate.isBlank()) {
+            return null;
+        }
+        return searchUrlTemplate.replace("{query}", encodedQuery);
     }
 }

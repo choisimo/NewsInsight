@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -57,6 +57,7 @@ function formatDuration(start: string | null, end: string | null): string {
 export default function Operations() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('sources');
+  const autoStartTriggered = useRef(false);
 
   // 실시간 이벤트 스트림
   const { activityLogs, status: streamStatus, clearLogs } = useDashboardEvents({
@@ -141,6 +142,30 @@ export default function Operations() {
       toast.error(e instanceof Error ? e.message : '작업 취소 실패');
     },
   });
+
+  // 초기 로드 시 자동으로 전체 수집 시작
+  useEffect(() => {
+    // 이미 자동 시작이 트리거되었으면 무시
+    if (autoStartTriggered.current) return;
+    
+    // 소스 데이터가 로드되지 않았거나 작업 데이터가 로드되지 않았으면 대기
+    if (!sourcesData || !jobsData) return;
+    
+    // 활성화된 소스가 있는지 확인
+    const activeSources = sourcesData.content.filter(s => s.active);
+    if (activeSources.length === 0) return;
+    
+    // 이미 실행 중인 작업이 있으면 시작하지 않음
+    const runningJobs = jobsData.content.filter(j => j.status === 'RUNNING' || j.status === 'PENDING');
+    if (runningJobs.length > 0) {
+      autoStartTriggered.current = true; // 이미 작업이 진행 중이면 플래그 설정
+      return;
+    }
+    
+    // 자동 시작 트리거
+    autoStartTriggered.current = true;
+    startAllMutation.mutate();
+  }, [sourcesData, jobsData, startAllMutation]);
 
   const handleCancelJob = useCallback((jobId: number) => {
     cancelJobMutation.mutate(jobId);

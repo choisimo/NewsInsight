@@ -110,11 +110,45 @@ spring:
           predicates:
             - Path=/api/v1/search-templates/**
 
+        # Reports API - PDF 보고서 생성 및 다운로드 (ReportController)
+        - id: reports
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/reports/**
+          metadata:
+            # PDF 생성에 시간이 걸릴 수 있으므로 긴 타임아웃 (3분)
+            response-timeout: 180000
+
+        # Search Jobs API - 검색 작업 관리 (SearchJobController)
+        # SSE 스트리밍 지원: /api/v1/jobs/stream, /api/v1/jobs/{jobId}/stream
+        - id: search-jobs
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/jobs,/api/v1/jobs/**
+          metadata:
+            # SSE 스트림 연결을 위한 긴 타임아웃 (5분)
+            response-timeout: 300000
+
         # AutoCrawl API - 자동 크롤링 관리 (AutoCrawlController)
         - id: autocrawl
           uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/autocrawl/**
+
+        # Projects API - 프로젝트 관리 (ProjectController)
+        - id: projects
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/projects/**
+
+        # Workspace Files API - 파일 업로드/다운로드 (WorkspaceController)
+        - id: workspace-files
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/workspace/**
+          metadata:
+            # 파일 업로드/다운로드를 위한 긴 타임아웃 (5분)
+            response-timeout: 300000
 
         # Config API - 프론트엔드 설정
         # NOTE: Gateway 자체 FrontendConfigController가 우선 처리됨
@@ -123,6 +157,12 @@ spring:
           uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
           predicates:
             - Path=/api/v1/config/**
+
+        # LLM Provider Settings - LLM 제공자 설정 (collector-service LlmProviderSettingsController)
+        - id: llm-providers
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/llm-providers/**
 
         # AI Orchestration - AI 분석 요청 (collector-service AiOrchestrationController)
         - id: collector-ai
@@ -151,6 +191,14 @@ spring:
           predicates:
             - Path=/api/v1/admin/**
           # No StripPrefix needed because the admin API uses /api/v1/admin prefix
+
+        # Public Auth API - 회원가입, 로그인 (Admin Dashboard에서 처리)
+        # /api/v1/auth/register, /api/v1/auth/login, /api/v1/auth/me 등
+        - id: public-auth
+          uri: ${ADMIN_DASHBOARD_URL:http://localhost:8888}
+          predicates:
+            - Path=/api/v1/auth/**
+          # No StripPrefix needed because the admin API uses /api/v1/auth prefix
 
         # Autonomous Crawler - 크롤링 작업 관리
         - id: autonomous-crawler-api
@@ -204,6 +252,14 @@ spring:
             # /api/ml-addons/sentiment/** -> /** 로 전달
             - StripPrefix=3
 
+        # Fact Check Chat - 팩트체크 챗봇
+        - id: factcheck-chat
+          uri: ${COLLECTOR_SERVICE_URL:http://collector-service:8081}
+          predicates:
+            - Path=/api/v1/factcheck-chat/**
+          filters:
+            - StripPrefix=0
+
         # ML Add-ons - 팩트체크 (Fact Check)
         - id: ml-addon-factcheck
           uri: ${ML_ADDON_FACTCHECK_URL:http://factcheck-addon:8101}
@@ -229,6 +285,29 @@ spring:
           filters:
             - StripPrefix=3
 
+        # ML Trainer Service - 모델 학습 서비스
+        - id: ml-trainer
+          uri: ${ML_TRAINER_URL:http://ml-trainer:8090}
+          predicates:
+            - Path=/api/ml-trainer/**
+          filters:
+            # /api/ml-trainer/** -> /** 로 전달
+            - StripPrefix=2
+          metadata:
+            # 학습 작업은 오래 걸릴 수 있으므로 긴 타임아웃
+            response-timeout: 600000
+
+        # ML Trainer SSE Stream - 실시간 학습 진행 상황
+        - id: ml-trainer-stream
+          uri: ${ML_TRAINER_URL:http://ml-trainer:8090}
+          predicates:
+            - Path=/api/ml-trainer/jobs/*/stream
+          filters:
+            - StripPrefix=2
+          metadata:
+            # SSE 스트림을 위한 매우 긴 타임아웃 (30분)
+            response-timeout: 1800000
+
         # Health Check Rewrite - 프론트엔드가 /api/actuator/health 호출 시 처리
         - id: gateway-health
           uri: http://localhost:${PORT:8000}
@@ -238,21 +317,22 @@ spring:
             # /api/actuator/health -> /actuator/health 로 재작성
             - RewritePath=/api/actuator/(?<segment>.*), /actuator/${segment}
 
-      # 전역 CORS 설정
-      globalcors:
-        cors-configurations:
-          '[/**]':
-            allowedOriginPatterns: "*"
-            allowedMethods:
-              - GET
-              - POST
-              - PUT
-              - DELETE
-              - PATCH
-              - OPTIONS
-            allowedHeaders: "*"
-            allowCredentials: true
-            maxAge: 3600
+      # NOTE: CORS is handled by SecurityConfig.java - DO NOT enable globalcors
+      # Having both causes duplicate Access-Control-Allow-Origin headers
+      # globalcors:
+      #   cors-configurations:
+      #     '[/**]':
+      #       allowedOriginPatterns: "*"
+      #       allowedMethods:
+      #         - GET
+      #         - POST
+      #         - PUT
+      #         - DELETE
+      #         - PATCH
+      #         - OPTIONS
+      #       allowedHeaders: "*"
+      #       allowCredentials: true
+      #       maxAge: 3600
   
   # Redis 설정 (Rate Limiting 및 세션 관리용)
   data:

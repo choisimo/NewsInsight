@@ -60,6 +60,8 @@ const AdminSources = () => {
   const [category, setCategory] = useState("");
   const [country, setCountry] = useState("KR");
   const [language, setLanguage] = useState("ko");
+  const [searchUrlTemplate, setSearchUrlTemplate] = useState("");
+  const [searchPriority, setSearchPriority] = useState<string>("100");
 
   // Edit dialog states
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -71,10 +73,16 @@ const AdminSources = () => {
   const [editCategory, setEditCategory] = useState("");
   const [editCountry, setEditCountry] = useState("KR");
   const [editLanguage, setEditLanguage] = useState("ko");
+  const [editSearchUrlTemplate, setEditSearchUrlTemplate] = useState("");
+  const [editSearchPriority, setEditSearchPriority] = useState<string>("100");
 
   // Delete dialog states
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingSource, setDeletingSource] = useState<DataSource | null>(null);
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(0);
+  const pageSize = 20;
 
   // React Query: 소스 목록 조회
   const {
@@ -84,8 +92,8 @@ const AdminSources = () => {
     isFetching,
     refetch,
   } = useQuery({
-    queryKey: ['sources'],
-    queryFn: () => listSources(0, 100, 'id', 'DESC'),
+    queryKey: ['sources', currentPage, pageSize],
+    queryFn: () => listSources(currentPage, pageSize, 'id', 'DESC'),
     staleTime: 30_000, // 30초간 fresh
     gcTime: 5 * 60_000, // 5분간 캐시 유지
     refetchInterval: 60_000, // 1분마다 자동 갱신
@@ -93,6 +101,8 @@ const AdminSources = () => {
   });
 
   const sources = sourcesPage?.content ?? [];
+  const totalPages = sourcesPage?.totalPages ?? 0;
+  const totalElements = sourcesPage?.totalElements ?? 0;
 
   // React Query: 소스 생성 Mutation
   const createMutation = useMutation({
@@ -260,6 +270,8 @@ const AdminSources = () => {
       sourceType,
       collectionFrequency: safeFreq,
       metadata,
+      searchUrlTemplate: searchUrlTemplate.trim() || undefined,
+      searchPriority: searchPriority ? Number.parseInt(searchPriority, 10) : undefined,
     };
 
     createMutation.mutate(payload);
@@ -279,6 +291,8 @@ const AdminSources = () => {
     setEditCategory((source.metadata?.category as string) || "");
     setEditCountry((source.metadata?.country as string) || "KR");
     setEditLanguage((source.metadata?.language as string) || "ko");
+    setEditSearchUrlTemplate(source.searchUrlTemplate || "");
+    setEditSearchPriority(String(source.searchPriority || 100));
     setEditDialogOpen(true);
   };
 
@@ -307,6 +321,8 @@ const AdminSources = () => {
       sourceType: editSourceType,
       collectionFrequency: safeFreq,
       metadata,
+      searchUrlTemplate: editSearchUrlTemplate.trim() || undefined,
+      searchPriority: editSearchPriority ? Number.parseInt(editSearchPriority, 10) : undefined,
     };
 
     updateMutation.mutate({ id: editingSource.id, payload });
@@ -391,6 +407,7 @@ const AdminSources = () => {
                       <SelectContent>
                         <SelectItem value="RSS">RSS</SelectItem>
                         <SelectItem value="WEB">WEB</SelectItem>
+                        <SelectItem value="WEB_SEARCH">웹 검색</SelectItem>
                         <SelectItem value="API">API</SelectItem>
                         <SelectItem value="WEBHOOK">WEBHOOK</SelectItem>
                         <SelectItem value="BROWSER_AGENT">AI Agent</SelectItem>
@@ -409,6 +426,36 @@ const AdminSources = () => {
                     />
                   </div>
                 </div>
+                {sourceType === "WEB_SEARCH" && (
+                  <div className="space-y-3 p-3 border rounded-md bg-muted/30">
+                    <p className="text-sm font-medium">웹 검색 소스 설정</p>
+                    <div className="space-y-2">
+                      <Label htmlFor="searchUrlTemplate">검색 URL 템플릿 *</Label>
+                      <Input
+                        id="searchUrlTemplate"
+                        value={searchUrlTemplate}
+                        onChange={(e) => setSearchUrlTemplate(e.target.value)}
+                        placeholder="예: https://search.naver.com/search.naver?where=news&query={query}"
+                        disabled={createMutation.isPending}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {"{query}"}를 검색어 위치에 사용하세요. 검색어는 자동으로 URL 인코딩됩니다.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="searchPriority">우선순위 (낮을수록 높음)</Label>
+                      <Input
+                        id="searchPriority"
+                        type="number"
+                        min={1}
+                        value={searchPriority}
+                        onChange={(e) => setSearchPriority(e.target.value)}
+                        placeholder="100"
+                        disabled={createMutation.isPending}
+                      />
+                    </div>
+                  </div>
+                )}
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-2">
                     <Label htmlFor="category">카테고리</Label>
@@ -553,6 +600,52 @@ const AdminSources = () => {
                   </Table>
                 </div>
               )}
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-4">
+                  <div className="text-sm text-muted-foreground">
+                    총 {totalElements}개 중 {currentPage * pageSize + 1}-{Math.min((currentPage + 1) * pageSize, totalElements)}개 표시
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(0)}
+                      disabled={currentPage === 0 || isFetching}
+                    >
+                      처음
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                      disabled={currentPage === 0 || isFetching}
+                    >
+                      이전
+                    </Button>
+                    <span className="text-sm px-2">
+                      {currentPage + 1} / {totalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
+                      disabled={currentPage >= totalPages - 1 || isFetching}
+                    >
+                      다음
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(totalPages - 1)}
+                      disabled={currentPage >= totalPages - 1 || isFetching}
+                    >
+                      마지막
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -587,39 +680,70 @@ const AdminSources = () => {
                   disabled={updateMutation.isPending}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-sourceType">타입</Label>
-                  <Select
-                    value={editSourceType}
-                    onValueChange={(value) => setEditSourceType(value as SourceType)}
-                    disabled={updateMutation.isPending}
-                  >
-                    <SelectTrigger id="edit-sourceType">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="RSS">RSS</SelectItem>
-                      <SelectItem value="WEB">WEB</SelectItem>
-                      <SelectItem value="API">API</SelectItem>
-                      <SelectItem value="WEBHOOK">WEBHOOK</SelectItem>
-                      <SelectItem value="BROWSER_AGENT">AI Agent</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-sourceType">타입</Label>
+                    <Select
+                      value={editSourceType}
+                      onValueChange={(value) => setEditSourceType(value as SourceType)}
+                      disabled={updateMutation.isPending}
+                    >
+                      <SelectTrigger id="edit-sourceType">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="RSS">RSS</SelectItem>
+                        <SelectItem value="WEB">WEB</SelectItem>
+                        <SelectItem value="WEB_SEARCH">웹 검색</SelectItem>
+                        <SelectItem value="API">API</SelectItem>
+                        <SelectItem value="WEBHOOK">WEBHOOK</SelectItem>
+                        <SelectItem value="BROWSER_AGENT">AI Agent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-frequency">수집 주기(초)</Label>
+                    <Input
+                      id="edit-frequency"
+                      type="number"
+                      min={60}
+                      value={editFrequency}
+                      onChange={(e) => setEditFrequency(e.target.value)}
+                      disabled={updateMutation.isPending}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-frequency">수집 주기(초)</Label>
-                  <Input
-                    id="edit-frequency"
-                    type="number"
-                    min={60}
-                    value={editFrequency}
-                    onChange={(e) => setEditFrequency(e.target.value)}
-                    disabled={updateMutation.isPending}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-3">
+                {editSourceType === "WEB_SEARCH" && (
+                  <div className="space-y-3 p-3 border rounded-md bg-muted/30">
+                    <p className="text-sm font-medium">웹 검색 소스 설정</p>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-searchUrlTemplate">검색 URL 템플릿 *</Label>
+                      <Input
+                        id="edit-searchUrlTemplate"
+                        value={editSearchUrlTemplate}
+                        onChange={(e) => setEditSearchUrlTemplate(e.target.value)}
+                        placeholder="예: https://search.naver.com/search.naver?where=news&query={query}"
+                        disabled={updateMutation.isPending}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {"{query}"}를 검색어 위치에 사용하세요. 검색어는 자동으로 URL 인코딩됩니다.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-searchPriority">우선순위 (낮을수록 높음)</Label>
+                      <Input
+                        id="edit-searchPriority"
+                        type="number"
+                        min={1}
+                        value={editSearchPriority}
+                        onChange={(e) => setEditSearchPriority(e.target.value)}
+                        placeholder="100"
+                        disabled={updateMutation.isPending}
+                      />
+                    </div>
+                  </div>
+                )}
+                <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-2">
                   <Label htmlFor="edit-category">카테고리</Label>
                   <Input

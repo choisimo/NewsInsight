@@ -71,6 +71,35 @@ class IntentAnalyzer:
 	multiple search strategies to guarantee results.
 	"""
 
+	# Task instruction patterns to filter out (not search topics)
+	TASK_INSTRUCTION_PATTERNS_KO = [
+		r'검색\s*(해|하|해주|하세요|해봐|해라)',
+		r'찾아\s*(줘|주세요|봐|라)',
+		r'알려\s*(줘|주세요)',
+		r'보여\s*(줘|주세요)',
+		r'확인\s*(해|하|해주|해봐)',
+		r'분석\s*(해|하|해주|해봐)',
+		r'수집\s*(해|하|해주|해봐)',
+		r'가져\s*(와|다줘|와라)',
+		r'(먼저|그리고|다음에|그런\s*다음)',
+		r'(에\s*대해|에\s*관해|에\s*관한|에\s*대한)',
+		r'(정보를?|데이터를?|내용을?|결과를?)',
+		r'(최신|최근|오늘|어제|이번\s*주)',
+		r'(관련된?|연관된?)',
+		r'(요약|정리|목록)',
+	]
+
+	TASK_INSTRUCTION_PATTERNS_EN = [
+		r'(search|find|look\s*for|get|fetch|retrieve)\s+(for|about|the)?',
+		r'(show|tell|give)\s+me',
+		r'(please|kindly|could\s+you)',
+		r'(first|then|next|after\s+that|finally)',
+		r'(about|regarding|related\s+to|concerning)',
+		r'(information|data|content|results?)\s+(on|about|for)',
+		r'(latest|recent|current|today|this\s+week)',
+		r'(analyze|summarize|collect|gather)',
+	]
+
 	# Common Korean stopwords
 	KOREAN_STOPWORDS = {
 		'은',
@@ -259,6 +288,144 @@ class IntentAnalyzer:
 		if korean_chars / total > 0.3:
 			return 'ko'
 		return 'en'
+
+	def extract_search_topic(self, task_description: str) -> str:
+		"""
+		Extract the meaningful search topic from a task description.
+		Filters out task instructions, commands, and filler words to get
+		only the core search topic.
+
+		Args:
+		    task_description: Full task description that may contain instructions
+
+		Returns:
+		    Extracted search topic suitable for search query analysis
+		"""
+		if not task_description or not task_description.strip():
+			return task_description
+
+		language = self.detect_language(task_description)
+		cleaned = task_description.strip()
+
+		# Apply instruction pattern filters based on language
+		if language == 'ko':
+			patterns = self.TASK_INSTRUCTION_PATTERNS_KO
+		else:
+			patterns = self.TASK_INSTRUCTION_PATTERNS_EN
+
+		# Remove instruction patterns
+		for pattern in patterns:
+			cleaned = re.sub(pattern, ' ', cleaned, flags=re.IGNORECASE)
+
+		# Remove extra whitespace
+		cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+
+		# Extract quoted content as high-priority topics
+		quoted_matches = re.findall(r'"([^"]+)"|\'([^\']+)\'|「([^」]+)」|『([^』]+)』', task_description)
+		quoted_topics = []
+		for match in quoted_matches:
+			topic = next((m for m in match if m), None)
+			if topic and topic.strip():
+				quoted_topics.append(topic.strip())
+
+		# If we have quoted topics, prioritize them
+		if quoted_topics:
+			# Combine quoted topics with remaining cleaned content
+			remaining_keywords = self._extract_meaningful_tokens(cleaned, language)
+			if remaining_keywords:
+				# Check if quoted topics overlap with remaining keywords
+				combined = quoted_topics.copy()
+				for kw in remaining_keywords[:3]:
+					if not any(kw.lower() in qt.lower() for qt in quoted_topics):
+						combined.append(kw)
+				return ' '.join(combined[:5])  # Limit to 5 tokens
+			return ' '.join(quoted_topics)
+
+		# Extract meaningful tokens from cleaned text
+		meaningful_tokens = self._extract_meaningful_tokens(cleaned, language)
+
+		if meaningful_tokens:
+			return ' '.join(meaningful_tokens[:5])  # Limit to 5 most important tokens
+
+		# Fallback: return original if nothing extracted
+		return task_description.strip()
+
+	def _extract_meaningful_tokens(self, text: str, language: str) -> list[str]:
+		"""
+		Extract meaningful tokens from text, filtering stopwords and short tokens.
+
+		Args:
+		    text: Input text
+		    language: Language code ('ko' or 'en')
+
+		Returns:
+		    List of meaningful tokens
+		"""
+		if not text:
+			return []
+
+		# Split by common delimiters
+		tokens = re.split(r'[\s,;.!?()[\]{}"\']', text)
+		tokens = [t.strip() for t in tokens if t.strip()]
+
+		stopwords = self.KOREAN_STOPWORDS if language == 'ko' else self.ENGLISH_STOPWORDS
+
+		meaningful = []
+		for token in tokens:
+			# Skip stopwords
+			if token.lower() in stopwords:
+				continue
+
+			# Skip very short tokens (unless Korean which can have meaningful 2-char words)
+			if language != 'ko' and len(token) < 3:
+				continue
+			if language == 'ko' and len(token) < 2:
+				continue
+
+			# Skip pure numbers
+			if token.isdigit():
+				continue
+
+			# Skip common task-related words
+			task_words_ko = {'검색', '찾기', '확인', '분석', '수집', '가져오기', '보기', '알아보기'}
+			task_words_en = {'search', 'find', 'check', 'analyze', 'collect', 'get', 'show', 'look'}
+
+			if language == 'ko' and token in task_words_ko:
+				continue
+			if language == 'en' and token.lower() in task_words_en:
+				continue
+
+			meaningful.append(token)
+
+		# Score and sort by importance
+		scored_tokens = []
+		for token in meaningful:
+			score = 0.0
+
+			# Longer tokens are often more specific/meaningful
+			score += min(len(token) / 10, 1.0) * 0.3
+
+			# Capitalized words (proper nouns) are important
+			if token[0].isupper():
+				score += 0.3
+
+			# Korean compound nouns are valuable
+			if language == 'ko' and re.search(r'[가-힣]+(기업|회사|뉴스|서비스|시스템|산업|기술|정책|사건|인물)', token):
+				score += 0.4
+
+			# English compound words or technical terms
+			if language == 'en' and (token.isupper() or '-' in token or '_' in token):
+				score += 0.3
+
+			# Words with numbers might be specific identifiers
+			if any(c.isdigit() for c in token):
+				score += 0.2
+
+			scored_tokens.append((token, score))
+
+		# Sort by score descending and return tokens only
+		scored_tokens.sort(key=lambda x: x[1], reverse=True)
+		return [t[0] for t in scored_tokens]
 
 	def extract_keywords(self, text: str, language: str = 'auto') -> list[str]:
 		"""
@@ -577,17 +744,25 @@ Output only JSON."""
 
 		return ''
 
-	async def analyze(self, query: str, use_llm: bool = True) -> AnalyzedIntent:
+	async def analyze(self, query: str, use_llm: bool = True, extract_topic: bool = False) -> AnalyzedIntent:
 		"""
 		Perform full intent analysis on the query.
 
 		Args:
-		    query: The user's search query
+		    query: The user's search query or task description
 		    use_llm: Whether to use LLM for deeper analysis
+		    extract_topic: If True, extract meaningful search topic from task description first
 
 		Returns:
 		    AnalyzedIntent with all analysis results
 		"""
+		# Extract search topic from task description if requested
+		original_query = query
+		if extract_topic:
+			search_topic = self.extract_search_topic(query)
+			logger.info(f"Extracted search topic: '{search_topic}' from task: '{query[:100]}...'")
+			query = search_topic
+
 		# Check cache
 		cache_key = f'{query}_{use_llm}'
 		if cache_key in self._cache:
@@ -603,7 +778,7 @@ Output only JSON."""
 		primary_keyword = self.identify_primary_keyword(keywords, query)
 
 		# Detect intent type
-		intent_type = self.detect_intent_type(query)
+		intent_type = self.detect_intent_type(original_query)  # Use original for intent detection
 
 		# Generate basic query variants
 		expanded_queries = self.generate_query_variants(keywords, primary_keyword, query, language)
@@ -615,7 +790,7 @@ Output only JSON."""
 
 		# Create the analyzed intent
 		analyzed = AnalyzedIntent(
-			original_query=query,
+			original_query=query,  # Use extracted topic as the query for search
 			keywords=keywords,
 			primary_keyword=primary_keyword,
 			context=llm_analysis.get('context', ''),

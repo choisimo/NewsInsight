@@ -11,7 +11,64 @@ from typing import Any
 
 import structlog
 
-# Import submodules
+logger = structlog.get_logger(__name__)
+
+
+# ─────────────────────────────────────────────
+# Core Types (defined first to avoid circular imports)
+# ─────────────────────────────────────────────
+
+
+class CaptchaType(str, Enum):
+    """Types of CAPTCHAs."""
+
+    RECAPTCHA_V2 = "recaptcha_v2"
+    RECAPTCHA_V3 = "recaptcha_v3"
+    HCAPTCHA = "hcaptcha"
+    IMAGE = "image"
+    AUDIO = "audio"
+    CLOUDFLARE = "cloudflare"
+
+
+@dataclass
+class CaptchaSolution:
+    """Result of CAPTCHA solving attempt."""
+
+    success: bool
+    token: str | None = None
+    error: str | None = None
+    solver_used: str | None = None
+    time_ms: float = 0
+
+
+class CaptchaSolver(ABC):
+    """Abstract base class for CAPTCHA solvers."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Solver name."""
+        pass
+
+    @abstractmethod
+    async def solve(
+        self,
+        captcha_type: CaptchaType,
+        **kwargs,
+    ) -> CaptchaSolution:
+        """Solve a CAPTCHA."""
+        pass
+
+    @abstractmethod
+    async def health_check(self) -> bool:
+        """Check if solver is available."""
+        pass
+
+
+# ─────────────────────────────────────────────
+# Import submodules (after core types are defined)
+# ─────────────────────────────────────────────
+
 from src.captcha.stealth import (
     StealthConfig,
     EnhancedStealthConfig,
@@ -41,8 +98,13 @@ from src.captcha.camoufox_driver import (
     get_recommended_camoufox_config,
     is_camoufox_available,
 )
-
-logger = structlog.get_logger(__name__)
+from src.captcha.paid_solvers import (
+    CapSolverClient,
+    CapSolverConfig,
+    TwoCaptchaClient,
+    TwoCaptchaConfig,
+    create_paid_solver,
+)
 
 # Re-export for convenience
 __all__ = [
@@ -79,75 +141,38 @@ __all__ = [
     "create_camoufox_browser_sync",
     "get_recommended_camoufox_config",
     "is_camoufox_available",
+    # Paid solvers
+    "CapSolverClient",
+    "CapSolverConfig",
+    "TwoCaptchaClient",
+    "TwoCaptchaConfig",
+    "create_paid_solver",
 ]
-
-
-class CaptchaType(str, Enum):
-    """Types of CAPTCHAs."""
-    RECAPTCHA_V2 = "recaptcha_v2"
-    RECAPTCHA_V3 = "recaptcha_v3"
-    HCAPTCHA = "hcaptcha"
-    IMAGE = "image"
-    AUDIO = "audio"
-    CLOUDFLARE = "cloudflare"
-
-
-@dataclass
-class CaptchaSolution:
-    """Result of CAPTCHA solving attempt."""
-    success: bool
-    token: str | None = None
-    error: str | None = None
-    solver_used: str | None = None
-    time_ms: float = 0
-
-
-class CaptchaSolver(ABC):
-    """Abstract base class for CAPTCHA solvers."""
-    
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Solver name."""
-        pass
-    
-    @abstractmethod
-    async def solve(
-        self,
-        captcha_type: CaptchaType,
-        **kwargs,
-    ) -> CaptchaSolution:
-        """Solve a CAPTCHA."""
-        pass
-    
-    @abstractmethod
-    async def health_check(self) -> bool:
-        """Check if solver is available."""
-        pass
 
 
 class AudioRecaptchaSolver(CaptchaSolver):
     """
     reCAPTCHA solver using audio challenge (GoogleRecaptchaBypass approach).
-    
+
     Uses speech recognition to solve audio challenges.
     Requires: speech_recognition, pydub, ffmpeg
     """
-    
+
     def __init__(self):
         self._sr = None
         self._pydub = None
-    
+
     @property
     def name(self) -> str:
         return "audio_recaptcha"
-    
+
     async def _lazy_import(self):
         """Lazy import heavy dependencies."""
         if self._sr is None:
             try:
                 import speech_recognition as sr
                 from pydub import AudioSegment
+
                 self._sr = sr
                 self._pydub = AudioSegment
             except ImportError as e:
@@ -157,7 +182,7 @@ class AudioRecaptchaSolver(CaptchaSolver):
                     hint="pip install SpeechRecognition pydub",
                 )
                 raise
-    
+
     async def solve(
         self,
         captcha_type: CaptchaType,
@@ -167,42 +192,44 @@ class AudioRecaptchaSolver(CaptchaSolver):
     ) -> CaptchaSolution:
         """
         Solve reCAPTCHA using audio challenge.
-        
+
         Args:
             captcha_type: Must be RECAPTCHA_V2 or AUDIO
             audio_data: Raw audio bytes
             audio_url: URL to download audio from
         """
         import time
+
         start = time.time()
-        
+
         if captcha_type not in (CaptchaType.RECAPTCHA_V2, CaptchaType.AUDIO):
             return CaptchaSolution(
                 success=False,
                 error=f"Unsupported captcha type: {captcha_type}",
                 solver_used=self.name,
             )
-        
+
         try:
             await self._lazy_import()
-            
+
             # Get audio data
             if audio_url and not audio_data:
                 import httpx
+
                 async with httpx.AsyncClient() as client:
                     resp = await client.get(audio_url)
                     audio_data = resp.content
-            
+
             if not audio_data:
                 return CaptchaSolution(
                     success=False,
                     error="No audio data provided",
                     solver_used=self.name,
                 )
-            
+
             # Convert and recognize
             text = await self._recognize_audio(audio_data)
-            
+
             if text:
                 return CaptchaSolution(
                     success=True,
@@ -217,7 +244,7 @@ class AudioRecaptchaSolver(CaptchaSolver):
                     solver_used=self.name,
                     time_ms=(time.time() - start) * 1000,
                 )
-                
+
         except Exception as e:
             return CaptchaSolution(
                 success=False,
@@ -225,25 +252,25 @@ class AudioRecaptchaSolver(CaptchaSolver):
                 solver_used=self.name,
                 time_ms=(time.time() - start) * 1000,
             )
-    
+
     async def _recognize_audio(self, audio_data: bytes) -> str | None:
         """Convert audio to text using speech recognition."""
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             f.write(audio_data)
             mp3_path = f.name
-        
+
         wav_path = mp3_path.replace(".mp3", ".wav")
-        
+
         try:
             # Convert MP3 to WAV
             audio = self._pydub.from_mp3(mp3_path)
             audio.export(wav_path, format="wav")
-            
+
             # Recognize speech
             recognizer = self._sr.Recognizer()
             with self._sr.AudioFile(wav_path) as source:
                 audio_data = recognizer.record(source)
-            
+
             # Try Google Speech Recognition (free)
             try:
                 text = recognizer.recognize_google(audio_data)
@@ -251,13 +278,13 @@ class AudioRecaptchaSolver(CaptchaSolver):
             except self._sr.UnknownValueError:
                 logger.warning("Google Speech Recognition could not understand audio")
                 return None
-                
+
         finally:
             # Cleanup
             for path in [mp3_path, wav_path]:
                 if os.path.exists(path):
                     os.remove(path)
-    
+
     async def health_check(self) -> bool:
         """Check if dependencies are available."""
         try:
@@ -270,24 +297,25 @@ class AudioRecaptchaSolver(CaptchaSolver):
 class HCaptchaChallenger(CaptchaSolver):
     """
     hCaptcha solver using hcaptcha-challenger library.
-    
+
     Uses AI models (YOLO, ResNet) to solve image challenges.
     Requires: hcaptcha-challenger
     """
-    
+
     def __init__(self, model_dir: str | None = None):
         self.model_dir = model_dir
         self._challenger = None
-    
+
     @property
     def name(self) -> str:
         return "hcaptcha_challenger"
-    
+
     async def _lazy_import(self):
         """Lazy import hcaptcha-challenger."""
         if self._challenger is None:
             try:
                 from hcaptcha_challenger import AgentChallenger
+
                 self._challenger = AgentChallenger
             except ImportError as e:
                 logger.error(
@@ -296,7 +324,7 @@ class HCaptchaChallenger(CaptchaSolver):
                     hint="pip install hcaptcha-challenger",
                 )
                 raise
-    
+
     async def solve(
         self,
         captcha_type: CaptchaType,
@@ -305,40 +333,41 @@ class HCaptchaChallenger(CaptchaSolver):
     ) -> CaptchaSolution:
         """
         Solve hCaptcha on a Playwright page.
-        
+
         Args:
             captcha_type: Must be HCAPTCHA
             page: Playwright page object
         """
         import time
+
         start = time.time()
-        
+
         if captcha_type != CaptchaType.HCAPTCHA:
             return CaptchaSolution(
                 success=False,
                 error=f"Unsupported captcha type: {captcha_type}",
                 solver_used=self.name,
             )
-        
+
         if not page:
             return CaptchaSolution(
                 success=False,
                 error="Playwright page required",
                 solver_used=self.name,
             )
-        
+
         try:
             await self._lazy_import()
-            
+
             challenger = self._challenger(page)
             result = await challenger.solve()
-            
+
             return CaptchaSolution(
                 success=result,
                 solver_used=self.name,
                 time_ms=(time.time() - start) * 1000,
             )
-            
+
         except Exception as e:
             return CaptchaSolution(
                 success=False,
@@ -346,7 +375,7 @@ class HCaptchaChallenger(CaptchaSolver):
                 solver_used=self.name,
                 time_ms=(time.time() - start) * 1000,
             )
-    
+
     async def health_check(self) -> bool:
         """Check if library is available."""
         try:
@@ -359,23 +388,24 @@ class HCaptchaChallenger(CaptchaSolver):
 class CloudflareBypasser(CaptchaSolver):
     """
     Cloudflare bypass using cloudscraper library.
-    
+
     Handles Cloudflare's JavaScript challenges and Turnstile.
     Requires: cloudscraper
     """
-    
+
     def __init__(self):
         self._scraper = None
-    
+
     @property
     def name(self) -> str:
         return "cloudscraper"
-    
+
     def _get_scraper(self):
         """Get or create cloudscraper instance."""
         if self._scraper is None:
             try:
                 import cloudscraper
+
                 self._scraper = cloudscraper.create_scraper(
                     browser={
                         "browser": "chrome",
@@ -392,7 +422,7 @@ class CloudflareBypasser(CaptchaSolver):
                 )
                 raise
         return self._scraper
-    
+
     async def solve(
         self,
         captcha_type: CaptchaType,
@@ -401,38 +431,39 @@ class CloudflareBypasser(CaptchaSolver):
     ) -> CaptchaSolution:
         """
         Bypass Cloudflare protection.
-        
+
         Args:
             captcha_type: Must be CLOUDFLARE
             url: URL to access through Cloudflare
         """
         import time
+
         start = time.time()
-        
+
         if captcha_type != CaptchaType.CLOUDFLARE:
             return CaptchaSolution(
                 success=False,
                 error=f"Unsupported captcha type: {captcha_type}",
                 solver_used=self.name,
             )
-        
+
         if not url:
             return CaptchaSolution(
                 success=False,
                 error="URL required",
                 solver_used=self.name,
             )
-        
+
         try:
             scraper = self._get_scraper()
-            
+
             # Execute in thread pool since cloudscraper is synchronous
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: scraper.get(url),
             )
-            
+
             if response.status_code == 200:
                 return CaptchaSolution(
                     success=True,
@@ -447,7 +478,7 @@ class CloudflareBypasser(CaptchaSolver):
                     solver_used=self.name,
                     time_ms=(time.time() - start) * 1000,
                 )
-                
+
         except Exception as e:
             return CaptchaSolution(
                 success=False,
@@ -455,7 +486,7 @@ class CloudflareBypasser(CaptchaSolver):
                 solver_used=self.name,
                 time_ms=(time.time() - start) * 1000,
             )
-    
+
     async def get_session_cookies(self, url: str) -> dict[str, str]:
         """Get Cloudflare bypass cookies for a URL."""
         try:
@@ -466,7 +497,7 @@ class CloudflareBypasser(CaptchaSolver):
         except Exception as e:
             logger.error("Failed to get Cloudflare cookies", url=url, error=str(e))
             return {}
-    
+
     async def health_check(self) -> bool:
         """Check if cloudscraper is available."""
         try:
@@ -479,24 +510,98 @@ class CloudflareBypasser(CaptchaSolver):
 class CaptchaSolverOrchestrator:
     """
     Orchestrates multiple CAPTCHA solvers.
-    
+
     Tries different solvers based on CAPTCHA type and availability.
+    Supports both free and paid solvers, with paid solvers prioritized when configured.
     """
-    
-    def __init__(self):
-        self.solvers: dict[CaptchaType, list[CaptchaSolver]] = {
+
+    def __init__(
+        self,
+        capsolver_api_key: str = "",
+        twocaptcha_api_key: str = "",
+        prefer_paid: bool = True,
+        paid_timeout: float = 120.0,
+    ):
+        """
+        Initialize CAPTCHA solver orchestrator.
+
+        Args:
+            capsolver_api_key: CapSolver API key (recommended for Turnstile)
+            twocaptcha_api_key: 2Captcha API key
+            prefer_paid: If True, try paid solvers first when available
+            paid_timeout: Timeout for paid solver requests
+        """
+        self.prefer_paid = prefer_paid
+
+        # Initialize free solvers
+        free_solvers: dict[CaptchaType, list[CaptchaSolver]] = {
             CaptchaType.RECAPTCHA_V2: [AudioRecaptchaSolver()],
             CaptchaType.AUDIO: [AudioRecaptchaSolver()],
             CaptchaType.HCAPTCHA: [HCaptchaChallenger()],
             CaptchaType.CLOUDFLARE: [CloudflareBypasser()],
         }
-    
+
+        # Initialize paid solvers if API keys provided
+        paid_solvers: dict[CaptchaType, list[CaptchaSolver]] = {}
+
+        if capsolver_api_key:
+            capsolver = CapSolverClient(
+                CapSolverConfig(api_key=capsolver_api_key, timeout=paid_timeout)
+            )
+            # CapSolver supports all major CAPTCHA types
+            for ctype in [
+                CaptchaType.RECAPTCHA_V2,
+                CaptchaType.RECAPTCHA_V3,
+                CaptchaType.HCAPTCHA,
+                CaptchaType.CLOUDFLARE,
+            ]:
+                if ctype not in paid_solvers:
+                    paid_solvers[ctype] = []
+                paid_solvers[ctype].append(capsolver)
+            logger.info("CapSolver enabled for CAPTCHA solving")
+
+        if twocaptcha_api_key:
+            twocaptcha = TwoCaptchaClient(
+                TwoCaptchaConfig(api_key=twocaptcha_api_key, timeout=paid_timeout)
+            )
+            # 2Captcha also supports all major types
+            for ctype in [
+                CaptchaType.RECAPTCHA_V2,
+                CaptchaType.RECAPTCHA_V3,
+                CaptchaType.HCAPTCHA,
+                CaptchaType.CLOUDFLARE,
+            ]:
+                if ctype not in paid_solvers:
+                    paid_solvers[ctype] = []
+                paid_solvers[ctype].append(twocaptcha)
+            logger.info("2Captcha enabled for CAPTCHA solving")
+
+        # Combine solvers: paid first if prefer_paid, else free first
+        self.solvers: dict[CaptchaType, list[CaptchaSolver]] = {}
+        all_types = set(free_solvers.keys()) | set(paid_solvers.keys())
+
+        for ctype in all_types:
+            paid = paid_solvers.get(ctype, [])
+            free = free_solvers.get(ctype, [])
+
+            if prefer_paid:
+                self.solvers[ctype] = paid + free
+            else:
+                self.solvers[ctype] = free + paid
+
+        logger.info(
+            "CAPTCHA solver orchestrator initialized",
+            paid_solvers_enabled=bool(capsolver_api_key or twocaptcha_api_key),
+            prefer_paid=prefer_paid,
+            supported_types=list(self.solvers.keys()),
+        )
+
     def add_solver(self, captcha_type: CaptchaType, solver: CaptchaSolver):
         """Add a solver for a captcha type."""
         if captcha_type not in self.solvers:
             self.solvers[captcha_type] = []
         self.solvers[captcha_type].append(solver)
-    
+
     async def solve(
         self,
         captcha_type: CaptchaType,
@@ -504,22 +609,22 @@ class CaptchaSolverOrchestrator:
     ) -> CaptchaSolution:
         """
         Try to solve CAPTCHA using available solvers.
-        
+
         Args:
             captcha_type: Type of CAPTCHA
             **kwargs: Solver-specific arguments
-            
+
         Returns:
             CaptchaSolution with result
         """
         solvers = self.solvers.get(captcha_type, [])
-        
+
         if not solvers:
             return CaptchaSolution(
                 success=False,
                 error=f"No solver available for {captcha_type}",
             )
-        
+
         errors = []
         for solver in solvers:
             try:
@@ -527,9 +632,9 @@ class CaptchaSolverOrchestrator:
                 if not await solver.health_check():
                     errors.append(f"{solver.name}: not available")
                     continue
-                
+
                 result = await solver.solve(captcha_type, **kwargs)
-                
+
                 if result.success:
                     logger.info(
                         "CAPTCHA solved",
@@ -540,15 +645,15 @@ class CaptchaSolverOrchestrator:
                     return result
                 else:
                     errors.append(f"{solver.name}: {result.error}")
-                    
+
             except Exception as e:
                 errors.append(f"{solver.name}: {str(e)}")
-        
+
         return CaptchaSolution(
             success=False,
             error=f"All solvers failed: {'; '.join(errors)}",
         )
-    
+
     async def get_available_solvers(self) -> dict[str, list[str]]:
         """Get list of available solvers by captcha type."""
         available = {}

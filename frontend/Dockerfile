@@ -12,10 +12,11 @@ RUN npm ci --legacy-peer-deps
 COPY . .
 
 # Build arguments for environment variables
-ARG VITE_API_BASE_URL
+# NOTE: Do NOT set VITE_API_BASE_URL - let frontend use relative paths via nginx proxy
+# Setting an explicit URL like http://api-gateway:8000 would be baked into the JS bundle
+# and wouldn't work from the browser (Docker internal network address)
 ARG VITE_BROWSER_USE_URL
 
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 ENV VITE_BROWSER_USE_URL=${VITE_BROWSER_USE_URL}
 
 # Build the application

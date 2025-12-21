@@ -7,6 +7,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -18,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * - Job-based async search execution
  * - SSE stream reconnection with same jobId
  * - Page navigation without losing search results
+ * - Collecting all search results for persistence
  */
 @Service
 @Slf4j
@@ -28,6 +32,9 @@ public class UnifiedSearchEventService {
     
     // Map of jobId -> Job metadata (status, query, etc.)
     private final Map<String, JobMetadata> jobMetadataMap = new ConcurrentHashMap<>();
+
+    // Map of jobId -> Collected results for persistence
+    private final Map<String, List<Map<String, Object>>> jobResults = new ConcurrentHashMap<>();
 
     /**
      * Metadata for a search job.
@@ -53,6 +60,7 @@ public class UnifiedSearchEventService {
     public JobMetadata createJob(String jobId, String query, String window) {
         JobMetadata metadata = new JobMetadata(jobId, query, window, "PENDING", System.currentTimeMillis(), null);
         jobMetadataMap.put(jobId, metadata);
+        jobResults.put(jobId, Collections.synchronizedList(new ArrayList<>()));
         getOrCreateSink(jobId); // Ensure sink is created
         log.info("Created unified search job: {} for query: '{}'", jobId, query);
         return metadata;
@@ -150,11 +158,16 @@ public class UnifiedSearchEventService {
     }
 
     /**
-     * Publish a search result event.
+     * Publish a search result event and collect it for persistence.
      */
     public void publishResult(String jobId, String source, Object result) {
         Sinks.Many<ServerSentEvent<Object>> sink = jobSinks.get(jobId);
         if (sink == null) return;
+
+        // Collect result for persistence (skip AI results as they're saved separately)
+        if (!"ai".equals(source) && result != null) {
+            collectResult(jobId, source, result);
+        }
 
         ServerSentEvent<Object> event = ServerSentEvent.builder()
                 .event("result")
@@ -169,6 +182,70 @@ public class UnifiedSearchEventService {
 
         sink.tryEmitNext(event);
         log.debug("Published result event for job: {}, source: {}", jobId, source);
+    }
+
+    /**
+     * Collect a search result for later persistence.
+     */
+    @SuppressWarnings("unchecked")
+    private void collectResult(String jobId, String source, Object result) {
+        List<Map<String, Object>> results = jobResults.get(jobId);
+        if (results == null) {
+            results = Collections.synchronizedList(new ArrayList<>());
+            jobResults.put(jobId, results);
+        }
+
+        try {
+            Map<String, Object> resultMap;
+            if (result instanceof Map) {
+                resultMap = new ConcurrentHashMap<>((Map<String, Object>) result);
+            } else {
+                // Convert SearchResult object to Map
+                resultMap = convertToMap(result);
+            }
+            resultMap.put("_source", source);
+            resultMap.put("_collectedAt", System.currentTimeMillis());
+            results.add(resultMap);
+            log.debug("Collected result for job: {}, source: {}, total collected: {}", jobId, source, results.size());
+        } catch (Exception e) {
+            log.warn("Failed to collect result for job: {}, source: {}, error: {}", jobId, source, e.getMessage());
+        }
+    }
+
+    /**
+     * Convert a SearchResult object to a Map for persistence.
+     */
+    private Map<String, Object> convertToMap(Object result) {
+        Map<String, Object> map = new ConcurrentHashMap<>();
+        try {
+            // Use reflection to convert SearchResult to Map
+            for (var field : result.getClass().getDeclaredFields()) {
+                field.setAccessible(true);
+                Object value = field.get(result);
+                if (value != null) {
+                    map.put(field.getName(), value);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to convert result to map: {}", e.getMessage());
+        }
+        return map;
+    }
+
+    /**
+     * Get all collected results for a job.
+     */
+    public List<Map<String, Object>> getCollectedResults(String jobId) {
+        List<Map<String, Object>> results = jobResults.get(jobId);
+        return results != null ? new ArrayList<>(results) : new ArrayList<>();
+    }
+
+    /**
+     * Get the count of collected results for a job.
+     */
+    public int getCollectedResultCount(String jobId) {
+        List<Map<String, Object>> results = jobResults.get(jobId);
+        return results != null ? results.size() : 0;
     }
 
     /**
@@ -298,7 +375,8 @@ public class UnifiedSearchEventService {
                 Thread.sleep(Duration.ofMinutes(10)); // Keep completed jobs for 10 minutes
                 jobSinks.remove(jobId);
                 jobMetadataMap.remove(jobId);
-                log.debug("Cleaned up sink and metadata for job: {}", jobId);
+                jobResults.remove(jobId); // Also clean up collected results
+                log.debug("Cleaned up sink, metadata, and results for job: {}", jobId);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -315,6 +393,7 @@ public class UnifiedSearchEventService {
             log.debug("Removed sink for job: {}", jobId);
         }
         jobMetadataMap.remove(jobId);
+        jobResults.remove(jobId);
     }
 
     /**

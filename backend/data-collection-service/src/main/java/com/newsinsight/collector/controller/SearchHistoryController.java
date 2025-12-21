@@ -120,18 +120,23 @@ public class SearchHistoryController {
             @RequestParam(defaultValue = "createdAt") String sortBy,
             @RequestParam(defaultValue = "DESC") String sortDirection,
             @RequestParam(required = false) String type,
-            @RequestParam(required = false) String userId
+            @RequestParam(required = false) String userId,
+            @RequestHeader(value = "X-User-Id", required = false) String headerUserId,
+            @RequestHeader(value = "X-Session-Id", required = false) String sessionId
     ) {
+        // Use header userId if not provided in query param
+        String effectiveUserId = userId != null ? userId : headerUserId;
+        
         Page<SearchHistory> result;
         
-        if (type != null && userId != null) {
+        if (type != null && effectiveUserId != null) {
             SearchType searchType = SearchType.valueOf(type.toUpperCase());
-            result = searchHistoryService.findByUserAndType(userId, searchType, page, size);
+            result = searchHistoryService.findByUserAndType(effectiveUserId, searchType, page, size);
         } else if (type != null) {
             SearchType searchType = SearchType.valueOf(type.toUpperCase());
             result = searchHistoryService.findByType(searchType, page, size);
-        } else if (userId != null) {
-            result = searchHistoryService.findByUser(userId, page, size);
+        } else if (effectiveUserId != null) {
+            result = searchHistoryService.findByUser(effectiveUserId, page, size);
         } else {
             result = searchHistoryService.findAll(page, size, sortBy, sortDirection);
         }
@@ -379,6 +384,176 @@ public class SearchHistoryController {
                 "kafkaTopic", SearchHistoryService.SEARCH_HISTORY_TOPIC,
                 "sseSubscribers", searchHistoryEventService.getSubscriberCount()
         ));
+    }
+
+    // ============================================
+    // Continue Work Feature
+    // ============================================
+
+    /**
+     * Get items for "Continue Work" feature.
+     * Returns actionable searches: in-progress, failed, partial, draft, or unviewed completed.
+     */
+    @GetMapping("/continue-work")
+    public ResponseEntity<Map<String, Object>> getContinueWorkItems(
+            @RequestParam(required = false) String userId,
+            @RequestParam(required = false) String sessionId,
+            @RequestParam(required = false, defaultValue = "10") int limit,
+            @RequestHeader(value = "X-User-Id", required = false) String headerUserId,
+            @RequestHeader(value = "X-Session-Id", required = false) String headerSessionId
+    ) {
+        // Use headers if not provided in query params
+        String effectiveUserId = userId != null ? userId : headerUserId;
+        String effectiveSessionId = sessionId != null ? sessionId : headerSessionId;
+        
+        log.debug("Continue work request: userId={}, sessionId={}", effectiveUserId, effectiveSessionId);
+        
+        List<SearchHistory> items = searchHistoryService.findContinueWorkItems(
+                effectiveUserId != null ? effectiveUserId : "", 
+                effectiveSessionId != null ? effectiveSessionId : "", 
+                limit
+        );
+        
+        List<SearchHistoryDto> dtos = items.stream()
+                .map(SearchHistoryDto::fromEntity)
+                .toList();
+
+        Map<String, Object> stats = searchHistoryService.getContinueWorkStats(
+                effectiveUserId != null ? effectiveUserId : "", 
+                effectiveSessionId != null ? effectiveSessionId : ""
+        );
+
+        return ResponseEntity.ok(Map.of(
+                "items", dtos,
+                "count", dtos.size(),
+                "stats", stats
+        ));
+    }
+
+    /**
+     * Mark search as viewed.
+     */
+    @PostMapping("/{id}/viewed")
+    public ResponseEntity<SearchHistoryDto> markAsViewed(@PathVariable Long id) {
+        try {
+            SearchHistory updated = searchHistoryService.markAsViewed(id);
+            return ResponseEntity.ok(SearchHistoryDto.fromEntity(updated));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * Mark search as viewed by external ID.
+     */
+    @PostMapping("/external/{externalId}/viewed")
+    public ResponseEntity<SearchHistoryDto> markAsViewedByExternalId(@PathVariable String externalId) {
+        try {
+            SearchHistory updated = searchHistoryService.markAsViewedByExternalId(externalId);
+            return ResponseEntity.ok(SearchHistoryDto.fromEntity(updated));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * Update completion status.
+     */
+    @PutMapping("/{id}/status")
+    public ResponseEntity<SearchHistoryDto> updateCompletionStatus(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body
+    ) {
+        String statusStr = body.get("status");
+        if (statusStr == null || statusStr.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        try {
+            SearchHistory.CompletionStatus status = SearchHistory.CompletionStatus.valueOf(statusStr.toUpperCase());
+            SearchHistory updated = searchHistoryService.updateCompletionStatus(id, status);
+            return ResponseEntity.ok(SearchHistoryDto.fromEntity(updated));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * Get searches by completion status.
+     */
+    @GetMapping("/status/{status}")
+    public ResponseEntity<PageResponse<SearchHistoryDto>> getByCompletionStatus(
+            @PathVariable String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        try {
+            SearchHistory.CompletionStatus completionStatus = 
+                    SearchHistory.CompletionStatus.valueOf(status.toUpperCase());
+            
+            Page<SearchHistory> result = searchHistoryService.findByCompletionStatus(completionStatus, page, size);
+            
+            PageResponse<SearchHistoryDto> response = new PageResponse<>(
+                    result.getContent().stream()
+                            .map(SearchHistoryDto::fromEntity)
+                            .toList(),
+                    result.getNumber(),
+                    result.getSize(),
+                    result.getTotalElements(),
+                    result.getTotalPages(),
+                    result.isFirst(),
+                    result.isLast(),
+                    result.hasNext(),
+                    result.hasPrevious()
+            );
+
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /**
+     * Get searches by project ID.
+     */
+    @GetMapping("/project/{projectId}")
+    public ResponseEntity<PageResponse<SearchHistoryDto>> getByProjectId(
+            @PathVariable Long projectId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        Page<SearchHistory> result = searchHistoryService.findByProjectId(projectId, page, size);
+        
+        PageResponse<SearchHistoryDto> response = new PageResponse<>(
+                result.getContent().stream()
+                        .map(SearchHistoryDto::fromEntity)
+                        .toList(),
+                result.getNumber(),
+                result.getSize(),
+                result.getTotalElements(),
+                result.getTotalPages(),
+                result.isFirst(),
+                result.isLast(),
+                result.hasNext(),
+                result.hasPrevious()
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Get failed searches for potential retry.
+     */
+    @GetMapping("/failed")
+    public ResponseEntity<List<SearchHistoryDto>> getFailedSearches(
+            @RequestParam(defaultValue = "7") int daysBack,
+            @RequestParam(defaultValue = "20") int limit
+    ) {
+        List<SearchHistory> failed = searchHistoryService.findFailedSearches(daysBack, limit);
+        List<SearchHistoryDto> response = failed.stream()
+                .map(SearchHistoryDto::fromEntity)
+                .toList();
+        return ResponseEntity.ok(response);
     }
 
     // ============================================

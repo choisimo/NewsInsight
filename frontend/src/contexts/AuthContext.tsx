@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import type { Token, User } from '@/types/admin';
+import type { Token, User, SetupStatus } from '@/types/admin';
 import { authApi } from '@/lib/adminApi';
 
 // Storage keys
@@ -12,9 +12,11 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  passwordChangeRequired: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  checkSetupStatus: () => Promise<SetupStatus | null>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -133,14 +135,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [token, clearAuthStorage]);
 
+  const checkSetupStatus = useCallback(async (): Promise<SetupStatus | null> => {
+    try {
+      return await authApi.getSetupStatus();
+    } catch (error) {
+      console.error('Failed to check setup status:', error);
+      return null;
+    }
+  }, []);
+
+  // Compute password change required status
+  const passwordChangeRequired = user?.password_change_required ?? false;
+
   const value: AuthContextType = {
     user,
     token,
     isAuthenticated: !!token && !!user,
     isLoading,
+    passwordChangeRequired,
     login,
     logout,
     refreshUser,
+    checkSetupStatus,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

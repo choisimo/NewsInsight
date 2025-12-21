@@ -14,5 +14,8 @@ export * from './data';
 // ML Add-on API
 export * from './ml';
 
+// MCP Server API (Bias, Factcheck, Topic, Sentiment, NLP)
+export * from './mcp';
+
 // Dashboard Events API
 export * from './events';

@@ -362,7 +362,20 @@
     "sentiment-addon": "http://sentiment-addon:8100",
     "factcheck-addon": "http://factcheck-addon:8101",
     "bias-addon": "http://bias-addon:8102",
-    "bot-detector": "http://bot-detector:8041"
+    "bot-detector": "http://bot-detector:8041",
+    "ml-trainer": "http://ml-trainer:8090",
+    "newsinsight-mcp": "http://newsinsight-mcp:5000",
+    "bias-mcp": "http://bias-mcp:5001",
+    "factcheck-mcp": "http://factcheck-mcp:5002",
+    "topic-mcp": "http://topic-mcp:5003",
+    "aiagent-mcp": "http://aiagent-mcp:5004",
+    "huggingface-mcp": "http://huggingface-mcp:5011",
+    "kaggle-mcp": "http://kaggle-mcp:5012",
+    "mltraining-mcp": "http://mltraining-mcp:5013",
+    "roboflow-mcp": "http://roboflow-mcp:5014",
+    "ip-rotation": "http://ip-rotation:8050",
+    "crawl-worker": "http://crawl-worker:8040",
+    "maigret-worker": "http://maigret-worker:8020"
   },
   
   "ml-addons": {
