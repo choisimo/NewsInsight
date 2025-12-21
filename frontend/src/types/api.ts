@@ -549,6 +549,7 @@ export type LlmProviderType =
   | 'OPENROUTER'
   | 'OLLAMA'
   | 'AZURE_OPENAI'
+  | 'TOGETHER_AI'
   | 'CUSTOM';
 
 /**
@@ -557,7 +558,9 @@ export type LlmProviderType =
 export interface LlmProviderTypeInfo {
   value: LlmProviderType;
   displayName: string;
-  defaultBaseUrl: string;
+  description: string;
+  requiresApiKey: boolean;
+  defaultBaseUrl?: string;
 }
 
 /**
@@ -615,4 +618,113 @@ export interface LlmTestResult {
   error?: string;
   responseTime?: number;
   availableModels?: string[];
+}
+
+// ============================================
+// Config Export/Import Types (Backend: /api/v1/admin/config-export)
+// ============================================
+
+/**
+ * LLM Provider Export 형식
+ */
+export interface LlmProviderExport {
+  providerType: LlmProviderType;
+  defaultModel: string;
+  baseUrl?: string;
+  enabled: boolean;
+  priority: number;
+  maxTokens: number;
+  temperature: number;
+  timeoutMs: number;
+  azureDeploymentName?: string;
+  azureApiVersion?: string;
+  apiKeyMasked?: string;
+}
+
+/**
+ * ML Addon Export 형식
+ */
+export interface MlAddonExport {
+  addon_key: string;
+  name: string;
+  description?: string;
+  endpoint_url: string;
+  version?: string;
+  status: string;
+  config?: Record<string, unknown>;
+}
+
+/**
+ * 전체 시스템 설정 Export 형식
+ */
+export interface SystemConfigExport {
+  version: string;
+  exportedAt: string;
+  exportedBy?: string;
+  llmProviders: LlmProviderExport[];
+  mlAddons: MlAddonExport[];
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * LLM Provider Import 형식
+ */
+export interface LlmProviderImport {
+  providerType: LlmProviderType;
+  apiKey?: string;
+  defaultModel: string;
+  baseUrl?: string;
+  enabled?: boolean;
+  priority?: number;
+  maxTokens?: number;
+  temperature?: number;
+  timeoutMs?: number;
+  azureDeploymentName?: string;
+  azureApiVersion?: string;
+}
+
+/**
+ * ML Addon Import 형식
+ */
+export interface MlAddonImport {
+  addon_key: string;
+  name: string;
+  description?: string;
+  endpoint_url: string;
+  version?: string;
+  config?: Record<string, unknown>;
+}
+
+/**
+ * 전체 시스템 설정 Import 형식
+ */
+export interface SystemConfigImport {
+  version: string;
+  llmProviders: LlmProviderImport[];
+  mlAddons: MlAddonImport[];
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Import 결과
+ */
+export interface ConfigImportResult {
+  success: boolean;
+  message: string;
+  llmProvidersImported: number;
+  llmProvidersFailed: number;
+  mlAddonsImported: number;
+  mlAddonsFailed: number;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Import 옵션
+ */
+export interface ConfigImportOptions {
+  overwriteExisting?: boolean;
+  skipLlmProviders?: boolean;
+  skipMlAddons?: boolean;
+  validateOnly?: boolean;
 }

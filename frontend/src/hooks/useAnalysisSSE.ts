@@ -1,5 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
+// Storage key for access token (matches AuthContext)
+const ACCESS_TOKEN_KEY = 'access_token';
+
+/**
+ * Append authentication token to URL for SSE connections.
+ * EventSource doesn't support custom headers, so we use query parameter.
+ */
+function appendTokenToUrl(url: string): string {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token) return url;
+  
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export interface AnalysisUpdate {
   articleId: number;
   eventType: "analysis_started" | "analysis_progress" | "analysis_partial" | "analysis_complete" | "discussion_complete" | "analysis_error";
@@ -103,7 +118,9 @@ export function useAnalysisSSE({
     const url = new URL("/api/v1/search/analysis/stream", baseUrl);
     url.searchParams.set("articleIds", articleIds.join(","));
 
-    const es = new EventSource(url.toString());
+    // Append auth token to URL for SSE authentication
+    const authenticatedUrl = appendTokenToUrl(url.toString());
+    const es = new EventSource(authenticatedUrl);
     eventSourceRef.current = es;
 
     es.onopen = () => {

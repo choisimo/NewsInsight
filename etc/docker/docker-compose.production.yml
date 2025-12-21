@@ -651,8 +651,8 @@ services:
   newsinsight-mcp:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/newsinsight-mcp:${TAG:-latest}
     build:
-      context: ../../mcp/newsinsight_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: newsinsight_mcp/Dockerfile
     container_name: newsinsight-prod-mcp
     restart: unless-stopped
     environment:
@@ -684,8 +684,8 @@ services:
   bias-mcp:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/bias-mcp:${TAG:-latest}
     build:
-      context: ../../mcp/bias_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: bias_mcp/Dockerfile
     container_name: newsinsight-prod-bias-mcp
     restart: unless-stopped
     environment:
@@ -717,8 +717,8 @@ services:
   factcheck-mcp:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/factcheck-mcp:${TAG:-latest}
     build:
-      context: ../../mcp/factcheck_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: factcheck_mcp/Dockerfile
     container_name: newsinsight-prod-factcheck-mcp
     restart: unless-stopped
     environment:
@@ -750,8 +750,8 @@ services:
   topic-mcp:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/topic-mcp:${TAG:-latest}
     build:
-      context: ../../mcp/topic_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: topic_mcp/Dockerfile
     container_name: newsinsight-prod-topic-mcp
     restart: unless-stopped
     environment:
@@ -783,8 +783,8 @@ services:
   aiagent-mcp:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/aiagent-mcp:${TAG:-latest}
     build:
-      context: ../../mcp/aiagent_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: aiagent_mcp/Dockerfile
     container_name: newsinsight-prod-aiagent-mcp
     restart: unless-stopped
     environment:
@@ -862,7 +862,7 @@ services:
   ip-rotation:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/ip-rotation:${TAG:-latest}
     build:
-      context: ../../backend/browser-use/ip-rotation
+      context: ../../backend/services/ip-rotation
       dockerfile: Dockerfile
     container_name: newsinsight-prod-ip-rotation
     restart: unless-stopped
@@ -972,7 +972,7 @@ services:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/bot-detector:${TAG:-latest}
     build:
       context: ../../
-      dockerfile: backend/browser-use/bot-detector/Dockerfile
+      dockerfile: backend/services/bot-detector/Dockerfile
     container_name: newsinsight-prod-bot-detector
     restart: unless-stopped
     environment:

@@ -1,11030 +1,6 @@
 # Project Code Snapshot
 
-Generated at 2025-12-21T10:30:23.583Z
-
----
-
-## frontend/src/components/dashboard/MCPAnalysisPanel.tsx
-
-```tsx
-/**
- * MCP Analysis Panel
- *
- * 종합적인 MCP 분석 결과를 표시하는 대시보드 패널
- * - 편향도 게이지
- * - 신뢰도 점수
- * - 감성 분포
- * - 주요 토픽
- */
-
-import { useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, RefreshCw, TrendingUp } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { cn } from '@/lib/utils';
-import {
-  analyzeComprehensive,
-  getBiasLabel,
-  getBiasColor,
-  getReliabilityLabel,
-  getReliabilityColor,
-  getSentimentLabel,
-  getSentimentColor,
-  type ComprehensiveAnalysisResult,
-  type BiasAnalysisData,
-  type FactcheckAnalysisData,
-  type SentimentAnalysisData,
-  type TopicAnalysisData,
-} from '@/lib/api/mcp';
-
-interface MCPAnalysisPanelProps {
-  keyword: string;
-  days?: number;
-  className?: string;
-  onAnalysisComplete?: (result: ComprehensiveAnalysisResult) => void;
-}
-
-export function MCPAnalysisPanel({
-  keyword,
-  days = 7,
-  className,
-  onAnalysisComplete,
-}: MCPAnalysisPanelProps) {
-  const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<ComprehensiveAnalysisResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const runAnalysis = async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const analysisResult = await analyzeComprehensive({ keyword, days });
-      setResult(analysisResult);
-      onAnalysisComplete?.(analysisResult);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '분석 중 오류가 발생했습니다');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // 로딩 상태
-  if (isLoading) {
-    return (
-      <Card className={className}>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            분석 중...
-          </CardTitle>
-          <CardDescription>"{keyword}"에 대한 종합 분석을 수행하고 있습니다</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-24 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 에러 상태
-  if (error) {
-    return (
-      <Card className={cn('border-destructive/50', className)}>
-        <CardContent className="py-6">
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-          <Button variant="outline" size="sm" onClick={runAnalysis} className="mt-4">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            다시 시도
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 초기 상태 또는 결과 없음
-  if (!result) {
-    return (
-      <Card className={className}>
-        <CardHeader>
-          <CardTitle>MCP 종합 분석</CardTitle>
-          <CardDescription>
-            "{keyword}"에 대한 편향도, 신뢰도, 감성, 토픽을 분석합니다
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button onClick={runAnalysis} className="w-full">
-            <TrendingUp className="h-4 w-4 mr-2" />
-            분석 시작
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 결과 렌더링
-  const { results } = result;
-  const biasData = 'data' in results.bias ? (results.bias.data as BiasAnalysisData) : null;
-  const factcheckData =
-    'data' in results.factcheck ? (results.factcheck.data as FactcheckAnalysisData) : null;
-  const sentimentData =
-    'data' in results.sentiment ? (results.sentiment.data as SentimentAnalysisData) : null;
-  const topicData = 'data' in results.topic ? (results.topic.data as TopicAnalysisData) : null;
-
-  return (
-    <Card className={className}>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>MCP 종합 분석 결과</CardTitle>
-            <CardDescription>
-              "{keyword}" · 최근 {days}일
-            </CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge variant={result.success ? 'default' : 'secondary'}>
-              {Math.round(result.success_rate * 100)}% 성공
-            </Badge>
-            <Button variant="ghost" size="icon" onClick={runAnalysis}>
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <Tabs defaultValue="bias" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="bias">편향도</TabsTrigger>
-            <TabsTrigger value="factcheck">신뢰도</TabsTrigger>
-            <TabsTrigger value="sentiment">감성</TabsTrigger>
-            <TabsTrigger value="topic">토픽</TabsTrigger>
-          </TabsList>
-
-          {/* 편향도 탭 */}
-          <TabsContent value="bias" className="mt-4">
-            {biasData ? (
-              <BiasAnalysisCard data={biasData} />
-            ) : (
-              <ErrorMessage message={'error' in results.bias ? results.bias.error : '데이터 없음'} />
-            )}
-          </TabsContent>
-
-          {/* 신뢰도 탭 */}
-          <TabsContent value="factcheck" className="mt-4">
-            {factcheckData ? (
-              <FactcheckAnalysisCard data={factcheckData} />
-            ) : (
-              <ErrorMessage
-                message={'error' in results.factcheck ? results.factcheck.error : '데이터 없음'}
-              />
-            )}
-          </TabsContent>
-
-          {/* 감성 탭 */}
-          <TabsContent value="sentiment" className="mt-4">
-            {sentimentData ? (
-              <SentimentAnalysisCard data={sentimentData} />
-            ) : (
-              <ErrorMessage
-                message={'error' in results.sentiment ? results.sentiment.error : '데이터 없음'}
-              />
-            )}
-          </TabsContent>
-
-          {/* 토픽 탭 */}
-          <TabsContent value="topic" className="mt-4">
-            {topicData ? (
-              <TopicAnalysisCard data={topicData} />
-            ) : (
-              <ErrorMessage
-                message={'error' in results.topic ? results.topic.error : '데이터 없음'}
-              />
-            )}
-          </TabsContent>
-        </Tabs>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─────────────────────────────────────────────
-// Sub Components
-// ─────────────────────────────────────────────
-
-function ErrorMessage({ message }: { message: string }) {
-  return (
-    <Alert variant="destructive">
-      <AlertCircle className="h-4 w-4" />
-      <AlertDescription>{message}</AlertDescription>
-    </Alert>
-  );
-}
-
-function BiasAnalysisCard({ data }: { data: BiasAnalysisData }) {
-  const biasPercent = ((data.overall_bias + 1) / 2) * 100; // -1~1 → 0~100
-
-  return (
-    <div className="space-y-4">
-      {/* 편향도 게이지 */}
-      <div className="space-y-2">
-        <div className="flex justify-between text-sm">
-          <span className="text-blue-600">진보</span>
-          <span className="font-medium">{getBiasLabel(data.overall_bias)}</span>
-          <span className="text-red-600">보수</span>
-        </div>
-        <div className="relative h-3 bg-gradient-to-r from-blue-500 via-gray-300 to-red-500 rounded-full">
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-gray-800 rounded-full shadow"
-            style={{ left: `calc(${biasPercent}% - 8px)` }}
-          />
-        </div>
-      </div>
-
-      {/* 통계 */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="p-3 rounded-lg bg-muted">
-          <div className="text-xs text-muted-foreground">객관성 점수</div>
-          <div className="text-lg font-semibold">{(data.objectivity_score * 100).toFixed(0)}%</div>
-        </div>
-        <div className="p-3 rounded-lg bg-muted">
-          <div className="text-xs text-muted-foreground">신뢰도</div>
-          <div className="text-lg font-semibold">{(data.confidence * 100).toFixed(0)}%</div>
-        </div>
-      </div>
-
-      {/* 언론사 분포 */}
-      {data.source_distribution && Object.keys(data.source_distribution).length > 0 && (
-        <div>
-          <h4 className="text-sm font-medium mb-2">언론사별 분포</h4>
-          <div className="space-y-1">
-            {Object.entries(data.source_distribution)
-              .slice(0, 5)
-              .map(([source, count]) => (
-                <div key={source} className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">{source}</span>
-                  <Badge variant="secondary">{count}건</Badge>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function FactcheckAnalysisCard({ data }: { data: FactcheckAnalysisData }) {
-  const reliabilityPercent = data.reliability_score * 100;
-
-  return (
-    <div className="space-y-4">
-      {/* 신뢰도 점수 */}
-      <div className="text-center p-4 rounded-lg bg-muted">
-        <div className="text-3xl font-bold" style={{ color: `var(--${getReliabilityColor(data.reliability_score)})` }}>
-          {reliabilityPercent.toFixed(0)}%
-        </div>
-        <div className="text-sm text-muted-foreground">
-          {getReliabilityLabel(data.reliability_score)}
-        </div>
-      </div>
-
-      {/* 검증 현황 */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="p-3 rounded-lg bg-green-50 dark:bg-green-900/20">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-green-600" />
-            <span className="text-xs text-muted-foreground">검증된 주장</span>
-          </div>
-          <div className="text-lg font-semibold text-green-600">{data.verified_claims}</div>
-        </div>
-        <div className="p-3 rounded-lg bg-yellow-50 dark:bg-yellow-900/20">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 text-yellow-600" />
-            <span className="text-xs text-muted-foreground">미검증 주장</span>
-          </div>
-          <div className="text-lg font-semibold text-yellow-600">{data.unverified_claims}</div>
-        </div>
-      </div>
-
-      {/* 인용 품질 */}
-      <div>
-        <div className="flex justify-between text-sm mb-1">
-          <span>인용 품질</span>
-          <span>{(data.citation_quality * 100).toFixed(0)}%</span>
-        </div>
-        <Progress value={data.citation_quality * 100} />
-      </div>
-    </div>
-  );
-}
-
-function SentimentAnalysisCard({ data }: { data: SentimentAnalysisData }) {
-  const total = data.distribution.positive + data.distribution.negative + data.distribution.neutral;
-  const posPercent = total > 0 ? (data.distribution.positive / total) * 100 : 0;
-  const negPercent = total > 0 ? (data.distribution.negative / total) * 100 : 0;
-  const neuPercent = total > 0 ? (data.distribution.neutral / total) * 100 : 0;
-
-  return (
-    <div className="space-y-4">
-      {/* 전체 감성 */}
-      <div className="text-center p-4 rounded-lg bg-muted">
-        <Badge
-          variant="outline"
-          className={cn(
-            'text-lg px-4 py-1',
-            data.overall_sentiment === 'positive' && 'border-green-500 text-green-600',
-            data.overall_sentiment === 'negative' && 'border-red-500 text-red-600',
-            data.overall_sentiment === 'neutral' && 'border-gray-500 text-gray-600'
-          )}
-        >
-          {getSentimentLabel(data.overall_sentiment)}
-        </Badge>
-        <div className="text-sm text-muted-foreground mt-2">
-          점수: {(data.sentiment_score * 100).toFixed(0)} · 신뢰도: {(data.confidence * 100).toFixed(0)}%
-        </div>
-      </div>
-
-      {/* 분포 차트 */}
-      <div className="space-y-3">
-        <div className="space-y-1">
-          <div className="flex justify-between text-sm">
-            <span className="text-green-600">긍정</span>
-            <span>{posPercent.toFixed(1)}%</span>
-          </div>
-          <div className="h-2 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-green-500" style={{ width: `${posPercent}%` }} />
-          </div>
-        </div>
-        <div className="space-y-1">
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-600">중립</span>
-            <span>{neuPercent.toFixed(1)}%</span>
-          </div>
-          <div className="h-2 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-gray-400" style={{ width: `${neuPercent}%` }} />
-          </div>
-        </div>
-        <div className="space-y-1">
-          <div className="flex justify-between text-sm">
-            <span className="text-red-600">부정</span>
-            <span>{negPercent.toFixed(1)}%</span>
-          </div>
-          <div className="h-2 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-red-500" style={{ width: `${negPercent}%` }} />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TopicAnalysisCard({ data }: { data: TopicAnalysisData }) {
-  return (
-    <div className="space-y-4">
-      {/* 주요 토픽 */}
-      <div>
-        <h4 className="text-sm font-medium mb-2">주요 토픽</h4>
-        <div className="flex flex-wrap gap-2">
-          {data.main_topics.slice(0, 8).map((topic, idx) => (
-            <Badge key={idx} variant={idx < 3 ? 'default' : 'secondary'}>
-              {topic.topic}
-              <span className="ml-1 opacity-70">{(topic.relevance * 100).toFixed(0)}%</span>
-            </Badge>
-          ))}
-        </div>
-      </div>
-
-      {/* 관련 엔티티 */}
-      {data.related_entities && data.related_entities.length > 0 && (
-        <div>
-          <h4 className="text-sm font-medium mb-2">관련 인물/기관</h4>
-          <div className="flex flex-wrap gap-1">
-            {data.related_entities.slice(0, 10).map((entity, idx) => (
-              <Badge key={idx} variant="outline" className="text-xs">
-                {entity}
-              </Badge>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 카테고리 분포 */}
-      {data.category_distribution && Object.keys(data.category_distribution).length > 0 && (
-        <div>
-          <h4 className="text-sm font-medium mb-2">카테고리 분포</h4>
-          <div className="space-y-2">
-            {Object.entries(data.category_distribution)
-              .sort(([, a], [, b]) => b - a)
-              .slice(0, 5)
-              .map(([category, count]) => (
-                <div key={category} className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground w-20 truncate">{category}</span>
-                  <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-primary"
-                      style={{
-                        width: `${(count / Math.max(...Object.values(data.category_distribution))) * 100}%`,
-                      }}
-                    />
-                  </div>
-                  <span className="text-xs text-muted-foreground w-8 text-right">{count}</span>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export default MCPAnalysisPanel;
-
-```
-
----
-
-## frontend/src/components/dashboard/MCPHealthStatus.tsx
-
-```tsx
-/**
- * MCP Health Status Widget
- *
- * MCP 서버들의 상태를 모니터링하는 위젯
- */
-
-import { useState, useEffect } from 'react';
-import {
-  CheckCircle2,
-  AlertCircle,
-  XCircle,
-  RefreshCw,
-  Server,
-  Loader2,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
-import { checkMcpHealth, type MCPHealthResponse } from '@/lib/api/mcp';
-
-interface MCPHealthStatusProps {
-  className?: string;
-  refreshInterval?: number; // in milliseconds, 0 to disable auto-refresh
-  compact?: boolean;
-}
-
-export function MCPHealthStatus({
-  className,
-  refreshInterval = 60000, // 1분
-  compact = false,
-}: MCPHealthStatusProps) {
-  const [health, setHealth] = useState<MCPHealthResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-
-  const fetchHealth = async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const result = await checkMcpHealth();
-      setHealth(result);
-      setLastUpdated(new Date());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'MCP 상태 확인 실패');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchHealth();
-
-    if (refreshInterval > 0) {
-      const interval = setInterval(fetchHealth, refreshInterval);
-      return () => clearInterval(interval);
-    }
-  }, [refreshInterval]);
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'healthy':
-        return <CheckCircle2 className="h-4 w-4 text-green-500" />;
-      case 'degraded':
-        return <AlertCircle className="h-4 w-4 text-yellow-500" />;
-      case 'unhealthy':
-        return <XCircle className="h-4 w-4 text-red-500" />;
-      default:
-        return <AlertCircle className="h-4 w-4 text-gray-400" />;
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-      healthy: 'default',
-      degraded: 'secondary',
-      unhealthy: 'destructive',
-    };
-    const labels: Record<string, string> = {
-      healthy: '정상',
-      degraded: '성능 저하',
-      unhealthy: '오류',
-    };
-    return (
-      <Badge variant={variants[status] || 'outline'}>
-        {labels[status] || status}
-      </Badge>
-    );
-  };
-
-  // 로딩 상태
-  if (isLoading && !health) {
-    return (
-      <Card className={className}>
-        <CardHeader className="pb-2">
-          <Skeleton className="h-5 w-32" />
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-8 w-full" />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 에러 상태
-  if (error && !health) {
-    return (
-      <Card className={cn('border-destructive/50', className)}>
-        <CardContent className="py-4">
-          <div className="flex items-center gap-2 text-destructive">
-            <XCircle className="h-4 w-4" />
-            <span className="text-sm">{error}</span>
-          </div>
-          <Button variant="outline" size="sm" onClick={fetchHealth} className="mt-2">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            다시 시도
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Compact 버전
-  if (compact && health) {
-    return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div
-              className={cn(
-                'flex items-center gap-2 px-3 py-1.5 rounded-full cursor-default',
-                health.status === 'healthy' && 'bg-green-100 dark:bg-green-900/30',
-                health.status === 'degraded' && 'bg-yellow-100 dark:bg-yellow-900/30',
-                health.status === 'unhealthy' && 'bg-red-100 dark:bg-red-900/30',
-                className
-              )}
-            >
-              {getStatusIcon(health.status)}
-              <span className="text-sm font-medium">
-                MCP {health.healthy}/{health.total}
-              </span>
-              {isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
-            </div>
-          </TooltipTrigger>
-          <TooltipContent>
-            <div className="space-y-1">
-              {Object.entries(health.servers).map(([name, server]) => (
-                <div key={name} className="flex items-center gap-2 text-xs">
-                  {getStatusIcon(server.status)}
-                  <span>{name}</span>
-                  {server.latency_ms && (
-                    <span className="text-muted-foreground">{server.latency_ms}ms</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    );
-  }
-
-  // Full 버전
-  return (
-    <Card className={className}>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Server className="h-4 w-4" />
-            MCP 서버 상태
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            {getStatusBadge(health?.status || 'unknown')}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={fetchHealth}
-              disabled={isLoading}
-              className="h-8 w-8"
-            >
-              <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
-            </Button>
-          </div>
-        </div>
-        {lastUpdated && (
-          <p className="text-xs text-muted-foreground">
-            마지막 업데이트: {lastUpdated.toLocaleTimeString()}
-          </p>
-        )}
-      </CardHeader>
-      <CardContent>
-        {health && (
-          <div className="space-y-2">
-            {Object.entries(health.servers).map(([name, server]) => (
-              <div
-                key={name}
-                className={cn(
-                  'flex items-center justify-between p-2 rounded-lg',
-                  server.status === 'healthy' && 'bg-green-50 dark:bg-green-900/10',
-                  server.status === 'degraded' && 'bg-yellow-50 dark:bg-yellow-900/10',
-                  server.status === 'unhealthy' && 'bg-red-50 dark:bg-red-900/10'
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  {getStatusIcon(server.status)}
-                  <span className="text-sm font-medium">{name}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {server.latency_ms && (
-                    <span className="text-xs text-muted-foreground">
-                      {server.latency_ms}ms
-                    </span>
-                  )}
-                  {server.error && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger>
-                          <AlertCircle className="h-4 w-4 text-destructive" />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs max-w-xs">{server.error}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* 요약 통계 */}
-        {health && (
-          <div className="mt-4 pt-4 border-t flex items-center justify-center gap-4 text-sm">
-            <div className="flex items-center gap-1">
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-              <span>{health.healthy} 정상</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <XCircle className="h-4 w-4 text-red-500" />
-              <span>{health.total - health.healthy} 오류</span>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-export default MCPHealthStatus;
-
-```
-
----
-
-## frontend/src/components/dashboard/MCPTrendingTopics.tsx
-
-```tsx
-/**
- * MCP Trending Topics Widget
- *
- * MCP Topic Server에서 가져온 트렌딩 토픽을 표시
- */
-
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  Flame,
-  RefreshCw,
-  Loader2,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
-import { getTrendingTopics, type MCPAddonResponse } from '@/lib/api/mcp';
-
-interface Topic {
-  topic: string;
-  count: number;
-  trend: 'up' | 'down' | 'stable';
-  category?: string;
-  change?: number;
-}
-
-interface MCPTrendingTopicsProps {
-  className?: string;
-  maxItems?: number;
-  days?: number;
-  onTopicClick?: (topic: string) => void;
-  showRefresh?: boolean;
-}
-
-export function MCPTrendingTopics({
-  className,
-  maxItems = 10,
-  days = 1,
-  onTopicClick,
-  showRefresh = true,
-}: MCPTrendingTopicsProps) {
-  const [topics, setTopics] = useState<Topic[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchTopics = async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const result = await getTrendingTopics(days, maxItems);
-      if (result.success && result.data) {
-        const topicsData = result.data as { topics?: Topic[] };
-        setTopics(topicsData.topics || []);
-      } else {
-        setError(result.error || '토픽을 불러올 수 없습니다');
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '트렌딩 토픽 로드 실패');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchTopics();
-  }, [days, maxItems]);
-
-  const getTrendIcon = (trend: string) => {
-    switch (trend) {
-      case 'up':
-        return <TrendingUp className="h-3 w-3 text-green-500" />;
-      case 'down':
-        return <TrendingDown className="h-3 w-3 text-red-500" />;
-      default:
-        return <Minus className="h-3 w-3 text-gray-400" />;
-    }
-  };
-
-  const handleTopicClick = (topic: string, e: React.MouseEvent) => {
-    if (onTopicClick) {
-      e.preventDefault();
-      onTopicClick(topic);
-    }
-  };
-
-  // 로딩 상태
-  if (isLoading) {
-    return (
-      <Card className={className}>
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <Skeleton className="h-5 w-32" />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} className="h-10 w-full" />
-          ))}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 에러 상태
-  if (error) {
-    return (
-      <Card className={cn('border-yellow-500/50', className)}>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-orange-500" />
-            트렌딩 토픽
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground mb-2">{error}</p>
-          <Button variant="outline" size="sm" onClick={fetchTopics}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            다시 시도
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 빈 상태
-  if (topics.length === 0) {
-    return (
-      <Card className={className}>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-orange-500" />
-            트렌딩 토픽
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-center py-6 text-muted-foreground">
-            <TrendingUp className="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">트렌딩 토픽이 없습니다</p>
-            <p className="text-xs mt-1">분석할 데이터가 충분히 쌓이면 표시됩니다</p>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card className={className}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-orange-500" />
-            트렌딩 토픽
-            <Badge variant="secondary" className="text-xs">
-              최근 {days}일
-            </Badge>
-          </CardTitle>
-          {showRefresh && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={fetchTopics}
-              className="h-8 w-8"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-1">
-        {topics.slice(0, maxItems).map((topic, index) => (
-          <Link
-            key={topic.topic}
-            to={`/search?q=${encodeURIComponent(topic.topic)}`}
-            onClick={(e) => handleTopicClick(topic.topic, e)}
-            className={cn(
-              'flex items-center gap-3 px-3 py-2 rounded-lg transition-colors',
-              'hover:bg-muted group'
-            )}
-          >
-            {/* 순위 */}
-            <div
-              className={cn(
-                'flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold',
-                index < 3
-                  ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
-                  : 'bg-muted text-muted-foreground'
-              )}
-            >
-              {index + 1}
-            </div>
-
-            {/* 토픽 정보 */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium truncate group-hover:text-primary transition-colors">
-                  {topic.topic}
-                </span>
-                {index < 3 && topic.trend === 'up' && (
-                  <Flame className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
-                )}
-              </div>
-              {topic.category && (
-                <span className="text-xs text-muted-foreground">{topic.category}</span>
-              )}
-            </div>
-
-            {/* 트렌드 & 카운트 */}
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {getTrendIcon(topic.trend)}
-              <span className="text-xs text-muted-foreground">{topic.count}건</span>
-            </div>
-          </Link>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-// Compact 버전
-interface MCPTrendingTopicsCompactProps {
-  className?: string;
-  maxItems?: number;
-  onTopicClick?: (topic: string) => void;
-}
-
-export function MCPTrendingTopicsCompact({
-  className,
-  maxItems = 5,
-  onTopicClick,
-}: MCPTrendingTopicsCompactProps) {
-  const [topics, setTopics] = useState<Topic[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchTopics = async () => {
-      try {
-        const result = await getTrendingTopics(1, maxItems);
-        if (result.success && result.data) {
-          const topicsData = result.data as { topics?: Topic[] };
-          setTopics(topicsData.topics || []);
-        }
-      } catch {
-        // Silent fail for compact version
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchTopics();
-  }, [maxItems]);
-
-  if (isLoading) {
-    return (
-      <div className={cn('space-y-2', className)}>
-        {[1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-8 w-full" />
-        ))}
-      </div>
-    );
-  }
-
-  if (topics.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className={cn('space-y-1', className)}>
-      {topics.slice(0, maxItems).map((topic, index) => (
-        <button
-          key={topic.topic}
-          onClick={() => onTopicClick?.(topic.topic)}
-          className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted transition-colors w-full text-left"
-        >
-          <span
-            className={cn(
-              'text-xs font-medium w-4',
-              index < 3 ? 'text-orange-500' : 'text-muted-foreground'
-            )}
-          >
-            {index + 1}
-          </span>
-          <span className="text-sm line-clamp-1 flex-1">{topic.topic}</span>
-          {index < 3 && topic.trend === 'up' && (
-            <Flame className="h-3 w-3 text-red-500" />
-          )}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-export default MCPTrendingTopics;
-
-```
-
----
-
-## frontend/src/components/dashboard/RecentActivity.tsx
-
-```tsx
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, CheckCircle2, Search, Brain, Shield } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
-
-const activities = [
-  {
-    id: 1,
-    type: "search",
-    message: "'탄소 중립 정책' 검색 수행",
-    time: "방금 전",
-    icon: Search,
-    color: "text-blue-500",
-    bg: "bg-blue-100 dark:bg-blue-900/30"
-  },
-  {
-    id: 2,
-    type: "factcheck",
-    message: "선거 관련 가짜뉴스 팩트체크 완료",
-    time: "5분 전",
-    icon: Shield,
-    color: "text-green-500",
-    bg: "bg-green-100 dark:bg-green-900/30"
-  },
-  {
-    id: 3,
-    type: "ai",
-    message: "Deep Search 분석 리포트 생성됨",
-    time: "12분 전",
-    icon: Brain,
-    color: "text-purple-500",
-    bg: "bg-purple-100 dark:bg-purple-900/30"
-  },
-  {
-    id: 4,
-    type: "system",
-    message: "시스템 데이터베이스 업데이트",
-    time: "1시간 전",
-    icon: CheckCircle2,
-    color: "text-gray-500",
-    bg: "bg-gray-100 dark:bg-gray-800"
-  },
-  {
-    id: 5,
-    type: "search",
-    message: "'반도체 수출 현황' 검색 수행",
-    time: "2시간 전",
-    icon: Search,
-    color: "text-blue-500",
-    bg: "bg-blue-100 dark:bg-blue-900/30"
-  },
-];
-
-export function RecentActivity() {
-  return (
-    <Card className="h-full">
-      <CardHeader>
-        <CardTitle className="text-lg font-bold flex items-center gap-2">
-          <Activity className="h-5 w-5 text-orange-500" />
-          최근 활동
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ScrollArea className="h-[300px]">
-          <div className="relative border-l ml-3 my-2 space-y-6">
-            {activities.map((item) => (
-              <div key={item.id} className="ml-6 relative">
-                <span className={`absolute -left-[35px] flex h-8 w-8 items-center justify-center rounded-full ${item.bg} ring-4 ring-background`}>
-                  <item.icon className={`h-4 w-4 ${item.color}`} />
-                </span>
-                <div className="flex flex-col gap-1">
-                  <p className="text-sm font-medium leading-none">{item.message}</p>
-                  <span className="text-xs text-muted-foreground">{item.time}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
-      </CardContent>
-    </Card>
-  );
-}
-
-```
-
----
-
-## frontend/src/components/dashboard/TrendChart.tsx
-
-```tsx
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { BarChart3, TrendingUp } from "lucide-react";
-
-export function TrendChart() {
-  return (
-    <Card className="h-full">
-      <CardHeader>
-        <CardTitle className="text-lg font-bold flex items-center gap-2">
-          <BarChart3 className="h-5 w-5 text-blue-500" />
-          주요 키워드 트렌드
-        </CardTitle>
-        <CardDescription>지난 24시간 동안 가장 많이 언급된 키워드</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {/* Placeholder for a chart library like Recharts */}
-        <div className="h-[300px] w-full bg-slate-50 dark:bg-slate-900/50 rounded-lg flex items-center justify-center border border-dashed">
-          <div className="text-center text-muted-foreground">
-            <TrendingUp className="h-10 w-10 mx-auto mb-2 opacity-20" />
-            <p>차트 영역</p>
-            <p className="text-xs">(Recharts 등의 라이브러리 연동 필요)</p>
-            
-            <div className="mt-8 grid grid-cols-2 gap-4 text-left max-w-xs mx-auto text-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                <span>인공지능 (34%)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                <span>경제성장 (21%)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-purple-500"></div>
-                <span>기후변화 (18%)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-orange-500"></div>
-                <span>선거 (12%)</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-```
-
----
-
-## frontend/src/components/home/ContinueCard.tsx
-
-```tsx
-/**
- * ContinueCard - 이어서 하기 카드
- * 
- * 마지막으로 진행하던 작업을 보여주고 빠르게 재개할 수 있게 함
- * - 진행 중인 Deep Search
- * - 미완료 팩트체크
- * - 최근 검색
- */
-
-import { Link } from 'react-router-dom';
-import {
-  ArrowRight,
-  Brain,
-  Shield,
-  Search,
-  Bot,
-  Link as LinkIcon,
-  X,
-  Loader2,
-  Clock,
-  Play,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useContinueWork, type ContinueWorkItem, type WorkType } from '@/hooks/useContinueWork';
-import { cn } from '@/lib/utils';
-
-// 작업 타입별 설정
-const WORK_TYPE_CONFIG: Record<WorkType, {
-  icon: typeof Search;
-  color: string;
-  bgColor: string;
-  label: string;
-}> = {
-  deep_search: {
-    icon: Brain,
-    color: 'text-purple-600',
-    bgColor: 'bg-purple-50 dark:bg-purple-900/20',
-    label: '심층 분석',
-  },
-  fact_check: {
-    icon: Shield,
-    color: 'text-green-600',
-    bgColor: 'bg-green-50 dark:bg-green-900/20',
-    label: '팩트체크',
-  },
-  unified_search: {
-    icon: Search,
-    color: 'text-blue-600',
-    bgColor: 'bg-blue-50 dark:bg-blue-900/20',
-    label: '검색',
-  },
-  browser_agent: {
-    icon: Bot,
-    color: 'text-orange-600',
-    bgColor: 'bg-orange-50 dark:bg-orange-900/20',
-    label: 'AI 에이전트',
-  },
-  url_analysis: {
-    icon: LinkIcon,
-    color: 'text-cyan-600',
-    bgColor: 'bg-cyan-50 dark:bg-cyan-900/20',
-    label: 'URL 분석',
-  },
-};
-
-interface ContinueCardProps {
-  className?: string;
-  showRecent?: boolean;
-  maxItems?: number;
-}
-
-export function ContinueCard({
-  className,
-  showRecent = true,
-  maxItems = 3,
-}: ContinueCardProps) {
-  const {
-    lastWork,
-    recentWorks,
-    isLoading,
-    error,
-    dismissWork,
-    clearAllWorks,
-  } = useContinueWork();
-
-  // 로딩 상태
-  if (isLoading) {
-    return (
-      <Card className={cn('border-dashed', className)}>
-        <CardHeader className="pb-3">
-          <Skeleton className="h-5 w-32" />
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-20 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 작업 없음
-  if (!lastWork && recentWorks.length === 0) {
-    return null;
-  }
-
-  // 에러 상태
-  if (error) {
-    return (
-      <Card className={cn('border-destructive/50', className)}>
-        <CardContent className="py-4">
-          <p className="text-sm text-destructive">{error}</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const displayWorks = showRecent
-    ? recentWorks.slice(0, maxItems)
-    : lastWork
-      ? [lastWork]
-      : [];
-
-  return (
-    <Card className={cn('border-primary/30 bg-primary/5', className)}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Clock className="h-4 w-4 text-primary" />
-            이어서 하기
-          </CardTitle>
-          {recentWorks.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearAllWorks}
-              className="text-xs text-muted-foreground h-7"
-            >
-              전체 지우기
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {displayWorks.map(work => (
-          <WorkItem
-            key={work.id}
-            work={work}
-            onDismiss={() => dismissWork(work.id)}
-            isPrimary={work.id === lastWork?.id}
-          />
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-// 개별 작업 아이템
-interface WorkItemProps {
-  work: ContinueWorkItem;
-  onDismiss: () => void;
-  isPrimary?: boolean;
-}
-
-function WorkItem({ work, onDismiss, isPrimary }: WorkItemProps) {
-  const config = WORK_TYPE_CONFIG[work.type];
-  const Icon = config.icon;
-
-  const statusLabel = {
-    in_progress: '진행 중',
-    paused: '일시 정지',
-    waiting: '대기 중',
-    ready: '준비됨',
-  }[work.status];
-
-  return (
-    <div
-      className={cn(
-        'relative rounded-lg p-4 transition-all',
-        config.bgColor,
-        isPrimary && 'ring-2 ring-primary/30'
-      )}
-    >
-      <div className="flex items-start gap-3">
-        {/* 아이콘 */}
-        <div className={cn('p-2 rounded-lg bg-background/50', config.color)}>
-          {work.status === 'in_progress' ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            <Icon className="h-5 w-5" />
-          )}
-        </div>
-
-        {/* 내용 */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <Badge variant="outline" className={cn('text-xs', config.color)}>
-              {config.label}
-            </Badge>
-            <Badge
-              variant="secondary"
-              className={cn(
-                'text-xs',
-                work.status === 'in_progress' && 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-              )}
-            >
-              {statusLabel}
-            </Badge>
-          </div>
-
-          <h4 className="font-medium text-sm line-clamp-1 mb-1">
-            {work.title}
-          </h4>
-
-          {work.description && (
-            <p className="text-xs text-muted-foreground line-clamp-1">
-              {work.description}
-            </p>
-          )}
-
-          {/* 진행률 표시 */}
-          {work.progress !== undefined && work.status === 'in_progress' && (
-            <div className="mt-2">
-              <Progress value={work.progress} className="h-1.5" />
-              <span className="text-xs text-muted-foreground mt-1">
-                {work.progress}% 완료
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* 액션 버튼 */}
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onDismiss}
-            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-
-          <Button
-            asChild
-            size="sm"
-            variant={isPrimary ? 'default' : 'outline'}
-            className="h-8 gap-1"
-          >
-            <Link to={work.continueUrl}>
-              <Play className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">계속하기</span>
-            </Link>
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export default ContinueCard;
-
-```
-
----
-
-## frontend/src/components/home/DailyInsightCard.tsx
-
-```tsx
-/**
- * DailyInsightCard - 오늘의 논쟁 이슈 카드
- * 
- * 매일 갱신되는 핫 이슈를 표시하여 재방문 유도
- * - 입장 분포 시각화
- * - 빠른 분석 시작 버튼
- */
-
-import { Link } from 'react-router-dom';
-import {
-  Flame,
-  TrendingUp,
-  ThumbsUp,
-  ThumbsDown,
-  Minus,
-  ArrowRight,
-  Sparkles,
-  RefreshCw,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useTrendingTopics, type TrendingTopic } from '@/hooks/useTrendingTopics';
-import { cn } from '@/lib/utils';
-
-interface DailyInsightCardProps {
-  className?: string;
-}
-
-export function DailyInsightCard({ className }: DailyInsightCardProps) {
-  const { topics, isLoading, refresh } = useTrendingTopics();
-
-  // 가장 핫한 토픽 선택
-  const hotTopic = topics.find(t => t.isHot) || topics[0];
-
-  // 로딩 상태
-  if (isLoading) {
-    return (
-      <Card className={cn('overflow-hidden', className)}>
-        <CardContent className="p-0">
-          <Skeleton className="h-48 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!hotTopic) {
-    return null;
-  }
-
-  return (
-    <Card
-      className={cn(
-        'overflow-hidden border-2',
-        'bg-gradient-to-br from-orange-50 to-red-50',
-        'dark:from-orange-900/20 dark:to-red-900/20',
-        'border-orange-200 dark:border-orange-800/50',
-        className
-      )}
-    >
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Flame className="h-5 w-5 text-orange-500" />
-            오늘의 논쟁 이슈
-          </CardTitle>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={refresh}
-            className="h-8 w-8"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* 주제 */}
-        <div>
-          <h3 className="font-bold text-lg leading-tight mb-1">
-            {hotTopic.title}
-          </h3>
-          {hotTopic.description && (
-            <p className="text-sm text-muted-foreground">
-              {hotTopic.description}
-            </p>
-          )}
-        </div>
-
-        {/* 입장 분포 */}
-        {hotTopic.stanceDistribution && (
-          <div className="space-y-2">
-            {/* 분포 바 */}
-            <div className="flex h-8 rounded-lg overflow-hidden shadow-inner">
-              {hotTopic.stanceDistribution.proRatio > 0 && (
-                <div
-                  className="flex items-center justify-center bg-teal-500 text-white text-sm font-medium"
-                  style={{ width: `${hotTopic.stanceDistribution.proRatio}%` }}
-                >
-                  {hotTopic.stanceDistribution.proRatio >= 15 && (
-                    <span className="flex items-center gap-1">
-                      <ThumbsUp className="h-3.5 w-3.5" />
-                      {Math.round(hotTopic.stanceDistribution.proRatio)}%
-                    </span>
-                  )}
-                </div>
-              )}
-              {hotTopic.stanceDistribution.neutralRatio > 0 && (
-                <div
-                  className="flex items-center justify-center bg-gray-400 text-white text-sm font-medium"
-                  style={{ width: `${hotTopic.stanceDistribution.neutralRatio}%` }}
-                >
-                  {hotTopic.stanceDistribution.neutralRatio >= 15 && (
-                    <span className="flex items-center gap-1">
-                      <Minus className="h-3.5 w-3.5" />
-                      {Math.round(hotTopic.stanceDistribution.neutralRatio)}%
-                    </span>
-                  )}
-                </div>
-              )}
-              {hotTopic.stanceDistribution.conRatio > 0 && (
-                <div
-                  className="flex items-center justify-center bg-red-500 text-white text-sm font-medium"
-                  style={{ width: `${hotTopic.stanceDistribution.conRatio}%` }}
-                >
-                  {hotTopic.stanceDistribution.conRatio >= 15 && (
-                    <span className="flex items-center gap-1">
-                      <ThumbsDown className="h-3.5 w-3.5" />
-                      {Math.round(hotTopic.stanceDistribution.conRatio)}%
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* 범례 */}
-            <div className="flex justify-between text-xs">
-              <span className="flex items-center gap-1 text-teal-600 dark:text-teal-400">
-                <ThumbsUp className="h-3 w-3" />
-                찬성 {hotTopic.stanceDistribution.pro}건
-              </span>
-              <span className="flex items-center gap-1 text-gray-500">
-                <Minus className="h-3 w-3" />
-                중립 {hotTopic.stanceDistribution.neutral}건
-              </span>
-              <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
-                <ThumbsDown className="h-3 w-3" />
-                반대 {hotTopic.stanceDistribution.con}건
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* 메타 정보 & 액션 */}
-        <div className="flex items-center justify-between pt-2">
-          <div className="flex items-center gap-2">
-            {hotTopic.category && (
-              <Badge variant="outline" className="text-xs">
-                {hotTopic.category}
-              </Badge>
-            )}
-            {hotTopic.newsCount && (
-              <span className="text-xs text-muted-foreground">
-                관련 뉴스 {hotTopic.newsCount}건
-              </span>
-            )}
-          </div>
-
-          <Button asChild size="sm" className="gap-1">
-            <Link to={hotTopic.searchUrl}>
-              <Sparkles className="h-4 w-4" />
-              심층 분석 시작
-            </Link>
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-export default DailyInsightCard;
-
-```
-
----
-
-## frontend/src/components/home/HeroSearchBar.tsx
-
-```tsx
-/**
- * HeroSearchBar - 대형 검색창 컴포넌트
- * 
- * 홈 화면 상단에 배치되는 주요 검색 진입점
- * - 크고 눈에 띄는 디자인
- * - 플레이스홀더로 용도 안내
- * - 검색 모드 전환 지원
- */
-
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import {
-  Search,
-  Sparkles,
-  Brain,
-  Shield,
-  Link as LinkIcon,
-  ArrowRight,
-  Loader2,
-  X,
-} from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { cn } from '@/lib/utils';
-
-export type SearchMode = 'unified' | 'deep' | 'factcheck' | 'urlanalysis';
-
-interface SearchModeConfig {
-  id: SearchMode;
-  label: string;
-  description: string;
-  icon: typeof Search;
-  color: string;
-  placeholder: string;
-}
-
-const SEARCH_MODES: SearchModeConfig[] = [
-  {
-    id: 'unified',
-    label: '통합 검색',
-    description: 'DB + 웹 + AI 동시 검색',
-    icon: Search,
-    color: 'text-blue-600',
-    placeholder: '무엇이든 검색하세요...',
-  },
-  {
-    id: 'deep',
-    label: '심층 분석',
-    description: 'AI 기반 심층 증거 수집',
-    icon: Brain,
-    color: 'text-purple-600',
-    placeholder: '분석할 주제를 입력하세요...',
-  },
-  {
-    id: 'factcheck',
-    label: '팩트체크',
-    description: '주장의 진위 검증',
-    icon: Shield,
-    color: 'text-green-600',
-    placeholder: '검증할 주장을 붙여넣으세요...',
-  },
-  {
-    id: 'urlanalysis',
-    label: 'URL 분석',
-    description: 'URL에서 주장 추출',
-    icon: LinkIcon,
-    color: 'text-orange-600',
-    placeholder: '분석할 URL을 입력하세요...',
-  },
-];
-
-interface HeroSearchBarProps {
-  defaultMode?: SearchMode;
-  onSearch?: (query: string, mode: SearchMode) => void;
-  className?: string;
-  autoFocus?: boolean;
-}
-
-export function HeroSearchBar({
-  defaultMode = 'unified',
-  onSearch,
-  className,
-  autoFocus = false,
-}: HeroSearchBarProps) {
-  const navigate = useNavigate();
-  const inputRef = useRef<HTMLInputElement>(null);
-  
-  const [query, setQuery] = useState('');
-  const [mode, setMode] = useState<SearchMode>(defaultMode);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isFocused, setIsFocused] = useState(false);
-
-  const currentMode = SEARCH_MODES.find(m => m.id === mode) || SEARCH_MODES[0];
-  const ModeIcon = currentMode.icon;
-
-  // 검색 실행
-  const handleSearch = useCallback(() => {
-    const trimmedQuery = query.trim();
-    if (!trimmedQuery) return;
-
-    setIsLoading(true);
-
-    if (onSearch) {
-      onSearch(trimmedQuery, mode);
-    } else {
-      // 기본 동작: 검색 페이지로 이동
-      const modeParam = mode === 'unified' ? '' : `mode=${mode}`;
-      const queryParam = `q=${encodeURIComponent(trimmedQuery)}`;
-      const params = [modeParam, queryParam].filter(Boolean).join('&');
-      navigate(`/search?${params}`);
-    }
-
-    setIsLoading(false);
-  }, [query, mode, onSearch, navigate]);
-
-  // Enter 키 처리
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSearch();
-    }
-  }, [handleSearch]);
-
-  // 모드 변경
-  const handleModeChange = useCallback((newMode: SearchMode) => {
-    setMode(newMode);
-    inputRef.current?.focus();
-  }, []);
-
-  // 쿼리 초기화
-  const clearQuery = useCallback(() => {
-    setQuery('');
-    inputRef.current?.focus();
-  }, []);
-
-  // autoFocus 처리
-  useEffect(() => {
-    if (autoFocus) {
-      inputRef.current?.focus();
-    }
-  }, [autoFocus]);
-
-  return (
-    <div className={cn('w-full', className)}>
-      {/* 검색창 컨테이너 */}
-      <div
-        className={cn(
-          'relative rounded-2xl border-2 bg-background shadow-lg transition-all duration-200',
-          isFocused
-            ? 'border-primary ring-4 ring-primary/20 shadow-xl'
-            : 'border-border hover:border-primary/50'
-        )}
-      >
-        {/* 모드 선택 드롭다운 */}
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  'h-9 gap-2 px-3 rounded-lg',
-                  currentMode.color
-                )}
-              >
-                <ModeIcon className="h-4 w-4" />
-                <span className="hidden sm:inline font-medium">{currentMode.label}</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
-              {SEARCH_MODES.map(searchMode => {
-                const Icon = searchMode.icon;
-                return (
-                  <DropdownMenuItem
-                    key={searchMode.id}
-                    onClick={() => handleModeChange(searchMode.id)}
-                    className="flex items-start gap-3 p-3"
-                  >
-                    <Icon className={cn('h-5 w-5 mt-0.5', searchMode.color)} />
-                    <div>
-                      <div className="font-medium">{searchMode.label}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {searchMode.description}
-                      </div>
-                    </div>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        {/* 검색 입력 */}
-        <Input
-          ref={inputRef}
-          type="text"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
-          placeholder={currentMode.placeholder}
-          className={cn(
-            'h-16 text-lg border-0 bg-transparent',
-            'pl-36 sm:pl-44 pr-32',
-            'focus-visible:ring-0 focus-visible:ring-offset-0',
-            'placeholder:text-muted-foreground/60'
-          )}
-        />
-
-        {/* 우측 버튼 영역 */}
-        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-          {/* 초기화 버튼 */}
-          {query && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={clearQuery}
-              className="h-9 w-9 text-muted-foreground hover:text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-
-          {/* 검색 버튼 */}
-          <Button
-            onClick={handleSearch}
-            disabled={!query.trim() || isLoading}
-            size="lg"
-            className="h-11 px-6 rounded-xl gap-2"
-          >
-            {isLoading ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <>
-                <Search className="h-5 w-5" />
-                <span className="hidden sm:inline">검색</span>
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
-
-      {/* 하단 힌트 */}
-      <div className="flex items-center justify-center gap-4 mt-3 text-sm text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <Sparkles className="h-3.5 w-3.5 text-yellow-500" />
-          AI 분석 지원
-        </span>
-        <span className="hidden sm:inline">•</span>
-        <span className="hidden sm:flex items-center gap-1">
-          <kbd className="px-1.5 py-0.5 rounded bg-muted text-xs">Ctrl+K</kbd>
-          로 빠른 검색
-        </span>
-      </div>
-    </div>
-  );
-}
-
-export default HeroSearchBar;
-
-```
-
----
-
-## frontend/src/components/home/QuickActionCards.tsx
-
-```tsx
-/**
- * QuickActionCards - 빠른 액션 카드
- * 
- * 홈 화면에서 주요 기능에 1탭으로 접근할 수 있는 카드
- * - 심층 분석
- * - 팩트체크
- * - URL 분석
- */
-
-import { Link } from 'react-router-dom';
-import {
-  Brain,
-  Shield,
-  Link as LinkIcon,
-  ArrowRight,
-  Sparkles,
-} from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
-
-interface QuickAction {
-  id: string;
-  label: string;
-  description: string;
-  icon: typeof Brain;
-  color: string;
-  bgColor: string;
-  hoverColor: string;
-  href: string;
-  badge?: string;
-}
-
-const QUICK_ACTIONS: QuickAction[] = [
-  {
-    id: 'deep',
-    label: '심층 분석',
-    description: 'AI가 심층 증거를 수집하고 입장을 분석합니다',
-    icon: Brain,
-    color: 'text-purple-600 dark:text-purple-400',
-    bgColor: 'bg-purple-50 dark:bg-purple-900/20',
-    hoverColor: 'hover:bg-purple-100 dark:hover:bg-purple-900/30',
-    href: '/search?mode=deep',
-    badge: 'AI',
-  },
-  {
-    id: 'factcheck',
-    label: '팩트체크',
-    description: '주장의 진위를 신뢰할 수 있는 출처로 검증합니다',
-    icon: Shield,
-    color: 'text-green-600 dark:text-green-400',
-    bgColor: 'bg-green-50 dark:bg-green-900/20',
-    hoverColor: 'hover:bg-green-100 dark:hover:bg-green-900/30',
-    href: '/search?mode=factcheck',
-  },
-  {
-    id: 'url',
-    label: 'URL 분석',
-    description: '뉴스 기사에서 검증 가능한 주장을 추출합니다',
-    icon: LinkIcon,
-    color: 'text-orange-600 dark:text-orange-400',
-    bgColor: 'bg-orange-50 dark:bg-orange-900/20',
-    hoverColor: 'hover:bg-orange-100 dark:hover:bg-orange-900/30',
-    href: '/search?mode=urlanalysis',
-  },
-];
-
-interface QuickActionCardsProps {
-  className?: string;
-  layout?: 'horizontal' | 'grid';
-}
-
-export function QuickActionCards({
-  className,
-  layout = 'horizontal',
-}: QuickActionCardsProps) {
-  return (
-    <div
-      className={cn(
-        layout === 'horizontal'
-          ? 'flex flex-col sm:flex-row gap-3'
-          : 'grid grid-cols-1 sm:grid-cols-3 gap-3',
-        className
-      )}
-    >
-      {QUICK_ACTIONS.map(action => (
-        <QuickActionCard key={action.id} action={action} />
-      ))}
-    </div>
-  );
-}
-
-interface QuickActionCardProps {
-  action: QuickAction;
-}
-
-function QuickActionCard({ action }: QuickActionCardProps) {
-  const Icon = action.icon;
-
-  return (
-    <Link to={action.href} className="flex-1">
-      <Card
-        className={cn(
-          'group relative overflow-hidden transition-all duration-200',
-          'border-2 border-transparent',
-          action.bgColor,
-          action.hoverColor,
-          'hover:border-primary/30 hover:shadow-md'
-        )}
-      >
-        <CardContent className="p-4 sm:p-5">
-          <div className="flex items-start gap-3">
-            {/* 아이콘 */}
-            <div
-              className={cn(
-                'p-2.5 rounded-xl bg-background/60 shadow-sm',
-                'group-hover:scale-110 transition-transform duration-200',
-                action.color
-              )}
-            >
-              <Icon className="h-6 w-6" />
-            </div>
-
-            {/* 내용 */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="font-semibold text-base">{action.label}</h3>
-                {action.badge && (
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium',
-                      'bg-primary/10 text-primary'
-                    )}
-                  >
-                    <Sparkles className="h-3 w-3" />
-                    {action.badge}
-                  </span>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground line-clamp-2">
-                {action.description}
-              </p>
-            </div>
-
-            {/* 화살표 */}
-            <ArrowRight
-              className={cn(
-                'h-5 w-5 text-muted-foreground/50',
-                'group-hover:text-primary group-hover:translate-x-1',
-                'transition-all duration-200'
-              )}
-            />
-          </div>
-        </CardContent>
-      </Card>
-    </Link>
-  );
-}
-
-export default QuickActionCards;
-
-```
-
----
-
-## frontend/src/components/home/RecentActivities.tsx
-
-```tsx
-/**
- * RecentActivities - 최근 활동 내역
- * 
- * 백엔드에서 직접 통합 검색, Deep Search, 팩트체크, URL 분석 등의
- * 작업 내역을 가져와서 페이지네이션과 함께 표시합니다.
- */
-
-import { useState, useEffect, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import {
-  History,
-  Search,
-  Brain,
-  Shield,
-  Bot,
-  Link as LinkIcon,
-  ArrowRight,
-  Clock,
-  ChevronLeft,
-  ChevronRight,
-  Loader2,
-  RefreshCw,
-  Filter,
-  CheckCircle2,
-  XCircle,
-  AlertCircle,
-  ExternalLink,
-  MoreHorizontal,
-  Bookmark,
-  BookmarkCheck,
-  Eye,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-import {
-  listSearchHistory,
-  toggleSearchBookmark,
-  type SearchHistoryRecord,
-  type SearchHistoryType,
-  type PageResponse,
-} from '@/lib/api';
-import { cn } from '@/lib/utils';
-
-// 검색 타입별 설정
-const SEARCH_TYPE_CONFIG: Record<SearchHistoryType, {
-  icon: typeof Search;
-  color: string;
-  bgColor: string;
-  label: string;
-  labelKo: string;
-}> = {
-  UNIFIED: {
-    icon: Search,
-    color: 'text-blue-600 dark:text-blue-400',
-    bgColor: 'bg-blue-100 dark:bg-blue-900/30',
-    label: 'UNIFIED',
-    labelKo: '통합 검색',
-  },
-  DEEP_SEARCH: {
-    icon: Brain,
-    color: 'text-purple-600 dark:text-purple-400',
-    bgColor: 'bg-purple-100 dark:bg-purple-900/30',
-    label: 'DEEP',
-    labelKo: '심층 분석',
-  },
-  FACT_CHECK: {
-    icon: Shield,
-    color: 'text-green-600 dark:text-green-400',
-    bgColor: 'bg-green-100 dark:bg-green-900/30',
-    label: 'FACT',
-    labelKo: '팩트체크',
-  },
-  BROWSER_AGENT: {
-    icon: Bot,
-    color: 'text-orange-600 dark:text-orange-400',
-    bgColor: 'bg-orange-100 dark:bg-orange-900/30',
-    label: 'AGENT',
-    labelKo: 'URL 분석',
-  },
-};
-
-// 상대적 시간 표시
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMinutes = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffMinutes < 1) return '방금 전';
-  if (diffMinutes < 60) return `${diffMinutes}분 전`;
-  if (diffHours < 24) return `${diffHours}시간 전`;
-  if (diffDays < 7) return `${diffDays}일 전`;
-  return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
-}
-
-// 날짜 포맷
-function formatDate(dateString: string): string {
-  const date = new Date(dateString);
-  return date.toLocaleDateString('ko-KR', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-interface RecentActivitiesProps {
-  className?: string;
-  pageSize?: number;
-  showFilters?: boolean;
-  showHeader?: boolean;
-  compact?: boolean;
-}
-
-export function RecentActivities({
-  className,
-  pageSize = 5,
-  showFilters = true,
-  showHeader = true,
-  compact = false,
-}: RecentActivitiesProps) {
-  const navigate = useNavigate();
-  
-  // State
-  const [activities, setActivities] = useState<SearchHistoryRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
-  // Pagination state
-  const [currentPage, setCurrentPage] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
-  const [totalElements, setTotalElements] = useState(0);
-  
-  // Filter state
-  const [selectedType, setSelectedType] = useState<SearchHistoryType | 'ALL'>('ALL');
-
-  // Fetch activities from backend
-  const fetchActivities = useCallback(async (page: number = 0, refresh: boolean = false) => {
-    if (refresh) {
-      setIsRefreshing(true);
-    } else {
-      setIsLoading(true);
-    }
-    setError(null);
-
-    try {
-      const typeFilter = selectedType === 'ALL' ? undefined : selectedType;
-      const response: PageResponse<SearchHistoryRecord> = await listSearchHistory(
-        page,
-        pageSize,
-        'createdAt',
-        'DESC',
-        typeFilter
-      );
-
-      setActivities(response.content);
-      setTotalPages(response.totalPages);
-      setTotalElements(response.totalElements);
-      setCurrentPage(page);
-    } catch (err) {
-      console.error('Failed to fetch activities:', err);
-      setError('활동 내역을 불러오는데 실패했습니다.');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, [pageSize, selectedType]);
-
-  // Initial load and refetch when filter changes
-  useEffect(() => {
-    fetchActivities(0);
-  }, [fetchActivities]);
-
-  // Handle bookmark toggle
-  const handleToggleBookmark = async (id: number, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      await toggleSearchBookmark(id);
-      // Update local state
-      setActivities(prev => prev.map(a => 
-        a.id === id ? { ...a, bookmarked: !a.bookmarked } : a
-      ));
-    } catch (err) {
-      console.error('Failed to toggle bookmark:', err);
-    }
-  };
-
-  // Navigate to detail page based on search type
-  const handleItemClick = (activity: SearchHistoryRecord) => {
-    const routeMap: Record<SearchHistoryType, string> = {
-      UNIFIED: `/search?q=${encodeURIComponent(activity.query)}`,
-      DEEP_SEARCH: `/deep-search?q=${encodeURIComponent(activity.query)}`,
-      FACT_CHECK: `/fact-check?q=${encodeURIComponent(activity.query)}`,
-      BROWSER_AGENT: `/browser-agent?historyId=${activity.id}`,
-    };
-    navigate(routeMap[activity.searchType] || `/search?q=${encodeURIComponent(activity.query)}`);
-  };
-
-  // Pagination handlers
-  const goToPage = (page: number) => {
-    if (page >= 0 && page < totalPages) {
-      fetchActivities(page);
-    }
-  };
-
-  // Loading skeleton
-  if (isLoading && !isRefreshing) {
-    return (
-      <Card className={className}>
-        {showHeader && (
-          <CardHeader className="pb-3">
-            <Skeleton className="h-6 w-32" />
-          </CardHeader>
-        )}
-        <CardContent className="space-y-3">
-          {Array.from({ length: pageSize }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-muted/30">
-              <Skeleton className="h-10 w-10 rounded-lg" />
-              <div className="flex-1 space-y-2">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-3 w-1/2" />
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card className={className}>
-      {/* Header */}
-      {showHeader && (
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2">
-              <History className="h-4 w-4" />
-              최근 활동 내역
-              {totalElements > 0 && (
-                <Badge variant="secondary" className="ml-2 text-xs">
-                  {totalElements}건
-                </Badge>
-              )}
-            </CardTitle>
-            <div className="flex items-center gap-2">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => fetchActivities(currentPage, true)}
-                      disabled={isRefreshing}
-                    >
-                      <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>새로고침</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              <Button variant="ghost" size="sm" asChild className="text-xs h-8">
-                <Link to="/history">
-                  전체 보기
-                  <ArrowRight className="h-3 w-3 ml-1" />
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-      )}
-
-      <CardContent className="space-y-4">
-        {/* Filters */}
-        {showFilters && (
-          <Tabs
-            value={selectedType}
-            onValueChange={(v) => setSelectedType(v as SearchHistoryType | 'ALL')}
-            className="w-full"
-          >
-            <TabsList className="grid w-full grid-cols-5 h-9">
-              <TabsTrigger value="ALL" className="text-xs px-2">전체</TabsTrigger>
-              <TabsTrigger value="UNIFIED" className="text-xs px-2">검색</TabsTrigger>
-              <TabsTrigger value="DEEP_SEARCH" className="text-xs px-2">심층분석</TabsTrigger>
-              <TabsTrigger value="FACT_CHECK" className="text-xs px-2">팩트체크</TabsTrigger>
-              <TabsTrigger value="BROWSER_AGENT" className="text-xs px-2">URL분석</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        )}
-
-        {/* Error state */}
-        {error && (
-          <div className="flex items-center justify-center py-6 text-destructive">
-            <AlertCircle className="h-4 w-4 mr-2" />
-            <span className="text-sm">{error}</span>
-            <Button
-              variant="link"
-              size="sm"
-              onClick={() => fetchActivities(0)}
-              className="ml-2"
-            >
-              다시 시도
-            </Button>
-          </div>
-        )}
-
-        {/* Empty state */}
-        {!error && activities.length === 0 && (
-          <div className="text-center py-8 text-muted-foreground">
-            <History className="h-10 w-10 mx-auto mb-3 opacity-30" />
-            <p className="text-sm font-medium">아직 활동 내역이 없습니다</p>
-            <p className="text-xs mt-1">검색, 심층분석, 팩트체크 등을 시작해보세요</p>
-          </div>
-        )}
-
-        {/* Activity list */}
-        {!error && activities.length > 0 && (
-          <div className="space-y-2">
-            {activities.map((activity) => (
-              <ActivityItem
-                key={activity.id}
-                activity={activity}
-                compact={compact}
-                onClick={() => handleItemClick(activity)}
-                onBookmarkToggle={handleToggleBookmark}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Pagination */}
-        {!error && totalPages > 1 && (
-          <div className="flex items-center justify-between pt-2 border-t">
-            <span className="text-xs text-muted-foreground">
-              {currentPage * pageSize + 1}-{Math.min((currentPage + 1) * pageSize, totalElements)} / {totalElements}건
-            </span>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8"
-                onClick={() => goToPage(currentPage - 1)}
-                disabled={currentPage === 0}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              
-              {/* Page numbers */}
-              <div className="flex items-center gap-1 mx-1">
-                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                  let pageNum: number;
-                  if (totalPages <= 5) {
-                    pageNum = i;
-                  } else if (currentPage < 3) {
-                    pageNum = i;
-                  } else if (currentPage > totalPages - 4) {
-                    pageNum = totalPages - 5 + i;
-                  } else {
-                    pageNum = currentPage - 2 + i;
-                  }
-                  return (
-                    <Button
-                      key={pageNum}
-                      variant={currentPage === pageNum ? "default" : "ghost"}
-                      size="icon"
-                      className="h-8 w-8 text-xs"
-                      onClick={() => goToPage(pageNum)}
-                    >
-                      {pageNum + 1}
-                    </Button>
-                  );
-                })}
-              </div>
-              
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8"
-                onClick={() => goToPage(currentPage + 1)}
-                disabled={currentPage >= totalPages - 1}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// Activity item component
-interface ActivityItemProps {
-  activity: SearchHistoryRecord;
-  compact?: boolean;
-  onClick: () => void;
-  onBookmarkToggle: (id: number, e: React.MouseEvent) => void;
-}
-
-function ActivityItem({ activity, compact, onClick, onBookmarkToggle }: ActivityItemProps) {
-  const config = SEARCH_TYPE_CONFIG[activity.searchType] || SEARCH_TYPE_CONFIG.UNIFIED;
-  const Icon = config.icon;
-
-  // Status indicator
-  const getStatusInfo = () => {
-    if (activity.success === false || activity.errorMessage) {
-      return { icon: XCircle, color: 'text-destructive', label: '실패' };
-    }
-    if (activity.resultCount !== undefined && activity.resultCount > 0) {
-      return { icon: CheckCircle2, color: 'text-green-600', label: '완료' };
-    }
-    return null;
-  };
-
-  const statusInfo = getStatusInfo();
-
-  return (
-    <div
-      onClick={onClick}
-      className={cn(
-        'flex items-start gap-3 p-3 rounded-lg transition-all cursor-pointer',
-        'bg-card hover:bg-muted/50 border border-transparent hover:border-border',
-        'group'
-      )}
-    >
-      {/* Type icon */}
-      <div className={cn(
-        'flex-shrink-0 h-10 w-10 rounded-lg flex items-center justify-center',
-        config.bgColor
-      )}>
-        <Icon className={cn('h-5 w-5', config.color)} />
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            {/* Query */}
-            <p className="text-sm font-medium line-clamp-1 group-hover:text-primary transition-colors">
-              {activity.query}
-            </p>
-            
-            {/* Meta info */}
-            <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
-              {/* Type badge */}
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5">
-                {config.labelKo}
-              </Badge>
-              
-              {/* Result count */}
-              {activity.resultCount !== undefined && activity.resultCount > 0 && (
-                <span className="flex items-center gap-1">
-                  <Eye className="h-3 w-3" />
-                  {activity.resultCount}건
-                </span>
-              )}
-              
-              {/* Credibility score */}
-              {activity.credibilityScore !== undefined && (
-                <span className={cn(
-                  'flex items-center gap-1 font-medium',
-                  activity.credibilityScore >= 70 ? 'text-green-600' :
-                  activity.credibilityScore >= 40 ? 'text-yellow-600' : 'text-red-600'
-                )}>
-                  신뢰도 {activity.credibilityScore.toFixed(0)}%
-                </span>
-              )}
-              
-              {/* Status */}
-              {statusInfo && (
-                <span className={cn('flex items-center gap-1', statusInfo.color)}>
-                  <statusInfo.icon className="h-3 w-3" />
-                  {statusInfo.label}
-                </span>
-              )}
-              
-              {/* Time */}
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger className="flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    {formatRelativeTime(activity.createdAt)}
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {formatDate(activity.createdAt)}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={(e) => onBookmarkToggle(activity.id, e)}
-                  >
-                    {activity.bookmarked ? (
-                      <BookmarkCheck className="h-4 w-4 text-primary" />
-                    ) : (
-                      <Bookmark className="h-4 w-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {activity.bookmarked ? '북마크 해제' : '북마크'}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-7 w-7">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onClick(); }}>
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  상세 보기
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={(e) => { 
-                  e.stopPropagation(); 
-                  navigator.clipboard.writeText(activity.query);
-                }}>
-                  복사
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem 
-                  onClick={(e) => onBookmarkToggle(activity.id, e)}
-                >
-                  {activity.bookmarked ? (
-                    <>
-                      <BookmarkCheck className="h-4 w-4 mr-2" />
-                      북마크 해제
-                    </>
-                  ) : (
-                    <>
-                      <Bookmark className="h-4 w-4 mr-2" />
-                      북마크
-                    </>
-                  )}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-
-        {/* Tags */}
-        {activity.tags && activity.tags.length > 0 && !compact && (
-          <div className="flex items-center gap-1 mt-2 flex-wrap">
-            {activity.tags.slice(0, 3).map((tag, idx) => (
-              <Badge key={idx} variant="secondary" className="text-[10px] px-1.5 py-0">
-                {tag}
-              </Badge>
-            ))}
-            {activity.tags.length > 3 && (
-              <span className="text-[10px] text-muted-foreground">
-                +{activity.tags.length - 3}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-export default RecentActivities;
-
-```
-
----
-
-## frontend/src/components/home/RecentSearches.tsx
-
-```tsx
-/**
- * RecentSearches - 최근 검색
- * 
- * 사용자의 최근 검색 기록을 표시
- * - 빠른 재검색
- * - 검색 타입별 구분
- */
-
-import { Link } from 'react-router-dom';
-import {
-  History,
-  Search,
-  Brain,
-  Shield,
-  Bot,
-  Link as LinkIcon,
-  ArrowRight,
-  Clock,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useSearchHistory, type SearchHistoryType } from '@/lib/api';
-import { cn } from '@/lib/utils';
-
-// 검색 타입별 설정
-const SEARCH_TYPE_CONFIG: Record<SearchHistoryType, {
-  icon: typeof Search;
-  color: string;
-  label: string;
-}> = {
-  UNIFIED: {
-    icon: Search,
-    color: 'text-blue-600',
-    label: '검색',
-  },
-  DEEP_SEARCH: {
-    icon: Brain,
-    color: 'text-purple-600',
-    label: '심층분석',
-  },
-  FACT_CHECK: {
-    icon: Shield,
-    color: 'text-green-600',
-    label: '팩트체크',
-  },
-  BROWSER_AGENT: {
-    icon: Bot,
-    color: 'text-orange-600',
-    label: '에이전트',
-  },
-};
-
-// 상대적 시간 표시
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMinutes = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffMinutes < 1) return '방금 전';
-  if (diffMinutes < 60) return `${diffMinutes}분 전`;
-  if (diffHours < 24) return `${diffHours}시간 전`;
-  if (diffDays < 7) return `${diffDays}일 전`;
-  return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
-}
-
-interface RecentSearchItem {
-  id: number;
-  query: string;
-  searchType: SearchHistoryType;
-  resultCount?: number;
-  createdAt: string;
-}
-
-interface RecentSearchesProps {
-  className?: string;
-  maxItems?: number;
-  searches?: RecentSearchItem[];
-  isLoading?: boolean;
-}
-
-export function RecentSearches({
-  className,
-  maxItems = 5,
-  searches = [],
-  isLoading = false,
-}: RecentSearchesProps) {
-  // 로딩 상태
-  if (isLoading) {
-    return (
-      <Card className={className}>
-        <CardHeader className="pb-3">
-          <Skeleton className="h-5 w-24" />
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {[1, 2, 3].map(i => (
-            <Skeleton key={i} className="h-10 w-full" />
-          ))}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 검색 기록 없음
-  if (searches.length === 0) {
-    return (
-      <Card className={className}>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <History className="h-4 w-4" />
-            최근 검색
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground text-center py-4">
-            아직 검색 기록이 없습니다
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const displaySearches = searches.slice(0, maxItems);
-
-  return (
-    <Card className={className}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <History className="h-4 w-4" />
-            최근 검색
-          </CardTitle>
-          <Button variant="ghost" size="sm" asChild className="text-xs h-7">
-            <Link to="/workspace/history">
-              전체 보기
-              <ArrowRight className="h-3 w-3 ml-1" />
-            </Link>
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-1">
-        {displaySearches.map(search => (
-          <RecentSearchItem key={search.id} search={search} />
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-interface RecentSearchItemProps {
-  search: RecentSearchItem;
-}
-
-function RecentSearchItem({ search }: RecentSearchItemProps) {
-  const config = SEARCH_TYPE_CONFIG[search.searchType] || SEARCH_TYPE_CONFIG.UNIFIED;
-  const Icon = config.icon;
-
-  // 검색 타입에 따른 URL 생성
-  const getSearchUrl = () => {
-    const modeMap: Record<SearchHistoryType, string> = {
-      UNIFIED: '',
-      DEEP_SEARCH: 'mode=deep',
-      FACT_CHECK: 'mode=factcheck',
-      BROWSER_AGENT: '',
-    };
-    const mode = modeMap[search.searchType];
-    const query = `q=${encodeURIComponent(search.query)}`;
-    return mode ? `/?${mode}&${query}` : `/?${query}`;
-  };
-
-  return (
-    <Link
-      to={getSearchUrl()}
-      className={cn(
-        'flex items-center gap-3 p-2 rounded-lg transition-colors',
-        'hover:bg-muted group'
-      )}
-    >
-      {/* 아이콘 */}
-      <Icon className={cn('h-4 w-4 flex-shrink-0', config.color)} />
-
-      {/* 쿼리 */}
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium line-clamp-1 group-hover:text-primary transition-colors">
-          {search.query}
-        </p>
-      </div>
-
-      {/* 메타 정보 */}
-      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-shrink-0">
-        {search.resultCount !== undefined && (
-          <span>{search.resultCount}건</span>
-        )}
-        <span className="flex items-center gap-1">
-          <Clock className="h-3 w-3" />
-          {formatRelativeTime(search.createdAt)}
-        </span>
-      </div>
-    </Link>
-  );
-}
-
-// 축약 버전 (홈 사이드바용)
-interface RecentSearchesCompactProps {
-  className?: string;
-  searches?: RecentSearchItem[];
-  maxItems?: number;
-}
-
-export function RecentSearchesCompact({
-  className,
-  searches = [],
-  maxItems = 5,
-}: RecentSearchesCompactProps) {
-  if (searches.length === 0) {
-    return (
-      <p className={cn('text-sm text-muted-foreground text-center py-2', className)}>
-        최근 검색 없음
-      </p>
-    );
-  }
-
-  return (
-    <div className={cn('space-y-1', className)}>
-      {searches.slice(0, maxItems).map(search => {
-        const config = SEARCH_TYPE_CONFIG[search.searchType] || SEARCH_TYPE_CONFIG.UNIFIED;
-        const Icon = config.icon;
-
-        return (
-          <Link
-            key={search.id}
-            to={`/?q=${encodeURIComponent(search.query)}`}
-            className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted transition-colors"
-          >
-            <Icon className={cn('h-3.5 w-3.5', config.color)} />
-            <span className="text-sm line-clamp-1 flex-1">{search.query}</span>
-          </Link>
-        );
-      })}
-    </div>
-  );
-}
-
-export default RecentSearches;
-
-```
-
----
-
-## frontend/src/components/home/RecommendedTemplates.tsx
-
-```tsx
-/**
- * RecommendedTemplates - 추천 템플릿
- * 
- * 자주 사용하는 검색 패턴을 템플릿으로 제공
- * - 즐겨찾기 템플릿
- * - 최근 사용 템플릿
- * - 기본 추천 템플릿
- */
-
-import { Link } from 'react-router-dom';
-import {
-  FileText,
-  Star,
-  Sparkles,
-  ArrowRight,
-  Search,
-  Brain,
-  Shield,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
-
-interface SearchTemplate {
-  id: number;
-  name: string;
-  query: string;
-  mode: 'unified' | 'deep' | 'factcheck';
-  description?: string;
-  favorite?: boolean;
-  useCount?: number;
-}
-
-// 기본 추천 템플릿
-const DEFAULT_TEMPLATES: SearchTemplate[] = [
-  {
-    id: -1,
-    name: '찬반 입장 비교 분석',
-    query: '',
-    mode: 'deep',
-    description: '특정 이슈에 대한 찬성/반대 입장 수집',
-    useCount: 0,
-  },
-  {
-    id: -2,
-    name: '팩트체크 리포트',
-    query: '',
-    mode: 'factcheck',
-    description: '주장의 사실 여부를 다각도로 검증',
-    useCount: 0,
-  },
-  {
-    id: -3,
-    name: '출처 신뢰도 분석',
-    query: '',
-    mode: 'unified',
-    description: '정보 출처의 신뢰성 평가',
-    useCount: 0,
-  },
-];
-
-const MODE_CONFIG = {
-  unified: {
-    icon: Search,
-    color: 'text-blue-600',
-    bgColor: 'bg-blue-50 dark:bg-blue-900/20',
-  },
-  deep: {
-    icon: Brain,
-    color: 'text-purple-600',
-    bgColor: 'bg-purple-50 dark:bg-purple-900/20',
-  },
-  factcheck: {
-    icon: Shield,
-    color: 'text-green-600',
-    bgColor: 'bg-green-50 dark:bg-green-900/20',
-  },
-};
-
-interface RecommendedTemplatesProps {
-  className?: string;
-  templates?: SearchTemplate[];
-  isLoading?: boolean;
-  onSelectTemplate?: (template: SearchTemplate) => void;
-  showDefaults?: boolean;
-}
-
-export function RecommendedTemplates({
-  className,
-  templates = [],
-  isLoading = false,
-  onSelectTemplate,
-  showDefaults = true,
-}: RecommendedTemplatesProps) {
-  // 로딩 상태
-  if (isLoading) {
-    return (
-      <Card className={className}>
-        <CardHeader className="pb-3">
-          <Skeleton className="h-5 w-28" />
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-2 overflow-x-auto pb-2">
-            {[1, 2, 3].map(i => (
-              <Skeleton key={i} className="h-24 w-48 flex-shrink-0" />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 즐겨찾기와 사용자 템플릿 결합
-  const favoriteTemplates = templates.filter(t => t.favorite);
-  const recentTemplates = templates
-    .filter(t => !t.favorite && t.useCount && t.useCount > 0)
-    .sort((a, b) => (b.useCount || 0) - (a.useCount || 0))
-    .slice(0, 3);
-
-  const prioritizedTemplates = [...favoriteTemplates, ...recentTemplates];
-  const usedModes = new Set(prioritizedTemplates.map(t => t.mode));
-  const defaultsToAdd = showDefaults
-    ? DEFAULT_TEMPLATES.filter(t => !usedModes.has(t.mode))
-    : [];
-
-  const combined = [...prioritizedTemplates, ...defaultsToAdd];
-  const uniqueById = Array.from(
-    combined.reduce((map, t) => {
-      if (!map.has(t.id)) map.set(t.id, t);
-      return map;
-    }, new Map<number, SearchTemplate>())
-  ).map(([, t]) => t);
-
-  const displayTemplates = uniqueById.slice(0, 6);
-
-  return (
-    <Card className={className}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-yellow-500" />
-            추천 템플릿
-          </CardTitle>
-          <Button variant="ghost" size="sm" asChild className="text-xs h-7">
-            <Link to="/workspace">
-              전체 보기
-              <ArrowRight className="h-3 w-3 ml-1" />
-            </Link>
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {displayTemplates.length === 0 ? (
-          <div className="flex items-center justify-between gap-4">
-            <div className="text-sm text-muted-foreground">
-              아직 추천할 템플릿이 없습니다
-            </div>
-            <Button variant="outline" size="sm" asChild className="text-xs h-8">
-              <Link to="/workspace">템플릿 만들기</Link>
-            </Button>
-          </div>
-        ) : (
-          <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
-            {displayTemplates.map(template => (
-              <TemplateCard
-                key={template.id}
-                template={template}
-                onClick={() => onSelectTemplate?.(template)}
-              />
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-interface TemplateCardProps {
-  template: SearchTemplate;
-  onClick?: () => void;
-}
-
-function TemplateCard({ template, onClick }: TemplateCardProps) {
-  const config = MODE_CONFIG[template.mode];
-  const Icon = config.icon;
-
-  // 기본 템플릿인지 확인 (ID가 음수면 기본 템플릿)
-  const isDefault = template.id < 0;
-
-  const getTemplateUrl = () => {
-    if (isDefault) {
-      // 기본 템플릿은 모드만 설정
-      return `/search?mode=${template.mode}`;
-    }
-    // 사용자 템플릿은 쿼리 포함
-    const mode = template.mode === 'unified' ? '' : `mode=${template.mode}`;
-    const query = template.query ? `q=${encodeURIComponent(template.query)}` : '';
-    const params = [mode, query].filter(Boolean).join('&');
-    return params ? `/search?${params}` : '/search';
-  };
-
-  return (
-    <Link
-      to={getTemplateUrl()}
-      onClick={onClick}
-      className={cn(
-        'flex-shrink-0 w-48 p-3 rounded-lg border transition-all',
-        'hover:border-primary/50 hover:shadow-sm',
-        config.bgColor
-      )}
-    >
-      <div className="flex items-start gap-2 mb-2">
-        <div className={cn('p-1.5 rounded-lg bg-background/60', config.color)}>
-          <Icon className="h-4 w-4" />
-        </div>
-        {template.favorite && (
-          <Star className="h-3.5 w-3.5 fill-yellow-400 text-yellow-400" />
-        )}
-      </div>
-
-      <h4 className="font-medium text-sm line-clamp-1 mb-1">
-        {template.name}
-      </h4>
-
-      {template.description && (
-        <p className="text-xs text-muted-foreground line-clamp-2">
-          {template.description}
-        </p>
-      )}
-
-      {!isDefault && template.useCount !== undefined && template.useCount > 0 && (
-        <Badge variant="outline" className="mt-2 text-xs">
-          {template.useCount}회 사용
-        </Badge>
-      )}
-    </Link>
-  );
-}
-
-export default RecommendedTemplates;
-
-```
-
----
-
-## frontend/src/components/home/TrendingTopics.tsx
-
-```tsx
-/**
- * TrendingTopics - 오늘의 트렌드
- * 
- * 실시간 트렌딩 이슈와 논쟁 주제를 표시
- * - 트렌드 스코어
- * - 입장 분포 시각화
- * - 빠른 검색 링크
- */
-
-import { Link } from 'react-router-dom';
-import {
-  TrendingUp,
-  Flame,
-  ArrowUpRight,
-  ThumbsUp,
-  ThumbsDown,
-  Minus,
-  RefreshCw,
-  ExternalLink,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useTrendingTopics, type TrendingTopic } from '@/hooks/useTrendingTopics';
-import { cn } from '@/lib/utils';
-
-interface TrendingTopicsProps {
-  className?: string;
-  maxItems?: number;
-  showRefresh?: boolean;
-}
-
-export function TrendingTopics({
-  className,
-  maxItems = 5,
-  showRefresh = true,
-}: TrendingTopicsProps) {
-  const { topics, personalizedTopics, isLoading, error, refresh, hasTrendingApi } = useTrendingTopics();
-
-  // 로딩 상태
-  if (isLoading) {
-    return (
-      <Card className={className}>
-        <CardHeader className="pb-3">
-          <Skeleton className="h-5 w-32" />
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {[1, 2, 3].map(i => (
-            <Skeleton key={i} className="h-16 w-full" />
-          ))}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 에러 상태
-  if (error) {
-    return (
-      <Card className={cn('border-destructive/50', className)}>
-        <CardContent className="py-4">
-          <p className="text-sm text-destructive">{error}</p>
-          <Button variant="outline" size="sm" onClick={refresh} className="mt-2">
-            다시 시도
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 트렌딩 API가 없을 때 개인화 토픽 또는 빈 상태 표시
-  const displayTopics = topics.length > 0 ? topics.slice(0, maxItems) : personalizedTopics.slice(0, maxItems);
-  const isPersonalized = topics.length === 0 && personalizedTopics.length > 0;
-
-  return (
-    <Card className={className}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-orange-500" />
-            {isPersonalized ? '내 관심 주제' : '오늘의 트렌드'}
-          </CardTitle>
-          {showRefresh && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={refresh}
-              className="h-8 w-8"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {displayTopics.length > 0 ? (
-          displayTopics.map((topic, index) => (
-            <TrendingTopicItem
-              key={topic.id}
-              topic={topic}
-              rank={index + 1}
-            />
-          ))
-        ) : (
-          <div className="text-center py-6 text-muted-foreground">
-            <TrendingUp className="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">아직 검색 기록이 없습니다</p>
-            <p className="text-xs mt-1">검색을 시작하면 관심 주제가 표시됩니다</p>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-interface TrendingTopicItemProps {
-  topic: TrendingTopic;
-  rank: number;
-}
-
-function TrendingTopicItem({ topic, rank }: TrendingTopicItemProps) {
-  return (
-    <Link
-      to={topic.searchUrl}
-      className={cn(
-        'block p-3 rounded-lg transition-all',
-        'hover:bg-muted/50 group'
-      )}
-    >
-      <div className="flex items-start gap-3">
-        {/* 순위 */}
-        <div
-          className={cn(
-            'flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold',
-            rank <= 3
-              ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
-              : 'bg-muted text-muted-foreground'
-          )}
-        >
-          {rank}
-        </div>
-
-        {/* 내용 */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <h4 className="font-medium text-sm line-clamp-1 group-hover:text-primary transition-colors">
-              {topic.title}
-            </h4>
-            {topic.isHot && (
-              <Flame className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
-            )}
-            {topic.isRising && !topic.isHot && (
-              <ArrowUpRight className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
-            )}
-          </div>
-
-          {/* 입장 분포 바 */}
-          {topic.stanceDistribution && (
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-1.5 rounded-full overflow-hidden bg-muted flex">
-                {topic.stanceDistribution.proRatio > 0 && (
-                  <div
-                    className="h-full bg-teal-500"
-                    style={{ width: `${topic.stanceDistribution.proRatio}%` }}
-                  />
-                )}
-                {topic.stanceDistribution.neutralRatio > 0 && (
-                  <div
-                    className="h-full bg-gray-400"
-                    style={{ width: `${topic.stanceDistribution.neutralRatio}%` }}
-                  />
-                )}
-                {topic.stanceDistribution.conRatio > 0 && (
-                  <div
-                    className="h-full bg-red-500"
-                    style={{ width: `${topic.stanceDistribution.conRatio}%` }}
-                  />
-                )}
-              </div>
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                {topic.newsCount ? `${topic.newsCount}건` : ''}
-              </span>
-            </div>
-          )}
-
-          {/* 카테고리 */}
-          {topic.category && (
-            <Badge variant="outline" className="mt-1.5 text-xs">
-              {topic.category}
-            </Badge>
-          )}
-        </div>
-
-        {/* 링크 아이콘 */}
-        <ExternalLink
-          className={cn(
-            'h-4 w-4 text-muted-foreground/0',
-            'group-hover:text-muted-foreground transition-colors'
-          )}
-        />
-      </div>
-    </Link>
-  );
-}
-
-// 축약 버전 (홈 사이드바용)
-interface TrendingTopicsCompactProps {
-  className?: string;
-  maxItems?: number;
-  topics?: TrendingTopic[];
-  onTopicClick?: (keyword: string) => void;
-}
-
-export function TrendingTopicsCompact({
-  className,
-  maxItems = 5,
-  topics: externalTopics,
-  onTopicClick,
-}: TrendingTopicsCompactProps) {
-  const { topics: internalTopics, personalizedTopics, isLoading } = useTrendingTopics();
-  
-  // 외부에서 제공된 topics가 있으면 사용, 없으면 내부 hook 사용
-  // 트렌딩 토픽이 없으면 개인화 토픽으로 대체
-  const topics = externalTopics 
-    || (internalTopics.length > 0 ? internalTopics : personalizedTopics);
-
-  if (!externalTopics && isLoading) {
-    return (
-      <div className={cn('space-y-2', className)}>
-        {[1, 2, 3].map(i => (
-          <Skeleton key={i} className="h-8 w-full" />
-        ))}
-      </div>
-    );
-  }
-
-  const handleClick = (topic: TrendingTopic, e: React.MouseEvent) => {
-    if (onTopicClick) {
-      e.preventDefault();
-      onTopicClick(topic.title);
-    }
-  };
-
-  // 토픽이 없을 때 빈 상태 표시
-  if (topics.length === 0) {
-    return (
-      <div className={cn('text-center py-4 text-muted-foreground', className)}>
-        <p className="text-sm">아직 트렌드 데이터가 없습니다</p>
-        <p className="text-xs mt-1">검색을 시작해 보세요</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className={cn('space-y-1', className)}>
-      {topics.slice(0, maxItems).map((topic, index) => (
-        <Link
-          key={topic.id}
-          to={topic.searchUrl}
-          onClick={(e) => handleClick(topic, e)}
-          className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted transition-colors"
-        >
-          <span
-            className={cn(
-              'text-xs font-medium w-4',
-              index < 3 ? 'text-orange-500' : 'text-muted-foreground'
-            )}
-          >
-            {index + 1}
-          </span>
-          <span className="text-sm line-clamp-1 flex-1">{topic.title}</span>
-          {topic.isHot && <Flame className="h-3 w-3 text-red-500" />}
-        </Link>
-      ))}
-    </div>
-  );
-}
-
-export default TrendingTopics;
-
-```
-
----
-
-## frontend/src/components/home/UsageStreakCard.tsx
-
-```tsx
-/**
- * UsageStreakCard - 연속 사용 현황 카드
- * 
- * 사용자의 활동 통계와 연속 사용 일수를 표시
- * - 연속 사용 스트릭
- * - 주간 활동 히트맵
- * - 누적 분석 건수
- */
-
-import {
-  Flame,
-  Calendar,
-  TrendingUp,
-  Search,
-  Brain,
-  Shield,
-  Award,
-  Target,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useUsageStreak, getDayName } from '@/hooks/useUsageStreak';
-import { cn } from '@/lib/utils';
-
-interface UsageStreakCardProps {
-  className?: string;
-  variant?: 'full' | 'compact';
-}
-
-export function UsageStreakCard({
-  className,
-  variant = 'full',
-}: UsageStreakCardProps) {
-  const { stats, isLoading } = useUsageStreak();
-
-  // 로딩 상태
-  if (isLoading) {
-    return (
-      <Card className={className}>
-        <CardHeader className="pb-3">
-          <Skeleton className="h-5 w-28" />
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-24 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (variant === 'compact') {
-    return <UsageStreakCompact stats={stats} className={className} />;
-  }
-
-  return (
-    <Card className={className}>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Award className="h-4 w-4 text-yellow-500" />
-          분석 활동
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* 연속 사용 스트릭 */}
-        <div className="flex items-center gap-4 p-3 rounded-lg bg-gradient-to-r from-orange-50 to-yellow-50 dark:from-orange-900/20 dark:to-yellow-900/20">
-          <div className="p-2 rounded-full bg-orange-100 dark:bg-orange-900/30">
-            <Flame className="h-6 w-6 text-orange-500" />
-          </div>
-          <div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-3xl font-bold text-orange-600 dark:text-orange-400">
-                {stats.currentStreak}
-              </span>
-              <span className="text-sm text-muted-foreground">일 연속</span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              최고 기록: {stats.longestStreak}일
-            </p>
-          </div>
-        </div>
-
-        {/* 주간 활동 히트맵 */}
-        <div>
-          <h4 className="text-sm font-medium mb-2 flex items-center gap-1">
-            <Calendar className="h-4 w-4" />
-            이번 주
-          </h4>
-          <div className="flex justify-between gap-1">
-            {stats.weeklyActivity.map((day) => (
-              <div key={day.date} className="flex-1 text-center">
-                <div
-                  className={cn(
-                    'h-8 rounded-md flex items-center justify-center text-xs font-medium transition-colors',
-                    day.hasActivity
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground'
-                  )}
-                >
-                  {day.hasActivity ? '✓' : '○'}
-                </div>
-                <span className="text-xs text-muted-foreground mt-1 block">
-                  {getDayName(day.date)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* 통계 요약 */}
-        <div className="grid grid-cols-3 gap-3">
-          <StatItem
-            icon={Search}
-            label="검색"
-            value={stats.weeklySearchCount}
-            color="text-blue-600"
-          />
-          <StatItem
-            icon={Brain}
-            label="심층분석"
-            value={stats.weeklyDeepSearchCount}
-            color="text-purple-600"
-          />
-          <StatItem
-            icon={Shield}
-            label="팩트체크"
-            value={stats.weeklyFactCheckCount}
-            color="text-green-600"
-          />
-        </div>
-
-        {/* 주간 목표 진행률 */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-sm">
-            <span className="flex items-center gap-1">
-              <Target className="h-4 w-4" />
-              주간 목표
-            </span>
-            <span className="text-muted-foreground">
-              {stats.weeklyTotal} / 20건
-            </span>
-          </div>
-          <Progress
-            value={Math.min((stats.weeklyTotal / 20) * 100, 100)}
-            className="h-2"
-          />
-          {stats.weeklyTotal >= 20 && (
-            <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-              <Award className="h-3 w-3" />
-              목표 달성! 훌륭합니다!
-            </p>
-          )}
-        </div>
-
-        {/* 누적 통계 */}
-        <div className="pt-3 border-t">
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">총 분석 건수</span>
-            <span className="font-medium">{stats.totalSearches}건</span>
-          </div>
-          <div className="flex justify-between text-sm mt-1">
-            <span className="text-muted-foreground">일 평균</span>
-            <span className="font-medium">{stats.averageSearchesPerDay}건</span>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// 통계 아이템
-interface StatItemProps {
-  icon: typeof Search;
-  label: string;
-  value: number;
-  color: string;
-}
-
-function StatItem({ icon: Icon, label, value, color }: StatItemProps) {
-  return (
-    <div className="text-center p-2 rounded-lg bg-muted/50">
-      <Icon className={cn('h-4 w-4 mx-auto mb-1', color)} />
-      <div className="text-lg font-bold">{value}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-    </div>
-  );
-}
-
-// 축약 버전
-interface UsageStreakCompactProps {
-  stats: ReturnType<typeof useUsageStreak>['stats'];
-  className?: string;
-}
-
-function UsageStreakCompact({ stats, className }: UsageStreakCompactProps) {
-  return (
-    <div className={cn('flex items-center gap-4 p-3 rounded-lg bg-muted/50', className)}>
-      <div className="flex items-center gap-2">
-        <Flame className="h-5 w-5 text-orange-500" />
-        <span className="font-bold text-lg">{stats.currentStreak}</span>
-        <span className="text-sm text-muted-foreground">일 연속</span>
-      </div>
-      <div className="h-6 w-px bg-border" />
-      <div className="flex items-center gap-2">
-        <TrendingUp className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm">이번 주 {stats.weeklyTotal}건</span>
-      </div>
-    </div>
-  );
-}
-
-export default UsageStreakCard;
-
-```
-
----
-
-## frontend/src/components/home/index.ts
-
-```ts
-/**
- * Home 컴포넌트 인덱스
- * 
- * 모든 홈 관련 컴포넌트를 export
- */
-
-export { HeroSearchBar } from './HeroSearchBar';
-export { ContinueCard } from './ContinueCard';
-export { QuickActionCards } from './QuickActionCards';
-export { TrendingTopics, TrendingTopicsCompact } from './TrendingTopics';
-export { RecentSearches, RecentSearchesCompact } from './RecentSearches';
-export { RecentActivities } from './RecentActivities';
-export { RecommendedTemplates } from './RecommendedTemplates';
-export { DailyInsightCard } from './DailyInsightCard';
-export { UsageStreakCard } from './UsageStreakCard';
-
-```
-
----
-
-## frontend/src/components/insight/InsightCards.tsx
-
-```tsx
-import * as React from "react";
-import {
-  Scale,
-  Lightbulb,
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  ExternalLink,
-  Share2,
-  Download,
-  BookOpen,
-  BarChart3,
-  Target,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import type { Evidence, StanceDistribution } from "@/lib/api";
-
-// ============================================
-// Base Card Wrapper with Glassmorphism
-// ============================================
-
-interface InsightCardWrapperProps {
-  children: React.ReactNode;
-  className?: string;
-  variant?: "default" | "teal" | "coral" | "navy" | "conclusion";
-}
-
-export const InsightCardWrapper = ({
-  children,
-  className,
-  variant = "default",
-}: InsightCardWrapperProps) => {
-  const variantStyles = {
-    default: "bg-card/80 backdrop-blur-md border-border/50",
-    teal: "bg-teal-50/80 dark:bg-teal-950/40 backdrop-blur-md border-teal-200/50 dark:border-teal-800/50",
-    coral: "bg-coral-50/80 dark:bg-coral-950/40 backdrop-blur-md border-coral-200/50 dark:border-coral-800/50",
-    navy: "bg-slate-50/80 dark:bg-slate-900/40 backdrop-blur-md border-slate-200/50 dark:border-slate-700/50",
-    conclusion: "bg-gradient-to-br from-primary/10 to-accent/10 backdrop-blur-md border-primary/30",
-  };
-
-  return (
-    <div
-      className={cn(
-        "rounded-2xl border shadow-lg p-6 md:p-8 h-full flex flex-col",
-        "transition-all duration-300",
-        variantStyles[variant],
-        className
-      )}
-    >
-      {children}
-    </div>
-  );
-};
-
-// ============================================
-// A. Intro Card - Fact Check & Summary
-// ============================================
-
-interface IntroCardProps {
-  topic: string;
-  summaryPoints: string[];
-  evidenceCount: number;
-  backgroundImage?: string;
-}
-
-export const IntroCard = ({
-  topic,
-  summaryPoints,
-  evidenceCount,
-}: IntroCardProps) => {
-  return (
-    <InsightCardWrapper className="relative overflow-hidden">
-      {/* Background decorative element */}
-      <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-bl from-primary/10 to-transparent rounded-full -translate-y-1/2 translate-x-1/2" />
-      
-      <div className="relative z-10 flex flex-col h-full">
-        {/* Icon and Badge */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 rounded-xl bg-primary/10 text-primary">
-            <Lightbulb className="h-6 w-6" />
-          </div>
-          <Badge variant="secondary" className="text-xs">
-            Fact Check Summary
-          </Badge>
-        </div>
-
-        {/* Topic Title */}
-        <h2 className="text-2xl md:text-3xl font-bold mb-2 text-foreground">
-          {topic}
-        </h2>
-        <p className="text-sm text-muted-foreground mb-6">
-          {evidenceCount}개의 출처에서 수집된 핵심 정보
-        </p>
-
-        {/* Summary Points */}
-        <div className="flex-1 space-y-3">
-          {summaryPoints.slice(0, 3).map((point, idx) => (
-            <div
-              key={idx}
-              className="flex items-start gap-3 p-3 rounded-lg bg-background/50"
-            >
-              <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 text-primary text-sm font-medium flex items-center justify-center">
-                {idx + 1}
-              </span>
-              <p className="text-sm text-foreground leading-relaxed">{point}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Swipe hint */}
-        <div className="mt-6 text-center text-xs text-muted-foreground animate-pulse">
-          스와이프하여 상세 분석 보기 →
-        </div>
-      </div>
-    </InsightCardWrapper>
-  );
-};
-
-// ============================================
-// B. Viewpoint Comparison Card (VS Layout)
-// ============================================
-
-interface ViewpointVSCardProps {
-  topic: string;
-  proPoints: Evidence[];
-  conPoints: Evidence[];
-  distribution: StanceDistribution;
-}
-
-export const ViewpointVSCard = ({
-  topic,
-  proPoints,
-  conPoints,
-  distribution,
-}: ViewpointVSCardProps) => {
-  return (
-    <InsightCardWrapper>
-      <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="flex items-center justify-center gap-3 mb-6">
-          <div className="p-3 rounded-xl bg-muted text-foreground">
-            <Scale className="h-6 w-6" />
-          </div>
-          <h3 className="text-xl font-bold">관점 비교</h3>
-        </div>
-
-        {/* Distribution Bar */}
-        <div className="flex gap-1 h-3 rounded-full overflow-hidden mb-6">
-          <div
-            className="bg-teal-500 transition-all duration-500"
-            style={{ width: `${distribution.proRatio}%` }}
-          />
-          <div
-            className="bg-gray-400 transition-all duration-500"
-            style={{ width: `${distribution.neutralRatio}%` }}
-          />
-          <div
-            className="bg-coral-500 transition-all duration-500"
-            style={{ width: `${distribution.conRatio}%` }}
-          />
-        </div>
-
-        {/* VS Layout */}
-        <div className="flex-1 grid grid-cols-2 gap-4">
-          {/* Pro Side (Teal) */}
-          <div className="flex flex-col">
-            <div className="flex items-center gap-2 mb-3">
-              <TrendingUp className="h-4 w-4 text-teal-600" />
-              <span className="text-sm font-semibold text-teal-700 dark:text-teal-400">
-                찬성 ({distribution.proRatio.toFixed(0)}%)
-              </span>
-            </div>
-            <div className="flex-1 space-y-2 overflow-y-auto max-h-64">
-              {proPoints.slice(0, 3).map((evidence) => (
-                <div
-                  key={evidence.id}
-                  className="p-3 rounded-lg bg-teal-100/50 dark:bg-teal-900/30 border border-teal-200/50 dark:border-teal-800/50"
-                >
-                  <p className="text-xs text-foreground line-clamp-3">
-                    {evidence.snippet}
-                  </p>
-                  {evidence.source && (
-                    <span className="text-xs text-muted-foreground mt-1 block">
-                      — {evidence.source}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Con Side (Coral) */}
-          <div className="flex flex-col">
-            <div className="flex items-center gap-2 mb-3">
-              <TrendingDown className="h-4 w-4 text-coral-600" />
-              <span className="text-sm font-semibold text-coral-700 dark:text-coral-400">
-                반대 ({distribution.conRatio.toFixed(0)}%)
-              </span>
-            </div>
-            <div className="flex-1 space-y-2 overflow-y-auto max-h-64">
-              {conPoints.slice(0, 3).map((evidence) => (
-                <div
-                  key={evidence.id}
-                  className="p-3 rounded-lg bg-coral-100/50 dark:bg-coral-900/30 border border-coral-200/50 dark:border-coral-800/50"
-                >
-                  <p className="text-xs text-foreground line-clamp-3">
-                    {evidence.snippet}
-                  </p>
-                  {evidence.source && (
-                    <span className="text-xs text-muted-foreground mt-1 block">
-                      — {evidence.source}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </InsightCardWrapper>
-  );
-};
-
-// ============================================
-// B-2. Topic Cluster Card (Multi-topic view)
-// ============================================
-
-interface TopicCluster {
-  tag: string;
-  evidence: Evidence[];
-  color: string;
-}
-
-interface TopicClusterCardProps {
-  clusters: TopicCluster[];
-}
-
-export const TopicClusterCard = ({ clusters }: TopicClusterCardProps) => {
-  return (
-    <InsightCardWrapper>
-      <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 rounded-xl bg-muted text-foreground">
-            <BookOpen className="h-6 w-6" />
-          </div>
-          <h3 className="text-xl font-bold">주제별 분석</h3>
-        </div>
-
-        {/* Topic Chips */}
-        <div className="flex flex-wrap gap-2 mb-4">
-          {clusters.map((cluster, idx) => (
-            <Badge
-              key={idx}
-              variant="outline"
-              className="px-3 py-1"
-              style={{
-                borderColor: cluster.color,
-                color: cluster.color,
-              }}
-            >
-              #{cluster.tag}
-            </Badge>
-          ))}
-        </div>
-
-        {/* Horizontal Scroll Cards */}
-        <div className="flex-1 overflow-x-auto">
-          <div className="flex gap-4 pb-4">
-            {clusters.map((cluster, idx) => (
-              <div
-                key={idx}
-                className="flex-shrink-0 w-64 p-4 rounded-xl bg-background/50 border"
-                style={{ borderColor: `${cluster.color}40` }}
-              >
-                <div
-                  className="text-sm font-semibold mb-3"
-                  style={{ color: cluster.color }}
-                >
-                  #{cluster.tag}
-                </div>
-                <div className="space-y-2">
-                  {cluster.evidence.slice(0, 2).map((e) => (
-                    <p key={e.id} className="text-xs text-muted-foreground line-clamp-2">
-                      {e.snippet}
-                    </p>
-                  ))}
-                </div>
-                <div className="mt-3 text-xs text-muted-foreground">
-                  {cluster.evidence.length}개 증거
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </InsightCardWrapper>
-  );
-};
-
-// ============================================
-// C. Data Visualization Card
-// ============================================
-
-interface DataVisualizationCardProps {
-  distribution: StanceDistribution;
-  topic: string;
-  evidenceCount: number;
-}
-
-export const DataVisualizationCard = ({
-  distribution,
-  topic,
-  evidenceCount,
-}: DataVisualizationCardProps) => {
-  const total = distribution.pro + distribution.con + distribution.neutral;
-
-  return (
-    <InsightCardWrapper variant="navy">
-      <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 rounded-xl bg-slate-200/50 dark:bg-slate-700/50 text-foreground">
-            <BarChart3 className="h-6 w-6" />
-          </div>
-          <h3 className="text-xl font-bold">데이터 분석</h3>
-        </div>
-
-        {/* Visual Chart */}
-        <div className="flex-1 flex flex-col items-center justify-center">
-          {/* Circular representation */}
-          <div className="relative w-48 h-48 mb-6">
-            <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
-              {/* Background circle */}
-              <circle
-                cx="50"
-                cy="50"
-                r="40"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="8"
-                className="text-muted/30"
-              />
-              {/* Pro arc */}
-              <circle
-                cx="50"
-                cy="50"
-                r="40"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="8"
-                strokeDasharray={`${distribution.proRatio * 2.51} 251`}
-                strokeDashoffset="0"
-                className="text-teal-500"
-              />
-              {/* Neutral arc */}
-              <circle
-                cx="50"
-                cy="50"
-                r="40"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="8"
-                strokeDasharray={`${distribution.neutralRatio * 2.51} 251`}
-                strokeDashoffset={`${-distribution.proRatio * 2.51}`}
-                className="text-gray-400"
-              />
-              {/* Con arc */}
-              <circle
-                cx="50"
-                cy="50"
-                r="40"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="8"
-                strokeDasharray={`${distribution.conRatio * 2.51} 251`}
-                strokeDashoffset={`${-(distribution.proRatio + distribution.neutralRatio) * 2.51}`}
-                className="text-coral-500"
-              />
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-3xl font-bold">{total}</span>
-              <span className="text-xs text-muted-foreground">증거 수집</span>
-            </div>
-          </div>
-
-          {/* Legend */}
-          <div className="grid grid-cols-3 gap-6 w-full">
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-2 mb-1">
-                <div className="w-3 h-3 rounded-full bg-teal-500" />
-                <span className="text-lg font-bold">{distribution.pro}</span>
-              </div>
-              <span className="text-xs text-muted-foreground">찬성</span>
-            </div>
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-2 mb-1">
-                <div className="w-3 h-3 rounded-full bg-gray-400" />
-                <span className="text-lg font-bold">{distribution.neutral}</span>
-              </div>
-              <span className="text-xs text-muted-foreground">중립</span>
-            </div>
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-2 mb-1">
-                <div className="w-3 h-3 rounded-full bg-coral-500" />
-                <span className="text-lg font-bold">{distribution.con}</span>
-              </div>
-              <span className="text-xs text-muted-foreground">반대</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Interpretation */}
-        <div className="mt-6 p-4 rounded-xl bg-background/50 text-center">
-          <p className="text-sm text-muted-foreground">
-            "{topic}"에 대해 {distribution.proRatio > distribution.conRatio ? "긍정적" : distribution.proRatio < distribution.conRatio ? "부정적" : "균형잡힌"} 시각이{" "}
-            {Math.abs(distribution.proRatio - distribution.conRatio).toFixed(0)}% 더 우세합니다.
-          </p>
-        </div>
-      </div>
-    </InsightCardWrapper>
-  );
-};
-
-// ============================================
-// D. Conclusion Card - The Verdict
-// ============================================
-
-interface ConclusionCardProps {
-  topic: string;
-  conclusion: string;
-  keyInsight: string;
-  distribution: StanceDistribution;
-  onShare?: () => void;
-  onDownload?: () => void;
-}
-
-export const ConclusionCard = ({
-  topic,
-  conclusion,
-  keyInsight,
-  distribution,
-  onShare,
-  onDownload,
-}: ConclusionCardProps) => {
-  return (
-    <InsightCardWrapper variant="conclusion">
-      <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="flex items-center justify-center gap-3 mb-6">
-          <div className="p-3 rounded-xl bg-primary/20 text-primary">
-            <Target className="h-6 w-6" />
-          </div>
-          <h3 className="text-xl font-bold text-primary">최종 인사이트</h3>
-        </div>
-
-        {/* Main Conclusion */}
-        <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
-          <blockquote className="text-xl md:text-2xl font-bold leading-relaxed mb-6 text-foreground">
-            "{conclusion}"
-          </blockquote>
-
-          <div className="w-16 h-1 bg-primary/30 rounded-full mb-6" />
-
-          <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
-            {keyInsight}
-          </p>
-        </div>
-
-        {/* Balance Indicator */}
-        <div className="my-6 flex items-center justify-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-2 rounded-full bg-teal-500" />
-            <span className="text-xs text-muted-foreground">
-              {distribution.proRatio.toFixed(0)}%
-            </span>
-          </div>
-          <Scale className="h-5 w-5 text-muted-foreground" />
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {distribution.conRatio.toFixed(0)}%
-            </span>
-            <div className="w-8 h-2 rounded-full bg-coral-500" />
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex justify-center gap-3">
-          {onShare && (
-            <Button variant="outline" size="sm" onClick={onShare}>
-              <Share2 className="h-4 w-4 mr-2" />
-              공유하기
-            </Button>
-          )}
-          {onDownload && (
-            <Button variant="outline" size="sm" onClick={onDownload}>
-              <Download className="h-4 w-4 mr-2" />
-              저장하기
-            </Button>
-          )}
-        </div>
-      </div>
-    </InsightCardWrapper>
-  );
-};
-
-// ============================================
-// Evidence Detail Card (for detailed view)
-// ============================================
-
-interface EvidenceDetailCardProps {
-  evidence: Evidence[];
-  stance: "pro" | "con" | "neutral" | "all";
-}
-
-export const EvidenceDetailCard = ({
-  evidence,
-  stance,
-}: EvidenceDetailCardProps) => {
-  const filteredEvidence =
-    stance === "all" ? evidence : evidence.filter((e) => e.stance === stance);
-
-  const stanceConfig = {
-    pro: { color: "teal", icon: TrendingUp, label: "찬성 의견" },
-    con: { color: "coral", icon: TrendingDown, label: "반대 의견" },
-    neutral: { color: "gray", icon: Minus, label: "중립 의견" },
-    all: { color: "primary", icon: BookOpen, label: "전체 증거" },
-  };
-
-  const config = stanceConfig[stance];
-  const Icon = config.icon;
-
-  return (
-    <InsightCardWrapper>
-      <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-4">
-          <Icon className={`h-5 w-5 text-${config.color}-600`} />
-          <h3 className="text-lg font-semibold">{config.label}</h3>
-          <Badge variant="secondary">{filteredEvidence.length}개</Badge>
-        </div>
-
-        {/* Evidence List */}
-        <div className="flex-1 space-y-3 overflow-y-auto max-h-80">
-          {filteredEvidence.map((e) => (
-            <div
-              key={e.id}
-              className="p-4 rounded-xl bg-background/50 border border-border/50 hover:border-border transition-colors"
-            >
-              {e.title && (
-                <h4 className="font-medium text-sm mb-2 line-clamp-1">{e.title}</h4>
-              )}
-              <p className="text-sm text-muted-foreground line-clamp-3 mb-2">
-                {e.snippet}
-              </p>
-              <div className="flex items-center justify-between">
-                {e.source && (
-                  <span className="text-xs text-muted-foreground">{e.source}</span>
-                )}
-                <a
-                  href={e.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-primary hover:underline flex items-center gap-1"
-                >
-                  원문 보기 <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </InsightCardWrapper>
-  );
-};
-
-```
-
----
-
-## frontend/src/components/insight/InsightFlow.tsx
-
-```tsx
-import * as React from "react";
-import { useState, useCallback, useEffect } from "react";
-import useEmblaCarousel from "embla-carousel-react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import {
-  IntroCard,
-  ViewpointVSCard,
-  DataVisualizationCard,
-  ConclusionCard,
-  EvidenceDetailCard,
-} from "./InsightCards";
-import {
-  ProgressStepper,
-  DEFAULT_INSIGHT_STEPS,
-  NavigationControls,
-} from "./ProgressStepper";
-import type { DeepSearchResult, Evidence } from "@/lib/api";
-
-// ============================================
-// Types
-// ============================================
-
-interface InsightFlowProps {
-  result: DeepSearchResult;
-  onShare?: () => void;
-  onDownload?: () => void;
-  className?: string;
-}
-
-// ============================================
-// Helper Functions
-// ============================================
-
-/**
- * Generate summary points from evidence
- */
-const generateSummaryPoints = (evidence: Evidence[]): string[] => {
-  const points: string[] = [];
-
-  // Get unique snippets, prioritizing diverse stances
-  const stances = ["pro", "neutral", "con"] as const;
-  for (const stance of stances) {
-    const stanceEvidence = evidence.filter((e) => e.stance === stance);
-    if (stanceEvidence.length > 0) {
-      // Use title if available, otherwise use snippet
-      const text = stanceEvidence[0].title || stanceEvidence[0].snippet;
-      if (text && !points.includes(text)) {
-        points.push(text.length > 100 ? text.substring(0, 100) + "..." : text);
-      }
-    }
-    if (points.length >= 3) break;
-  }
-
-  // Fill remaining with any evidence
-  for (const e of evidence) {
-    if (points.length >= 3) break;
-    const text = e.title || e.snippet;
-    if (text && !points.includes(text)) {
-      points.push(text.length > 100 ? text.substring(0, 100) + "..." : text);
-    }
-  }
-
-  return points;
-};
-
-/**
- * Generate conclusion from distribution
- */
-const generateConclusion = (result: DeepSearchResult): string => {
-  const { proRatio, conRatio, neutralRatio } = result.stanceDistribution;
-
-  if (Math.abs(proRatio - conRatio) < 10) {
-    return `${result.topic}에 대해 의견이 팽팽하게 나뉘고 있습니다.`;
-  } else if (proRatio > conRatio) {
-    return `${result.topic}에 대해 전반적으로 긍정적인 평가가 우세합니다.`;
-  } else {
-    return `${result.topic}에 대해 우려와 비판적 시각이 다수를 차지합니다.`;
-  }
-};
-
-/**
- * Generate key insight
- */
-const generateKeyInsight = (result: DeepSearchResult): string => {
-  const total = result.evidence.length;
-  const { pro, con, neutral } = result.stanceDistribution;
-
-  return `총 ${total}개의 출처를 분석한 결과, 찬성 ${pro}건, 반대 ${con}건, 중립 ${neutral}건의 의견이 수집되었습니다. 다양한 관점을 고려하여 균형 잡힌 판단을 내리시기 바랍니다.`;
-};
-
-// ============================================
-// InsightFlow Component
-// ============================================
-
-export const InsightFlow = ({
-  result,
-  onShare,
-  onDownload,
-  className,
-}: InsightFlowProps) => {
-  const [emblaRef, emblaApi] = useEmblaCarousel({
-    loop: false,
-    dragFree: false,
-    containScroll: "trimSnaps",
-  });
-
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [canScrollPrev, setCanScrollPrev] = useState(false);
-  const [canScrollNext, setCanScrollNext] = useState(false);
-
-  // Separate evidence by stance
-  const proEvidence = result.evidence.filter((e) => e.stance === "pro");
-  const conEvidence = result.evidence.filter((e) => e.stance === "con");
-  const neutralEvidence = result.evidence.filter((e) => e.stance === "neutral");
-
-  // Generate content
-  const summaryPoints = generateSummaryPoints(result.evidence);
-  const conclusion = generateConclusion(result);
-  const keyInsight = generateKeyInsight(result);
-
-  // Steps configuration
-  const steps = DEFAULT_INSIGHT_STEPS;
-
-  // Update scroll state
-  const onSelect = useCallback(() => {
-    if (!emblaApi) return;
-    setCurrentIndex(emblaApi.selectedScrollSnap());
-    setCanScrollPrev(emblaApi.canScrollPrev());
-    setCanScrollNext(emblaApi.canScrollNext());
-  }, [emblaApi]);
-
-  useEffect(() => {
-    if (!emblaApi) return;
-    onSelect();
-    emblaApi.on("select", onSelect);
-    emblaApi.on("reInit", onSelect);
-    return () => {
-      emblaApi.off("select", onSelect);
-      emblaApi.off("reInit", onSelect);
-    };
-  }, [emblaApi, onSelect]);
-
-  // Navigation handlers
-  const scrollPrev = useCallback(() => {
-    emblaApi?.scrollPrev();
-  }, [emblaApi]);
-
-  const scrollNext = useCallback(() => {
-    emblaApi?.scrollNext();
-  }, [emblaApi]);
-
-  const scrollTo = useCallback(
-    (index: number) => {
-      emblaApi?.scrollTo(index);
-    },
-    [emblaApi]
-  );
-
-  // Keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") {
-        scrollPrev();
-      } else if (e.key === "ArrowRight") {
-        scrollNext();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [scrollPrev, scrollNext]);
-
-  return (
-    <div className={cn("w-full", className)}>
-      {/* Progress Stepper */}
-      <div className="mb-6">
-        <ProgressStepper
-          steps={steps}
-          currentStep={currentIndex}
-          onStepClick={scrollTo}
-          variant="steps"
-          className="px-4"
-        />
-      </div>
-
-      {/* Carousel Container */}
-      <div className="relative">
-        {/* Navigation Arrows (Desktop) */}
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={scrollPrev}
-          disabled={!canScrollPrev}
-          className={cn(
-            "absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10",
-            "hidden md:flex",
-            "h-12 w-12 rounded-full shadow-lg",
-            "bg-background/80 backdrop-blur-sm",
-            !canScrollPrev && "opacity-0 pointer-events-none"
-          )}
-        >
-          <ChevronLeft className="h-6 w-6" />
-        </Button>
-
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={scrollNext}
-          disabled={!canScrollNext}
-          className={cn(
-            "absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10",
-            "hidden md:flex",
-            "h-12 w-12 rounded-full shadow-lg",
-            "bg-background/80 backdrop-blur-sm",
-            !canScrollNext && "opacity-0 pointer-events-none"
-          )}
-        >
-          <ChevronRight className="h-6 w-6" />
-        </Button>
-
-        {/* Embla Carousel */}
-        <div ref={emblaRef} className="overflow-hidden">
-          <div className="flex touch-pan-y">
-            {/* Slide 1: Intro Card */}
-            <div className="flex-none w-full min-w-0 px-4">
-              <div className="h-[500px] md:h-[550px]">
-                <IntroCard
-                  topic={result.topic}
-                  summaryPoints={summaryPoints}
-                  evidenceCount={result.evidence.length}
-                />
-              </div>
-            </div>
-
-            {/* Slide 2: Viewpoint VS Card */}
-            <div className="flex-none w-full min-w-0 px-4">
-              <div className="h-[500px] md:h-[550px]">
-                <ViewpointVSCard
-                  topic={result.topic}
-                  proPoints={proEvidence}
-                  conPoints={conEvidence}
-                  distribution={result.stanceDistribution}
-                />
-              </div>
-            </div>
-
-            {/* Slide 3: Data Visualization Card */}
-            <div className="flex-none w-full min-w-0 px-4">
-              <div className="h-[500px] md:h-[550px]">
-                <DataVisualizationCard
-                  distribution={result.stanceDistribution}
-                  topic={result.topic}
-                  evidenceCount={result.evidence.length}
-                />
-              </div>
-            </div>
-
-            {/* Slide 4: Evidence Detail Card */}
-            <div className="flex-none w-full min-w-0 px-4">
-              <div className="h-[500px] md:h-[550px]">
-                <EvidenceDetailCard evidence={result.evidence} stance="all" />
-              </div>
-            </div>
-
-            {/* Slide 5: Conclusion Card */}
-            <div className="flex-none w-full min-w-0 px-4">
-              <div className="h-[500px] md:h-[550px]">
-                <ConclusionCard
-                  topic={result.topic}
-                  conclusion={conclusion}
-                  keyInsight={keyInsight}
-                  distribution={result.stanceDistribution}
-                  onShare={onShare}
-                  onDownload={onDownload}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile Navigation Controls */}
-      <div className="mt-6 md:hidden px-4">
-        <NavigationControls
-          currentStep={currentIndex}
-          totalSteps={steps.length}
-          onPrevious={scrollPrev}
-          onNext={scrollNext}
-          canGoPrevious={canScrollPrev}
-          canGoNext={canScrollNext}
-        />
-      </div>
-
-      {/* Dots indicator (alternative compact view) */}
-      <div className="mt-6 hidden md:block">
-        <ProgressStepper
-          steps={steps}
-          currentStep={currentIndex}
-          onStepClick={scrollTo}
-          variant="dots"
-        />
-      </div>
-
-      {/* Keyboard hint */}
-      <div className="mt-4 text-center text-xs text-muted-foreground hidden md:block">
-        ← → 키보드 방향키로 탐색하세요
-      </div>
-    </div>
-  );
-};
-
-// ============================================
-// Compact InsightFlow (for smaller views)
-// ============================================
-
-interface CompactInsightFlowProps {
-  result: DeepSearchResult;
-  className?: string;
-}
-
-export const CompactInsightFlow = ({
-  result,
-  className,
-}: CompactInsightFlowProps) => {
-  const [emblaRef, emblaApi] = useEmblaCarousel({
-    loop: false,
-    align: "start",
-    containScroll: "trimSnaps",
-    dragFree: true,
-  });
-
-  const [currentIndex, setCurrentIndex] = useState(0);
-
-  useEffect(() => {
-    if (!emblaApi) return;
-
-    const onSelect = () => {
-      setCurrentIndex(emblaApi.selectedScrollSnap());
-    };
-
-    emblaApi.on("select", onSelect);
-    return () => {
-      emblaApi.off("select", onSelect);
-    };
-  }, [emblaApi]);
-
-  const proEvidence = result.evidence.filter((e) => e.stance === "pro");
-  const conEvidence = result.evidence.filter((e) => e.stance === "con");
-
-  const cards = [
-    { id: "summary", title: "요약", color: "bg-primary/10" },
-    { id: "pro", title: `찬성 (${proEvidence.length})`, color: "bg-teal-100 dark:bg-teal-900/30" },
-    { id: "con", title: `반대 (${conEvidence.length})`, color: "bg-coral-100 dark:bg-coral-900/30" },
-    { id: "conclusion", title: "결론", color: "bg-primary/10" },
-  ];
-
-  return (
-    <div className={cn("w-full", className)}>
-      {/* Progress dots */}
-      <div className="flex justify-center gap-1.5 mb-4">
-        {cards.map((_, idx) => (
-          <div
-            key={idx}
-            className={cn(
-              "w-2 h-2 rounded-full transition-all",
-              idx === currentIndex ? "w-6 bg-primary" : "bg-muted-foreground/30"
-            )}
-          />
-        ))}
-      </div>
-
-      {/* Horizontal scroll cards */}
-      <div ref={emblaRef} className="overflow-hidden -mx-4 px-4">
-        <div className="flex gap-4">
-          {cards.map((card) => (
-            <div
-              key={card.id}
-              className={cn(
-                "flex-none w-72 h-48 rounded-xl p-4",
-                "border border-border/50",
-                card.color
-              )}
-            >
-              <h4 className="font-semibold mb-2">{card.title}</h4>
-              <p className="text-sm text-muted-foreground line-clamp-5">
-                {card.id === "summary" &&
-                  `"${result.topic}"에 대한 ${result.evidence.length}개 출처 분석`}
-                {card.id === "pro" && proEvidence[0]?.snippet}
-                {card.id === "con" && conEvidence[0]?.snippet}
-                {card.id === "conclusion" && generateConclusion(result)}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default InsightFlow;
-
-```
-
----
-
-## frontend/src/components/insight/ProgressStepper.tsx
-
-```tsx
-import * as React from "react";
-import { cn } from "@/lib/utils";
-import { Check, Lightbulb, Scale, BarChart3, Target, List } from "lucide-react";
-
-// ============================================
-// Step Configuration
-// ============================================
-
-export interface StepConfig {
-  id: string;
-  label: string;
-  icon: React.ElementType;
-  shortLabel?: string;
-}
-
-export const DEFAULT_INSIGHT_STEPS: StepConfig[] = [
-  { id: "intro", label: "핵심 요약", shortLabel: "요약", icon: Lightbulb },
-  { id: "viewpoint", label: "관점 비교", shortLabel: "비교", icon: Scale },
-  { id: "data", label: "데이터 분석", shortLabel: "분석", icon: BarChart3 },
-  { id: "evidence", label: "상세 증거", shortLabel: "증거", icon: List },
-  { id: "conclusion", label: "최종 결론", shortLabel: "결론", icon: Target },
-];
-
-// ============================================
-// Progress Stepper Component
-// ============================================
-
-interface ProgressStepperProps {
-  steps: StepConfig[];
-  currentStep: number;
-  onStepClick?: (stepIndex: number) => void;
-  className?: string;
-  variant?: "dots" | "bar" | "steps";
-}
-
-export const ProgressStepper = ({
-  steps,
-  currentStep,
-  onStepClick,
-  className,
-  variant = "dots",
-}: ProgressStepperProps) => {
-  if (variant === "dots") {
-    return (
-      <DotsProgress
-        steps={steps}
-        currentStep={currentStep}
-        onStepClick={onStepClick}
-        className={className}
-      />
-    );
-  }
-
-  if (variant === "bar") {
-    return (
-      <BarProgress
-        steps={steps}
-        currentStep={currentStep}
-        className={className}
-      />
-    );
-  }
-
-  return (
-    <StepsProgress
-      steps={steps}
-      currentStep={currentStep}
-      onStepClick={onStepClick}
-      className={className}
-    />
-  );
-};
-
-// ============================================
-// Dots Variant (Default)
-// ============================================
-
-const DotsProgress = ({
-  steps,
-  currentStep,
-  onStepClick,
-  className,
-}: ProgressStepperProps) => {
-  return (
-    <div className={cn("flex items-center justify-center gap-2", className)}>
-      {steps.map((step, idx) => {
-        const isActive = idx === currentStep;
-        const isCompleted = idx < currentStep;
-
-        return (
-          <React.Fragment key={step.id}>
-            <button
-              onClick={() => onStepClick?.(idx)}
-              disabled={!onStepClick}
-              className={cn(
-                "relative group transition-all duration-300",
-                onStepClick && "cursor-pointer",
-                !onStepClick && "cursor-default"
-              )}
-              aria-label={step.label}
-            >
-              <div
-                className={cn(
-                  "w-3 h-3 rounded-full transition-all duration-300",
-                  isActive && "w-8 bg-primary scale-110",
-                  isCompleted && "bg-primary",
-                  !isActive && !isCompleted && "bg-muted-foreground/30"
-                )}
-              />
-              {/* Tooltip */}
-              <div
-                className={cn(
-                  "absolute -bottom-8 left-1/2 -translate-x-1/2",
-                  "px-2 py-1 rounded text-xs whitespace-nowrap",
-                  "bg-popover border shadow-md",
-                  "opacity-0 group-hover:opacity-100 transition-opacity",
-                  "pointer-events-none z-10"
-                )}
-              >
-                {step.label}
-              </div>
-            </button>
-
-            {/* Connector line */}
-            {idx < steps.length - 1 && (
-              <div
-                className={cn(
-                  "w-6 md:w-8 h-0.5 transition-colors duration-300",
-                  idx < currentStep ? "bg-primary" : "bg-muted-foreground/30"
-                )}
-              />
-            )}
-          </React.Fragment>
-        );
-      })}
-    </div>
-  );
-};
-
-// ============================================
-// Bar Variant
-// ============================================
-
-const BarProgress = ({
-  steps,
-  currentStep,
-  className,
-}: Omit<ProgressStepperProps, "onStepClick" | "variant">) => {
-  const progress = ((currentStep + 1) / steps.length) * 100;
-
-  return (
-    <div className={cn("w-full", className)}>
-      {/* Labels */}
-      <div className="flex justify-between mb-2 px-1">
-        <span className="text-xs text-muted-foreground">
-          {currentStep + 1} / {steps.length}
-        </span>
-        <span className="text-xs font-medium text-foreground">
-          {steps[currentStep]?.label}
-        </span>
-      </div>
-
-      {/* Progress Bar */}
-      <div className="h-2 bg-muted rounded-full overflow-hidden">
-        <div
-          className="h-full bg-primary transition-all duration-500 ease-out rounded-full"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-    </div>
-  );
-};
-
-// ============================================
-// Steps Variant (Full labels)
-// ============================================
-
-const StepsProgress = ({
-  steps,
-  currentStep,
-  onStepClick,
-  className,
-}: ProgressStepperProps) => {
-  return (
-    <div className={cn("w-full", className)}>
-      <div className="flex items-center justify-between">
-        {steps.map((step, idx) => {
-          const isActive = idx === currentStep;
-          const isCompleted = idx < currentStep;
-          const Icon = step.icon;
-
-          return (
-            <React.Fragment key={step.id}>
-              <button
-                onClick={() => onStepClick?.(idx)}
-                disabled={!onStepClick}
-                className={cn(
-                  "flex flex-col items-center gap-2 group",
-                  onStepClick && "cursor-pointer",
-                  !onStepClick && "cursor-default"
-                )}
-              >
-                {/* Circle */}
-                <div
-                  className={cn(
-                    "w-10 h-10 rounded-full flex items-center justify-center",
-                    "border-2 transition-all duration-300",
-                    isActive &&
-                      "border-primary bg-primary text-primary-foreground scale-110",
-                    isCompleted &&
-                      "border-primary bg-primary/10 text-primary",
-                    !isActive &&
-                      !isCompleted &&
-                      "border-muted-foreground/30 text-muted-foreground/50"
-                  )}
-                >
-                  {isCompleted ? (
-                    <Check className="h-5 w-5" />
-                  ) : (
-                    <Icon className="h-5 w-5" />
-                  )}
-                </div>
-
-                {/* Label */}
-                <span
-                  className={cn(
-                    "text-xs transition-colors duration-300 hidden md:block",
-                    isActive && "text-foreground font-medium",
-                    isCompleted && "text-primary",
-                    !isActive && !isCompleted && "text-muted-foreground"
-                  )}
-                >
-                  {step.label}
-                </span>
-                <span
-                  className={cn(
-                    "text-xs transition-colors duration-300 md:hidden",
-                    isActive && "text-foreground font-medium",
-                    isCompleted && "text-primary",
-                    !isActive && !isCompleted && "text-muted-foreground"
-                  )}
-                >
-                  {step.shortLabel || step.label}
-                </span>
-              </button>
-
-              {/* Connector */}
-              {idx < steps.length - 1 && (
-                <div
-                  className={cn(
-                    "flex-1 h-0.5 mx-2 transition-colors duration-300",
-                    idx < currentStep ? "bg-primary" : "bg-muted-foreground/30"
-                  )}
-                />
-              )}
-            </React.Fragment>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
-// ============================================
-// Slide Counter (Simple version)
-// ============================================
-
-interface SlideCounterProps {
-  current: number;
-  total: number;
-  className?: string;
-}
-
-export const SlideCounter = ({ current, total, className }: SlideCounterProps) => {
-  return (
-    <div className={cn("flex items-center gap-2 text-sm", className)}>
-      <span className="font-bold text-foreground">{current}</span>
-      <span className="text-muted-foreground">/</span>
-      <span className="text-muted-foreground">{total}</span>
-    </div>
-  );
-};
-
-// ============================================
-// Navigation Controls
-// ============================================
-
-interface NavigationControlsProps {
-  currentStep: number;
-  totalSteps: number;
-  onPrevious: () => void;
-  onNext: () => void;
-  canGoPrevious: boolean;
-  canGoNext: boolean;
-  className?: string;
-}
-
-export const NavigationControls = ({
-  currentStep,
-  totalSteps,
-  onPrevious,
-  onNext,
-  canGoPrevious,
-  canGoNext,
-  className,
-}: NavigationControlsProps) => {
-  return (
-    <div className={cn("flex items-center justify-between gap-4", className)}>
-      <button
-        onClick={onPrevious}
-        disabled={!canGoPrevious}
-        className={cn(
-          "px-4 py-2 rounded-lg text-sm font-medium transition-all",
-          "border border-border",
-          canGoPrevious
-            ? "hover:bg-accent hover:text-accent-foreground"
-            : "opacity-50 cursor-not-allowed"
-        )}
-      >
-        ← 이전
-      </button>
-
-      <SlideCounter current={currentStep + 1} total={totalSteps} />
-
-      <button
-        onClick={onNext}
-        disabled={!canGoNext}
-        className={cn(
-          "px-4 py-2 rounded-lg text-sm font-medium transition-all",
-          "bg-primary text-primary-foreground",
-          canGoNext
-            ? "hover:bg-primary/90"
-            : "opacity-50 cursor-not-allowed"
-        )}
-      >
-        다음 →
-      </button>
-    </div>
-  );
-};
-
-export default ProgressStepper;
-
-```
-
----
-
-## frontend/src/components/insight/index.ts
-
-```ts
-// Insight Card Components
-export {
-  InsightCardWrapper,
-  IntroCard,
-  ViewpointVSCard,
-  TopicClusterCard,
-  DataVisualizationCard,
-  ConclusionCard,
-  EvidenceDetailCard,
-} from "./InsightCards";
-
-// Progress Stepper Components
-export {
-  ProgressStepper,
-  SlideCounter,
-  NavigationControls,
-  DEFAULT_INSIGHT_STEPS,
-  type StepConfig,
-} from "./ProgressStepper";
-
-// InsightFlow (Main component)
-export { InsightFlow, CompactInsightFlow } from "./InsightFlow";
-
-```
-
----
-
-## frontend/src/components/layout/AppLayout.tsx
-
-```tsx
-import { Link, useLocation } from 'react-router-dom';
-import { Command, User, LogIn, LogOut } from 'lucide-react';
-import { BackgroundTaskIndicator } from '@/components/BackgroundTaskIndicator';
-import { ThemeToggle } from '@/components/ThemeToggle';
-import { MobileNavDrawer } from '@/components/MobileNavDrawer';
-import { NotificationBell } from '@/contexts/NotificationContext';
-import { NewNavigation, MobileBottomNav } from './NewNavigation';
-import { SetupBanner } from './SetupBanner';
-import { QuickAccessButton } from './QuickAccessButton';
-import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { cn } from '@/lib/utils';
-import { useAutoNotifications } from '@/hooks/useNotificationBridge';
-import { useAuth } from '@/contexts/AuthContext';
-import { useSkipLinks } from '@/hooks/useAccessibility';
-
-interface AppLayoutProps {
-  children: React.ReactNode;
-}
-
-export function AppLayout({ children }: AppLayoutProps) {
-  const location = useLocation();
-  const { isAuthenticated, user, logout, isLoading } = useAuth();
-  const { SkipLink } = useSkipLinks();
-
-  // SSE 이벤트를 NotificationContext에 자동 연결
-  useAutoNotifications({
-    enabled: true,
-    // ERROR와 COLLECTION_COMPLETED 이벤트만 알림으로 표시 (너무 많은 알림 방지)
-    enabledEventTypes: ['ERROR', 'COLLECTION_COMPLETED', 'COLLECTION_STARTED'],
-    persistent: false, // 브라우저 새로고침 시 알림 삭제
-    dedupeInterval: 10000, // 10초 내 동일 타입 알림 중복 방지
-  });
-
-  const handleLogout = async () => {
-    await logout();
-    window.location.href = '/';
-  };
-
-  return (
-    <div className="min-h-screen flex flex-col pb-16 md:pb-0">
-      {/* Skip Links for Accessibility - visible only on keyboard focus */}
-      <SkipLink targetId="main-content" text="본문으로 건너뛰기" />
-      <SkipLink targetId="search-input" text="검색으로 건너뛰기" />
-      
-      {/* Setup Banner - Shows when admin setup is required */}
-      <SetupBanner />
-
-      {/* Header */}
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-14 items-center justify-between px-4">
-          {/* Mobile Nav & Logo */}
-          <div className="flex items-center gap-2">
-            {/* Mobile Navigation Drawer */}
-            <MobileNavDrawer className="md:hidden" />
-            
-            {/* Logo */}
-            <Link to="/" className="flex items-center gap-2">
-              <img 
-                src="/initial_logo-v0.1.png" 
-                alt="NewsInsight" 
-                className="h-8 w-8"
-                onError={(e) => {
-                  // Fallback if logo doesn't exist
-                  e.currentTarget.style.display = 'none';
-                }}
-              />
-              <span className="font-bold text-lg hidden sm:inline bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-                NewsInsight
-              </span>
-            </Link>
-          </div>
-
-          {/* New Navigation - Desktop */}
-          <div className="hidden md:flex items-center flex-1 justify-center ml-6">
-            <NewNavigation />
-          </div>
-
-          {/* Right side actions */}
-          <div className="flex items-center gap-2">
-            {/* Command Palette Hint - Desktop only */}
-            <button
-              className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-md border bg-muted/50 text-sm text-muted-foreground hover:bg-muted transition-colors"
-              onClick={() => {
-                // Trigger Command Palette (Ctrl+K)
-                const event = new KeyboardEvent('keydown', {
-                  key: 'k',
-                  ctrlKey: true,
-                  bubbles: true,
-                });
-                window.dispatchEvent(event);
-              }}
-              aria-label="검색 명령 팔레트 열기"
-            >
-              <Command className="h-3.5 w-3.5" />
-              <span>검색...</span>
-              <kbd className="ml-2 px-1.5 py-0.5 rounded bg-background text-[10px]">Ctrl+K</kbd>
-            </button>
-            
-            {/* Quick Access Button */}
-            <QuickAccessButton />
-            
-            {/* Notification Bell */}
-            <NotificationBell />
-            {/* Theme Toggle */}
-            <ThemeToggle variant="dropdown" size="sm" />
-            {/* Background Task Indicator */}
-            <BackgroundTaskIndicator />
-            
-            {/* User Menu / Login Button */}
-            {!isLoading && (
-              isAuthenticated && user ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="gap-2">
-                      <User className="h-4 w-4" />
-                      <span className="hidden sm:inline max-w-24 truncate">{user.username}</span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <div className="px-2 py-1.5 text-sm">
-                      <div className="font-medium">{user.username}</div>
-                      {user.email && (
-                        <div className="text-xs text-muted-foreground truncate">{user.email}</div>
-                      )}
-                      <div className="text-xs text-muted-foreground capitalize mt-1">
-                        {user.role === 'user' ? '일반 회원' : user.role}
-                      </div>
-                    </div>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem asChild>
-                      <Link to="/settings" className="cursor-pointer">
-                        설정
-                      </Link>
-                    </DropdownMenuItem>
-                    {(user.role === 'admin' || user.role === 'operator' || user.role === 'viewer') && (
-                      <DropdownMenuItem asChild>
-                        <Link to="/admin/environments" className="cursor-pointer">
-                          관리자 페이지
-                        </Link>
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={handleLogout} className="text-red-600 cursor-pointer">
-                      <LogOut className="h-4 w-4 mr-2" />
-                      로그아웃
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : (
-                <Button variant="outline" size="sm" asChild className="gap-2">
-                  <Link to="/login">
-                    <LogIn className="h-4 w-4" />
-                    <span className="hidden sm:inline">로그인</span>
-                  </Link>
-                </Button>
-              )
-            )}
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main id="main-content" className="flex-1" role="main" tabIndex={-1}>
-        {children}
-      </main>
-
-      {/* Mobile Bottom Navigation */}
-      <MobileBottomNav />
-
-      {/* Footer - Hidden on mobile due to bottom nav */}
-      <footer className="border-t py-4 mt-auto hidden md:block" role="contentinfo">
-        <div className="container px-4 text-center text-sm text-muted-foreground">
-          <p>NewsInsight - AI 기반 뉴스 분석 플랫폼</p>
-          <p className="text-xs mt-1">
-            <kbd className="px-1.5 py-0.5 rounded bg-muted mx-1">Ctrl+K</kbd>로 빠른 검색
-          </p>
-        </div>
-      </footer>
-    </div>
-  );
-}
-
-export default AppLayout;
-
-```
-
----
-
-## frontend/src/components/layout/NewNavigation.tsx
-
-```tsx
-/**
- * NewNavigation - 새로운 5탭 네비게이션 컴포넌트
- * 
- * 구조:
- * 1. 홈 - 새 대시보드
- * 2. 대시보드 - 라이브 대시보드, 운영현황
- * 3. 도구 - 검색, ML Add-ons, 브라우저 에이전트
- * 4. 내 작업 - 프로젝트, 기록, URL 컬렉션
- * 5. 설정 - 환경설정, Admin
- */
-
-import { Link, useLocation } from 'react-router-dom';
-import { useState, useRef, useEffect } from 'react';
-import { cn } from '@/lib/utils';
-import {
-  Home,
-  LayoutDashboard,
-  Wrench,
-  FolderKanban,
-  Settings,
-  Search,
-  Bot,
-  Cpu,
-  Activity,
-  Gauge,
-  Database,
-  History,
-  FolderOpen,
-  Globe,
-  Brain,
-  ChevronDown,
-  Shield,
-  Server,
-  Terminal,
-  FileText,
-  Newspaper,
-  Sparkles,
-} from 'lucide-react';
-
-interface SubMenuItem {
-  to: string;
-  icon: React.ReactNode;
-  label: string;
-  description?: string;
-}
-
-interface NavItem {
-  id: string;
-  icon: React.ReactNode;
-  label: string;
-  to?: string;
-  subItems?: SubMenuItem[];
-}
-
-const navConfig: NavItem[] = [
-  {
-    id: 'home',
-    icon: <Home className="h-4 w-4" />,
-    label: '홈',
-    to: '/',
-  },
-  {
-    id: 'dashboard',
-    icon: <LayoutDashboard className="h-4 w-4" />,
-    label: '대시보드',
-    subItems: [
-      {
-        to: '/dashboard',
-        icon: <Activity className="h-4 w-4" />,
-        label: '라이브 대시보드',
-        description: '실시간 뉴스 현황'
-      },
-      {
-        to: '/operations',
-        icon: <Gauge className="h-4 w-4" />,
-        label: '운영 현황',
-        description: '시스템 모니터링'
-      },
-      {
-        to: '/collected-data',
-        icon: <Database className="h-4 w-4" />,
-        label: '수집 데이터',
-        description: '수집된 뉴스 데이터'
-      },
-    ],
-  },
-  {
-    id: 'tools',
-    icon: <Wrench className="h-4 w-4" />,
-    label: '도구',
-    to: '/tools', // 허브 페이지로 직접 이동 가능
-    subItems: [
-      {
-        to: '/tools',
-        icon: <Wrench className="h-4 w-4" />,
-        label: '도구 허브',
-        description: '모든 도구 보기'
-      },
-      {
-        to: '/search',
-        icon: <Search className="h-4 w-4" />,
-        label: '스마트 검색',
-        description: '통합 뉴스 검색'
-      },
-      {
-        to: '/ml-addons',
-        icon: <Cpu className="h-4 w-4" />,
-        label: 'ML Add-ons',
-        description: '편향성, 감정 분석'
-      },
-      {
-        to: '/ml-results',
-        icon: <Sparkles className="h-4 w-4" />,
-        label: 'ML 분석 결과',
-        description: '분석 결과 확인'
-      },
-      {
-        to: '/ai-agent',
-        icon: <Bot className="h-4 w-4" />,
-        label: '브라우저 에이전트',
-        description: 'AI 웹 자동화'
-      },
-      {
-        to: '/ai-jobs',
-        icon: <Brain className="h-4 w-4" />,
-        label: 'AI Jobs',
-        description: 'AI 작업 관리'
-      },
-    ],
-  },
-  {
-    id: 'workspace',
-    icon: <FolderKanban className="h-4 w-4" />,
-    label: '내 작업',
-    to: '/workspace', // 허브 페이지로 직접 이동 가능
-    subItems: [
-      {
-        to: '/workspace',
-        icon: <FolderKanban className="h-4 w-4" />,
-        label: '작업 허브',
-        description: '모든 작업 보기'
-      },
-      {
-        to: '/projects',
-        icon: <FolderOpen className="h-4 w-4" />,
-        label: '프로젝트',
-        description: '저장된 분석 프로젝트'
-      },
-      {
-        to: '/history',
-        icon: <History className="h-4 w-4" />,
-        label: '검색 기록',
-        description: '최근 검색 내역'
-      },
-      {
-        to: '/url-collections',
-        icon: <Globe className="h-4 w-4" />,
-        label: 'URL 컬렉션',
-        description: 'URL 원천 관리'
-      },
-    ],
-  },
-  {
-    id: 'settings',
-    icon: <Settings className="h-4 w-4" />,
-    label: '설정',
-    subItems: [
-      {
-        to: '/settings',
-        icon: <Settings className="h-4 w-4" />,
-        label: '환경 설정',
-        description: '앱 설정'
-      },
-      {
-        to: '/admin/sources',
-        icon: <Newspaper className="h-4 w-4" />,
-        label: '소스 관리',
-        description: '뉴스 소스 관리'
-      },
-      {
-        to: '/admin/environments',
-        icon: <Server className="h-4 w-4" />,
-        label: '환경 변수',
-        description: '서버 환경 설정'
-      },
-      {
-        to: '/admin/scripts',
-        icon: <Terminal className="h-4 w-4" />,
-        label: '스크립트',
-        description: '자동화 스크립트'
-      },
-      {
-        to: '/admin/audit-logs',
-        icon: <FileText className="h-4 w-4" />,
-        label: '감사 로그',
-        description: '시스템 로그'
-      },
-    ],
-  },
-];
-
-interface DropdownMenuProps {
-  items: SubMenuItem[];
-  isOpen: boolean;
-  onClose: () => void;
-}
-
-function DropdownMenu({ items, isOpen, onClose }: DropdownMenuProps) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const location = useLocation();
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        onClose();
-      }
-    }
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
-
-  return (
-    <div
-      ref={menuRef}
-      className="absolute top-full left-0 mt-1 w-64 bg-popover border rounded-lg shadow-lg py-2 z-50"
-    >
-      {items.map((item) => {
-        const isActive = location.pathname === item.to;
-        return (
-          <Link
-            key={item.to}
-            to={item.to}
-            onClick={onClose}
-            className={cn(
-              // Minimum 44px touch target height for accessibility
-              "flex items-start gap-3 px-4 py-3 min-h-[44px] hover:bg-accent transition-colors",
-              isActive && "bg-accent"
-            )}
-          >
-            <span className={cn(
-              "mt-0.5",
-              isActive ? "text-primary" : "text-muted-foreground"
-            )}>
-              {item.icon}
-            </span>
-            <div className="flex-1 min-w-0">
-              <div className={cn(
-                "text-sm font-medium",
-                isActive && "text-primary"
-              )}>
-                {item.label}
-              </div>
-              {item.description && (
-                <div className="text-xs text-muted-foreground truncate">
-                  {item.description}
-                </div>
-              )}
-            </div>
-          </Link>
-        );
-      })}
-    </div>
-  );
-}
-
-interface NavButtonProps {
-  item: NavItem;
-  isActive: boolean;
-}
-
-function NavButton({ item, isActive }: NavButtonProps) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  // Direct link (no submenu)
-  if (item.to && !item.subItems) {
-    return (
-      <Link
-        to={item.to}
-        className={cn(
-          // Minimum 44px touch target for accessibility
-          "flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-lg text-sm font-medium transition-all",
-          isActive
-            ? "bg-primary text-primary-foreground shadow-sm"
-            : "text-muted-foreground hover:text-foreground hover:bg-accent"
-        )}
-      >
-        {item.icon}
-        <span className="hidden lg:inline">{item.label}</span>
-      </Link>
-    );
-  }
-
-  // Dropdown menu
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={cn(
-          // Minimum 44px touch target for accessibility
-          "flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-lg text-sm font-medium transition-all",
-          isActive
-            ? "bg-primary text-primary-foreground shadow-sm"
-            : "text-muted-foreground hover:text-foreground hover:bg-accent"
-        )}
-      >
-        {item.icon}
-        <span className="hidden lg:inline">{item.label}</span>
-        <ChevronDown className={cn(
-          "h-3 w-3 transition-transform hidden lg:block",
-          isOpen && "rotate-180"
-        )} />
-      </button>
-      {item.subItems && (
-        <DropdownMenu
-          items={item.subItems}
-          isOpen={isOpen}
-          onClose={() => setIsOpen(false)}
-        />
-      )}
-    </div>
-  );
-}
-
-export function NewNavigation() {
-  const location = useLocation();
-
-  const isNavActive = (item: NavItem): boolean => {
-    if (item.to) {
-      return location.pathname === item.to;
-    }
-    if (item.subItems) {
-      return item.subItems.some(sub => location.pathname === sub.to);
-    }
-    return false;
-  };
-
-  return (
-    <nav className="flex items-center gap-1" role="navigation" aria-label="주요 내비게이션">
-      {navConfig.map((item) => (
-        <NavButton
-          key={item.id}
-          item={item}
-          isActive={isNavActive(item)}
-        />
-      ))}
-    </nav>
-  );
-}
-
-// Mobile Navigation - 하단 탭바 스타일
-export function MobileBottomNav() {
-  const location = useLocation();
-
-  const mobileItems = navConfig.slice(0, 5); // 5탭만
-
-  const isNavActive = (item: NavItem): boolean => {
-    if (item.to) {
-      return location.pathname === item.to;
-    }
-    if (item.subItems) {
-      return item.subItems.some(sub => location.pathname === sub.to);
-    }
-    return false;
-  };
-
-  return (
-    <nav 
-      className="fixed bottom-0 left-0 right-0 bg-background border-t md:hidden z-50 safe-area-inset-bottom"
-      role="navigation"
-      aria-label="모바일 내비게이션"
-    >
-      <div className="flex items-center justify-around py-1 pb-safe">
-        {mobileItems.map((item) => {
-          const isActive = isNavActive(item);
-          const to = item.to || item.subItems?.[0]?.to || '/';
-          
-          return (
-            <Link
-              key={item.id}
-              to={to}
-              className={cn(
-                // Minimum 44x44px touch target for WCAG 2.1 AA compliance
-                "flex flex-col items-center justify-center gap-1 min-w-[48px] min-h-[48px] px-3 py-2 rounded-lg transition-colors",
-                // Active indicator with visual feedback
-                isActive
-                  ? "text-primary bg-primary/10"
-                  : "text-muted-foreground active:bg-accent"
-              )}
-              aria-current={isActive ? "page" : undefined}
-            >
-              <span className={cn(
-                "flex items-center justify-center w-6 h-6",
-                isActive && "scale-110 transition-transform"
-              )}>
-                {item.icon}
-              </span>
-              <span className="text-[10px] font-medium leading-tight">{item.label}</span>
-            </Link>
-          );
-        })}
-      </div>
-    </nav>
-  );
-}
-
-export default NewNavigation;
-
-```
-
----
-
-## frontend/src/components/layout/QuickAccessButton.tsx
-
-```tsx
-import { Zap } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { useQuickAccess } from '@/contexts/QuickAccessContext';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-
-export const QuickAccessButton = () => {
-  const { toggle } = useQuickAccess();
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={toggle}
-          className="relative"
-        >
-          <Zap className="h-5 w-5" />
-          <span className="sr-only">빠른 접근</span>
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>
-        <p>빠른 접근 (Ctrl+Shift+K)</p>
-      </TooltipContent>
-    </Tooltip>
-  );
-};
-
-```
-
----
-
-## frontend/src/components/layout/SetupBanner.tsx
-
-```tsx
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { AlertTriangle, Settings, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { authApi } from '@/lib/adminApi';
-import type { SetupStatus } from '@/types/admin';
-import { cn } from '@/lib/utils';
-
-const DISMISSED_KEY = 'newsinsight_setup_banner_dismissed';
-
-export function SetupBanner() {
-  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
-  const [isDismissed, setIsDismissed] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    // Check if user has dismissed the banner for this session
-    const dismissed = sessionStorage.getItem(DISMISSED_KEY);
-    if (dismissed === 'true') {
-      setIsDismissed(true);
-      setIsLoading(false);
-      return;
-    }
-
-    // Fetch setup status
-    const checkSetup = async () => {
-      try {
-        const status = await authApi.getSetupStatus();
-        setSetupStatus(status);
-      } catch (error) {
-        // API might not be available yet or setup endpoint doesn't exist
-        console.debug('Setup status check failed:', error);
-        setSetupStatus(null);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    checkSetup();
-  }, []);
-
-  const handleDismiss = () => {
-    setIsDismissed(true);
-    sessionStorage.setItem(DISMISSED_KEY, 'true');
-  };
-
-  // Don't show banner if:
-  // - Still loading
-  // - Already dismissed
-  // - No setup status available
-  // - Setup is not required (admin already changed password)
-  if (isLoading || isDismissed || !setupStatus || !setupStatus.setup_required) {
-    return null;
-  }
-
-  // Only show if default admin is being used
-  if (!setupStatus.is_default_admin) {
-    return null;
-  }
-
-  return (
-    <div
-      className={cn(
-        'relative bg-amber-500/10 border-b border-amber-500/30',
-        'px-4 py-3'
-      )}
-      role="alert"
-    >
-      <div className="container flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0" />
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
-            <span className="font-medium text-amber-700 dark:text-amber-400">
-              초기 설정이 필요합니다
-            </span>
-            <span className="text-sm text-muted-foreground">
-              기본 관리자 계정(admin/admin123)을 사용 중입니다. 보안을 위해 비밀번호를 변경해주세요.
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button
-            asChild
-            size="sm"
-            className="bg-amber-500 hover:bg-amber-600 text-white gap-2"
-          >
-            <Link to="/admin/login">
-              <Settings className="h-4 w-4" />
-              <span className="hidden sm:inline">설정하기</span>
-            </Link>
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-muted-foreground hover:text-foreground"
-            onClick={handleDismiss}
-            aria-label="배너 닫기"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export default SetupBanner;
-
-```
-
----
-
-## frontend/src/components/layout/Sidebar.tsx
-
-```tsx
-import { Link, useLocation } from "react-router-dom";
-import { cn } from "@/lib/utils";
-import {
-  LayoutDashboard,
-  Search,
-  Globe,
-  Settings,
-  History,
-  Newspaper,
-  BookOpen,
-  Bot,
-  Layers,
-  Shield,
-  Server,
-  Terminal,
-  FileText,
-  Activity,
-  ChevronDown,
-  Brain,
-  Database,
-  Gauge,
-  CheckCircle,
-} from "lucide-react";
-import { useState } from "react";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Button } from "@/components/ui/button";
-
-type SidebarProps = React.HTMLAttributes<HTMLDivElement>;
-
-export function Sidebar({ className }: SidebarProps) {
-  const location = useLocation();
-  const [isAdminOpen, setIsAdminOpen] = useState(location.pathname.startsWith('/admin'));
-
-  const navItems = [
-    {
-      title: "Smart Search",
-      href: "/",
-      icon: Search,
-      variant: "default",
-    },
-    {
-      title: "Live Dashboard",
-      href: "/dashboard",
-      icon: Activity,
-      variant: "ghost",
-    },
-    {
-      title: "Operations",
-      href: "/operations",
-      icon: Gauge,
-      variant: "ghost",
-    },
-    {
-      title: "Projects",
-      href: "/projects",
-      icon: BookOpen,
-      variant: "ghost",
-    },
-    {
-      title: "History",
-      href: "/history",
-      icon: History,
-      variant: "ghost",
-    },
-    {
-      title: "URL Collections",
-      href: "/url-collections",
-      icon: Globe,
-      variant: "ghost",
-    },
-    {
-      title: "Browser Agent",
-      href: "/ai-agent",
-      icon: Bot,
-      variant: "ghost",
-    },
-    {
-      title: "ML Add-ons",
-      href: "/ml-addons",
-      icon: Layers,
-      variant: "ghost",
-    },
-    {
-      title: "Fact Check",
-      href: "/factcheck",
-      icon: CheckCircle,
-      variant: "ghost",
-    },
-    {
-      title: "AI Jobs",
-      href: "/ai-jobs",
-      icon: Brain,
-      variant: "ghost",
-    },
-    {
-      title: "Collected Data",
-      href: "/collected-data",
-      icon: Database,
-      variant: "ghost",
-    },
-  ];
-
-  const adminItems = [
-    {
-      title: "Sources",
-      href: "/admin/sources",
-      icon: Newspaper,
-    },
-    {
-      title: "Environments",
-      href: "/admin/environments",
-      icon: Server,
-    },
-    {
-      title: "Scripts",
-      href: "/admin/scripts",
-      icon: Terminal,
-    },
-    {
-      title: "Audit Logs",
-      href: "/admin/audit-logs",
-      icon: FileText,
-    },
-  ];
-
-  return (
-    <div className={cn("pb-12 w-64 border-r bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60", className)}>
-      <div className="space-y-4 py-4">
-        <div className="px-3 py-2">
-          <div className="flex items-center gap-2 px-4 mb-6">
-            <LayoutDashboard className="h-6 w-6 text-primary" />
-            <h2 className="text-lg font-bold tracking-tight">NewsInsight</h2>
-          </div>
-          <div className="space-y-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                to={item.href}
-                className={cn(
-                  "flex items-center rounded-md px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors",
-                  location.pathname === item.href ? "bg-accent text-accent-foreground" : "transparent"
-                )}
-              >
-                <item.icon className="mr-2 h-4 w-4" />
-                {item.title}
-              </Link>
-            ))}
-          </div>
-        </div>
-        
-        <div className="px-3 py-2">
-          <Collapsible open={isAdminOpen} onOpenChange={setIsAdminOpen} className="space-y-1">
-            <div className="flex items-center justify-between px-4 py-2">
-              <h2 className="text-sm font-semibold tracking-tight text-muted-foreground flex items-center gap-2">
-                <Shield className="h-4 w-4" />
-                Admin
-              </h2>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="w-6 h-6 p-0">
-                  <ChevronDown className={cn("h-4 w-4 transition-transform", isAdminOpen ? "rotate-180" : "")} />
-                  <span className="sr-only">Toggle Admin</span>
-                </Button>
-              </CollapsibleTrigger>
-            </div>
-            <CollapsibleContent className="space-y-1">
-              {adminItems.map((item) => (
-                <Link
-                  key={item.href}
-                  to={item.href}
-                  className={cn(
-                    "flex items-center rounded-md px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors pl-8",
-                    location.pathname === item.href ? "bg-accent text-accent-foreground" : "transparent"
-                  )}
-                >
-                  <item.icon className="mr-2 h-4 w-4" />
-                  {item.title}
-                </Link>
-              ))}
-            </CollapsibleContent>
-          </Collapsible>
-        </div>
-
-        <div className="px-3 py-2 mt-auto">
-          <Link
-            to="/settings"
-            className={cn(
-              "flex items-center rounded-md px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors",
-              location.pathname === "/settings" ? "bg-accent text-accent-foreground" : "transparent"
-            )}
-          >
-            <Settings className="mr-2 h-4 w-4" />
-            Settings
-          </Link>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-```
-
----
-
-## frontend/src/components/settings/UserLlmSettings.tsx
-
-```tsx
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  Bot,
-  CheckCircle2,
-  XCircle,
-  Loader2,
-  Zap,
-  Save,
-  Eye,
-  EyeOff,
-  Trash2,
-  RefreshCw,
-  Shield,
-  User,
-  AlertCircle,
-} from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Label } from '@/components/ui/label';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import { Separator } from '@/components/ui/separator';
-import { useToast } from '@/hooks/use-toast';
-import {
-  getEffectiveLlmSettings,
-  getUserLlmSettings,
-  saveUserLlmSetting,
-  deleteUserLlmSetting,
-  deleteAllUserLlmSettings,
-  testUserLlmConnection,
-  getLlmProviderTypes,
-} from '@/lib/api';
-import type {
-  LlmProviderType,
-  LlmProviderSettings,
-  LlmProviderSettingsRequest,
-  LlmProviderTypeInfo,
-  LlmTestResult,
-} from '@/types/api';
-
-interface UserLlmSettingsProps {
-  userId: string;
-}
-
-const DEFAULT_MODELS: Record<LlmProviderType, string[]> = {
-  OPENAI: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-  ANTHROPIC: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
-  GOOGLE: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'],
-  OPENROUTER: ['openai/gpt-4o', 'anthropic/claude-3.5-sonnet', 'google/gemini-pro-1.5'],
-  OLLAMA: ['llama3.1', 'mistral', 'mixtral', 'codellama'],
-  AZURE_OPENAI: ['gpt-4o', 'gpt-4-turbo', 'gpt-35-turbo'],
-  CUSTOM: ['default'],
-};
-
-/**
- * 사용자 LLM Provider 설정 컴포넌트
- * 
- * - 사용자 개인 설정이 있으면 해당 설정 표시
- * - 없으면 관리자 전역 설정 표시 (읽기 전용)
- * - 사용자는 자신만의 설정을 추가/수정/삭제 가능
- */
-export const UserLlmSettings: React.FC<UserLlmSettingsProps> = ({ userId }) => {
-  const { toast } = useToast();
-
-  // State
-  const [providerTypes, setProviderTypes] = useState<LlmProviderTypeInfo[]>([]);
-  const [effectiveSettings, setEffectiveSettings] = useState<LlmProviderSettings[]>([]);
-  const [userSettings, setUserSettings] = useState<LlmProviderSettings[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [showApiKeys, setShowApiKeys] = useState<Record<string, boolean>>({});
-  const [testResults, setTestResults] = useState<Record<string, LlmTestResult>>({});
-  const [testingProvider, setTestingProvider] = useState<string | null>(null);
-
-  // Edit dialog state
-  const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editingProvider, setEditingProvider] = useState<LlmProviderType | null>(null);
-  const [editForm, setEditForm] = useState<LlmProviderSettingsRequest>({
-    providerType: 'OPENAI',
-    apiKey: '',
-    defaultModel: '',
-    baseUrl: '',
-    enabled: true,
-    priority: 100,
-    maxTokens: 4096,
-    temperature: 0.7,
-    timeoutMs: 60000,
-  });
-
-  // Load data
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const [types, effective, user] = await Promise.all([
-        getLlmProviderTypes(),
-        getEffectiveLlmSettings(userId),
-        getUserLlmSettings(userId),
-      ]);
-      setProviderTypes(types);
-      setEffectiveSettings(effective);
-      setUserSettings(user);
-    } catch (error) {
-      console.error('Failed to load LLM settings:', error);
-      toast({
-        title: '로드 실패',
-        description: 'LLM 설정을 불러오는데 실패했습니다.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [userId, toast]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Check if provider has user override
-  const hasUserOverride = (providerType: LlmProviderType): boolean => {
-    return userSettings.some(s => s.providerType === providerType);
-  };
-
-  // Get effective setting for provider
-  const getEffectiveSetting = (providerType: LlmProviderType): LlmProviderSettings | undefined => {
-    return effectiveSettings.find(s => s.providerType === providerType);
-  };
-
-  // Open edit dialog
-  const openEditDialog = (providerType: LlmProviderType) => {
-    const existing = userSettings.find(s => s.providerType === providerType);
-    const effective = getEffectiveSetting(providerType);
-    
-    setEditingProvider(providerType);
-    setEditForm({
-      providerType,
-      apiKey: '', // Always empty for security
-      defaultModel: existing?.defaultModel || effective?.defaultModel || DEFAULT_MODELS[providerType][0],
-      baseUrl: existing?.baseUrl || effective?.baseUrl || '',
-      enabled: existing?.enabled ?? effective?.enabled ?? true,
-      priority: existing?.priority ?? effective?.priority ?? 100,
-      maxTokens: existing?.maxTokens ?? effective?.maxTokens ?? 4096,
-      temperature: existing?.temperature ?? effective?.temperature ?? 0.7,
-      timeoutMs: existing?.timeoutMs ?? effective?.timeoutMs ?? 60000,
-      azureDeploymentName: existing?.azureDeploymentName || effective?.azureDeploymentName || '',
-      azureApiVersion: existing?.azureApiVersion || effective?.azureApiVersion || '2024-02-01',
-    });
-    setEditDialogOpen(true);
-  };
-
-  // Save user setting
-  const handleSave = async () => {
-    if (!editingProvider) return;
-
-    setIsSaving(true);
-    try {
-      await saveUserLlmSetting(userId, editForm);
-      toast({
-        title: '저장 완료',
-        description: `${editingProvider} 설정이 저장되었습니다.`,
-      });
-      setEditDialogOpen(false);
-      loadData();
-    } catch (error) {
-      console.error('Failed to save LLM setting:', error);
-      toast({
-        title: '저장 실패',
-        description: '설정 저장에 실패했습니다.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Delete user setting (fallback to global)
-  const handleDelete = async (providerType: LlmProviderType) => {
-    try {
-      await deleteUserLlmSetting(userId, providerType);
-      toast({
-        title: '삭제 완료',
-        description: '개인 설정이 삭제되었습니다. 전역 설정으로 돌아갑니다.',
-      });
-      loadData();
-    } catch (error) {
-      console.error('Failed to delete LLM setting:', error);
-      toast({
-        title: '삭제 실패',
-        description: '설정 삭제에 실패했습니다.',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  // Delete all user settings
-  const handleDeleteAll = async () => {
-    try {
-      await deleteAllUserLlmSettings(userId);
-      toast({
-        title: '전체 삭제 완료',
-        description: '모든 개인 설정이 삭제되었습니다.',
-      });
-      loadData();
-    } catch (error) {
-      console.error('Failed to delete all LLM settings:', error);
-      toast({
-        title: '삭제 실패',
-        description: '설정 삭제에 실패했습니다.',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  // Test connection
-  const handleTestConnection = async (providerType: LlmProviderType) => {
-    setTestingProvider(providerType);
-    try {
-      const setting = getEffectiveSetting(providerType);
-      if (!setting) {
-        throw new Error('No settings found for this provider');
-      }
-
-      // Use the correct test endpoint based on whether this is a saved setting
-      // testUserLlmConnection uses the stored API key from the database
-      const result = await testUserLlmConnection(setting.id);
-
-      setTestResults(prev => ({ ...prev, [providerType]: result }));
-
-      toast({
-        title: result.success ? '연결 성공' : '연결 실패',
-        description: result.message,
-        variant: result.success ? 'default' : 'destructive',
-      });
-    } catch (error) {
-      console.error('Connection test failed:', error);
-      toast({
-        title: '테스트 실패',
-        description: '연결 테스트 중 오류가 발생했습니다.',
-        variant: 'destructive',
-      });
-    } finally {
-      setTestingProvider(null);
-    }
-  };
-
-  // Toggle API key visibility
-  const toggleKeyVisibility = (provider: string) => {
-    setShowApiKeys(prev => ({ ...prev, [provider]: !prev[provider] }));
-  };
-
-  if (isLoading) {
-    return (
-      <Card>
-        <CardContent className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Bot className="h-5 w-5" />
-                LLM 제공자 설정
-              </CardTitle>
-              <CardDescription>
-                AI 분석에 사용할 LLM 제공자를 설정합니다. 개인 설정이 없으면 관리자 전역 설정이 적용됩니다.
-              </CardDescription>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={loadData}>
-                <RefreshCw className="h-4 w-4 mr-2" />
-                새로고침
-              </Button>
-              {userSettings.length > 0 && (
-                <Button variant="destructive" size="sm" onClick={handleDeleteAll}>
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  전체 초기화
-                </Button>
-              )}
-            </div>
-          </div>
-        </CardHeader>
-      </Card>
-
-      {/* Info Alert */}
-      <Alert>
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>
-          <Shield className="h-4 w-4 inline mr-1" /> 아이콘은 관리자 전역 설정, 
-          <User className="h-4 w-4 inline mx-1" /> 아이콘은 개인 설정을 나타냅니다.
-          개인 설정이 없는 경우 전역 설정이 자동으로 적용됩니다.
-        </AlertDescription>
-      </Alert>
-
-      {/* Provider List */}
-      <div className="grid gap-4">
-        {providerTypes.map((type) => {
-          const setting = getEffectiveSetting(type.value);
-          const isUserSetting = hasUserOverride(type.value);
-          const testResult = testResults[type.value];
-
-          return (
-            <Card key={type.value} className={!setting?.enabled ? 'opacity-60' : ''}>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    {/* Provider Icon/Badge */}
-                    <div className="flex items-center gap-2">
-                      {isUserSetting ? (
-                        <Badge variant="default" className="gap-1">
-                          <User className="h-3 w-3" />
-                          개인
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="gap-1">
-                          <Shield className="h-3 w-3" />
-                          전역
-                        </Badge>
-                      )}
-                    </div>
-
-                    {/* Provider Info */}
-                    <div>
-                      <h3 className="font-semibold">{type.displayName}</h3>
-                      <p className="text-sm text-muted-foreground">
-                        모델: {setting?.defaultModel || '미설정'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Status & Actions */}
-                  <div className="flex items-center gap-3">
-                    {/* API Key Status */}
-                    {setting && (
-                      <div className="flex items-center gap-2 text-sm">
-                        {setting.hasApiKey ? (
-                          <Badge variant="outline" className="text-green-600">
-                            <CheckCircle2 className="h-3 w-3 mr-1" />
-                            API 키 설정됨
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-yellow-600">
-                            <AlertCircle className="h-3 w-3 mr-1" />
-                            API 키 없음
-                          </Badge>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Test Result */}
-                    {testResult && (
-                      <Badge variant={testResult.success ? 'default' : 'destructive'}>
-                        {testResult.success ? (
-                          <CheckCircle2 className="h-3 w-3 mr-1" />
-                        ) : (
-                          <XCircle className="h-3 w-3 mr-1" />
-                        )}
-                        {testResult.success ? '연결됨' : '실패'}
-                      </Badge>
-                    )}
-
-                    {/* Enabled Status */}
-                    <Badge variant={setting?.enabled ? 'default' : 'secondary'}>
-                      {setting?.enabled ? '활성화' : '비활성화'}
-                    </Badge>
-
-                    {/* Actions */}
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleTestConnection(type.value)}
-                        disabled={testingProvider === type.value || !setting?.hasApiKey}
-                      >
-                        {testingProvider === type.value ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Zap className="h-4 w-4" />
-                        )}
-                      </Button>
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openEditDialog(type.value)}
-                      >
-                        설정
-                      </Button>
-
-                      {isUserSetting && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(type.value)}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Edit Dialog */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>
-              {editingProvider} 설정
-            </DialogTitle>
-            <DialogDescription>
-              개인 LLM 설정을 입력하세요. 빈 값은 전역 설정을 사용합니다.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            {/* API Key */}
-            <div className="space-y-2">
-              <Label htmlFor="apiKey">API 키</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="apiKey"
-                  type={showApiKeys['edit'] ? 'text' : 'password'}
-                  value={editForm.apiKey || ''}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, apiKey: e.target.value }))}
-                  placeholder="새 API 키 입력 (비우면 기존 값 유지)"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => toggleKeyVisibility('edit')}
-                >
-                  {showApiKeys['edit'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
-              </div>
-            </div>
-
-            {/* Model */}
-            <div className="space-y-2">
-              <Label htmlFor="model">모델</Label>
-              <Select
-                value={editForm.defaultModel}
-                onValueChange={(value) => setEditForm(prev => ({ ...prev, defaultModel: value }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="모델 선택" />
-                </SelectTrigger>
-                <SelectContent>
-                  {editingProvider && DEFAULT_MODELS[editingProvider]?.map((model) => (
-                    <SelectItem key={model} value={model}>{model}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Base URL (for Ollama/Custom) */}
-            {(editingProvider === 'OLLAMA' || editingProvider === 'CUSTOM') && (
-              <div className="space-y-2">
-                <Label htmlFor="baseUrl">Base URL</Label>
-                <Input
-                  id="baseUrl"
-                  value={editForm.baseUrl || ''}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, baseUrl: e.target.value }))}
-                  placeholder={editingProvider === 'OLLAMA' ? 'http://localhost:11434' : 'https://api.example.com'}
-                />
-              </div>
-            )}
-
-            {/* Azure specific fields */}
-            {editingProvider === 'AZURE_OPENAI' && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="azureEndpoint">Azure Endpoint</Label>
-                  <Input
-                    id="azureEndpoint"
-                    value={editForm.baseUrl || ''}
-                    onChange={(e) => setEditForm(prev => ({ ...prev, baseUrl: e.target.value }))}
-                    placeholder="https://your-resource.openai.azure.com"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="azureDeploymentName">Deployment Name</Label>
-                  <Input
-                    id="azureDeploymentName"
-                    value={editForm.azureDeploymentName || ''}
-                    onChange={(e) => setEditForm(prev => ({ ...prev, azureDeploymentName: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="azureApiVersion">API Version</Label>
-                  <Input
-                    id="azureApiVersion"
-                    value={editForm.azureApiVersion || ''}
-                    onChange={(e) => setEditForm(prev => ({ ...prev, azureApiVersion: e.target.value }))}
-                    placeholder="2024-02-01"
-                  />
-                </div>
-              </>
-            )}
-
-            <Separator />
-
-            {/* Advanced Settings */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="priority">우선순위</Label>
-                <Input
-                  id="priority"
-                  type="number"
-                  min={1}
-                  max={999}
-                  value={editForm.priority}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, priority: parseInt(e.target.value) }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="maxTokens">최대 토큰</Label>
-                <Input
-                  id="maxTokens"
-                  type="number"
-                  min={1}
-                  max={128000}
-                  value={editForm.maxTokens}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, maxTokens: parseInt(e.target.value) }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="temperature">Temperature</Label>
-                <Input
-                  id="temperature"
-                  type="number"
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  value={editForm.temperature}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, temperature: parseFloat(e.target.value) }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="timeoutMs">타임아웃 (ms)</Label>
-                <Input
-                  id="timeoutMs"
-                  type="number"
-                  min={1000}
-                  max={300000}
-                  value={editForm.timeoutMs}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, timeoutMs: parseInt(e.target.value) }))}
-                />
-              </div>
-            </div>
-
-            {/* Enabled Toggle */}
-            <div className="flex items-center justify-between">
-              <Label htmlFor="enabled">활성화</Label>
-              <Switch
-                id="enabled"
-                checked={editForm.enabled}
-                onCheckedChange={(checked) => setEditForm(prev => ({ ...prev, enabled: checked }))}
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
-              취소
-            </Button>
-            <Button onClick={handleSave} disabled={isSaving}>
-              {isSaving ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4 mr-2" />
-              )}
-              저장
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-};
-
-export default UserLlmSettings;
-
-```
-
----
-
-## frontend/src/components/ui/accordion.tsx
-
-```tsx
-import * as React from "react";
-import * as AccordionPrimitive from "@radix-ui/react-accordion";
-import { ChevronDown } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const Accordion = AccordionPrimitive.Root;
-
-const AccordionItem = React.forwardRef<
-  React.ElementRef<typeof AccordionPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof AccordionPrimitive.Item>
->(({ className, ...props }, ref) => (
-  <AccordionPrimitive.Item ref={ref} className={cn("border-b", className)} {...props} />
-));
-AccordionItem.displayName = "AccordionItem";
-
-const AccordionTrigger = React.forwardRef<
-  React.ElementRef<typeof AccordionPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof AccordionPrimitive.Trigger>
->(({ className, children, ...props }, ref) => (
-  <AccordionPrimitive.Header className="flex">
-    <AccordionPrimitive.Trigger
-      ref={ref}
-      className={cn(
-        "flex flex-1 items-center justify-between py-4 font-medium transition-all hover:underline [&[data-state=open]>svg]:rotate-180",
-        className,
-      )}
-      {...props}
-    >
-      {children}
-      <ChevronDown className="h-4 w-4 shrink-0 transition-transform duration-200" />
-    </AccordionPrimitive.Trigger>
-  </AccordionPrimitive.Header>
-));
-AccordionTrigger.displayName = AccordionPrimitive.Trigger.displayName;
-
-const AccordionContent = React.forwardRef<
-  React.ElementRef<typeof AccordionPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof AccordionPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <AccordionPrimitive.Content
-    ref={ref}
-    className="overflow-hidden text-sm transition-all data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down"
-    {...props}
-  >
-    <div className={cn("pb-4 pt-0", className)}>{children}</div>
-  </AccordionPrimitive.Content>
-));
-
-AccordionContent.displayName = AccordionPrimitive.Content.displayName;
-
-export { Accordion, AccordionItem, AccordionTrigger, AccordionContent };
-
-```
-
----
-
-## frontend/src/components/ui/alert-dialog.tsx
-
-```tsx
-import * as React from "react";
-import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog";
-
-import { cn } from "@/lib/utils";
-import { buttonVariants } from "@/components/ui/button";
-
-const AlertDialog = AlertDialogPrimitive.Root;
-
-const AlertDialogTrigger = AlertDialogPrimitive.Trigger;
-
-const AlertDialogPortal = AlertDialogPrimitive.Portal;
-
-const AlertDialogOverlay = React.forwardRef<
-  React.ElementRef<typeof AlertDialogPrimitive.Overlay>,
-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <AlertDialogPrimitive.Overlay
-    className={cn(
-      "fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-      className,
-    )}
-    {...props}
-    ref={ref}
-  />
-));
-AlertDialogOverlay.displayName = AlertDialogPrimitive.Overlay.displayName;
-
-const AlertDialogContent = React.forwardRef<
-  React.ElementRef<typeof AlertDialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <AlertDialogPortal>
-    <AlertDialogOverlay />
-    <AlertDialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
-        className,
-      )}
-      {...props}
-    />
-  </AlertDialogPortal>
-));
-AlertDialogContent.displayName = AlertDialogPrimitive.Content.displayName;
-
-const AlertDialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col space-y-2 text-center sm:text-left", className)} {...props} />
-);
-AlertDialogHeader.displayName = "AlertDialogHeader";
-
-const AlertDialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", className)} {...props} />
-);
-AlertDialogFooter.displayName = "AlertDialogFooter";
-
-const AlertDialogTitle = React.forwardRef<
-  React.ElementRef<typeof AlertDialogPrimitive.Title>,
-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Title>
->(({ className, ...props }, ref) => (
-  <AlertDialogPrimitive.Title ref={ref} className={cn("text-lg font-semibold", className)} {...props} />
-));
-AlertDialogTitle.displayName = AlertDialogPrimitive.Title.displayName;
-
-const AlertDialogDescription = React.forwardRef<
-  React.ElementRef<typeof AlertDialogPrimitive.Description>,
-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Description>
->(({ className, ...props }, ref) => (
-  <AlertDialogPrimitive.Description ref={ref} className={cn("text-sm text-muted-foreground", className)} {...props} />
-));
-AlertDialogDescription.displayName = AlertDialogPrimitive.Description.displayName;
-
-const AlertDialogAction = React.forwardRef<
-  React.ElementRef<typeof AlertDialogPrimitive.Action>,
-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Action>
->(({ className, ...props }, ref) => (
-  <AlertDialogPrimitive.Action ref={ref} className={cn(buttonVariants(), className)} {...props} />
-));
-AlertDialogAction.displayName = AlertDialogPrimitive.Action.displayName;
-
-const AlertDialogCancel = React.forwardRef<
-  React.ElementRef<typeof AlertDialogPrimitive.Cancel>,
-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Cancel>
->(({ className, ...props }, ref) => (
-  <AlertDialogPrimitive.Cancel
-    ref={ref}
-    className={cn(buttonVariants({ variant: "outline" }), "mt-2 sm:mt-0", className)}
-    {...props}
-  />
-));
-AlertDialogCancel.displayName = AlertDialogPrimitive.Cancel.displayName;
-
-export {
-  AlertDialog,
-  AlertDialogPortal,
-  AlertDialogOverlay,
-  AlertDialogTrigger,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogFooter,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogAction,
-  AlertDialogCancel,
-};
-
-```
-
----
-
-## frontend/src/components/ui/alert.tsx
-
-```tsx
-import * as React from "react";
-import { cva, type VariantProps } from "class-variance-authority";
-
-import { cn } from "@/lib/utils";
-
-const alertVariants = cva(
-  "relative w-full rounded-lg border p-4 [&>svg~*]:pl-7 [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground",
-  {
-    variants: {
-      variant: {
-        default: "bg-background text-foreground",
-        destructive: "border-destructive/50 text-destructive dark:border-destructive [&>svg]:text-destructive",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-    },
-  },
-);
-
-const Alert = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & VariantProps<typeof alertVariants>
->(({ className, variant, ...props }, ref) => (
-  <div ref={ref} role="alert" className={cn(alertVariants({ variant }), className)} {...props} />
-));
-Alert.displayName = "Alert";
-
-const AlertTitle = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLHeadingElement>>(
-  ({ className, ...props }, ref) => (
-    <h5 ref={ref} className={cn("mb-1 font-medium leading-none tracking-tight", className)} {...props} />
-  ),
-);
-AlertTitle.displayName = "AlertTitle";
-
-const AlertDescription = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(
-  ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("text-sm [&_p]:leading-relaxed", className)} {...props} />
-  ),
-);
-AlertDescription.displayName = "AlertDescription";
-
-export { Alert, AlertTitle, AlertDescription };
-
-```
-
----
-
-## frontend/src/components/ui/aspect-ratio.tsx
-
-```tsx
-import * as AspectRatioPrimitive from "@radix-ui/react-aspect-ratio";
-
-const AspectRatio = AspectRatioPrimitive.Root;
-
-export { AspectRatio };
-
-```
-
----
-
-## frontend/src/components/ui/avatar.tsx
-
-```tsx
-import * as React from "react";
-import * as AvatarPrimitive from "@radix-ui/react-avatar";
-
-import { cn } from "@/lib/utils";
-
-const Avatar = React.forwardRef<
-  React.ElementRef<typeof AvatarPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Root>
->(({ className, ...props }, ref) => (
-  <AvatarPrimitive.Root
-    ref={ref}
-    className={cn("relative flex h-10 w-10 shrink-0 overflow-hidden rounded-full", className)}
-    {...props}
-  />
-));
-Avatar.displayName = AvatarPrimitive.Root.displayName;
-
-const AvatarImage = React.forwardRef<
-  React.ElementRef<typeof AvatarPrimitive.Image>,
-  React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>
->(({ className, ...props }, ref) => (
-  <AvatarPrimitive.Image ref={ref} className={cn("aspect-square h-full w-full", className)} {...props} />
-));
-AvatarImage.displayName = AvatarPrimitive.Image.displayName;
-
-const AvatarFallback = React.forwardRef<
-  React.ElementRef<typeof AvatarPrimitive.Fallback>,
-  React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Fallback>
->(({ className, ...props }, ref) => (
-  <AvatarPrimitive.Fallback
-    ref={ref}
-    className={cn("flex h-full w-full items-center justify-center rounded-full bg-muted", className)}
-    {...props}
-  />
-));
-AvatarFallback.displayName = AvatarPrimitive.Fallback.displayName;
-
-export { Avatar, AvatarImage, AvatarFallback };
-
-```
-
----
-
-## frontend/src/components/ui/badge.tsx
-
-```tsx
-import * as React from "react";
-import { cva, type VariantProps } from "class-variance-authority";
-
-import { cn } from "@/lib/utils";
-
-const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-  {
-    variants: {
-      variant: {
-        default: "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
-        secondary: "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        destructive: "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
-        outline: "text-foreground",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-    },
-  },
-);
-
-export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof badgeVariants> {}
-
-function Badge({ className, variant, ...props }: BadgeProps) {
-  return <div className={cn(badgeVariants({ variant }), className)} {...props} />;
-}
-
-export { Badge, badgeVariants };
-
-```
-
----
-
-## frontend/src/components/ui/breadcrumb.tsx
-
-```tsx
-import * as React from "react";
-import { Slot } from "@radix-ui/react-slot";
-import { ChevronRight, MoreHorizontal } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const Breadcrumb = React.forwardRef<
-  HTMLElement,
-  React.ComponentPropsWithoutRef<"nav"> & {
-    separator?: React.ReactNode;
-  }
->(({ ...props }, ref) => <nav ref={ref} aria-label="breadcrumb" {...props} />);
-Breadcrumb.displayName = "Breadcrumb";
-
-const BreadcrumbList = React.forwardRef<HTMLOListElement, React.ComponentPropsWithoutRef<"ol">>(
-  ({ className, ...props }, ref) => (
-    <ol
-      ref={ref}
-      className={cn(
-        "flex flex-wrap items-center gap-1.5 break-words text-sm text-muted-foreground sm:gap-2.5",
-        className,
-      )}
-      {...props}
-    />
-  ),
-);
-BreadcrumbList.displayName = "BreadcrumbList";
-
-const BreadcrumbItem = React.forwardRef<HTMLLIElement, React.ComponentPropsWithoutRef<"li">>(
-  ({ className, ...props }, ref) => (
-    <li ref={ref} className={cn("inline-flex items-center gap-1.5", className)} {...props} />
-  ),
-);
-BreadcrumbItem.displayName = "BreadcrumbItem";
-
-const BreadcrumbLink = React.forwardRef<
-  HTMLAnchorElement,
-  React.ComponentPropsWithoutRef<"a"> & {
-    asChild?: boolean;
-  }
->(({ asChild, className, ...props }, ref) => {
-  const Comp = asChild ? Slot : "a";
-
-  return <Comp ref={ref} className={cn("transition-colors hover:text-foreground", className)} {...props} />;
-});
-BreadcrumbLink.displayName = "BreadcrumbLink";
-
-const BreadcrumbPage = React.forwardRef<HTMLSpanElement, React.ComponentPropsWithoutRef<"span">>(
-  ({ className, ...props }, ref) => (
-    <span
-      ref={ref}
-      role="link"
-      aria-disabled="true"
-      aria-current="page"
-      className={cn("font-normal text-foreground", className)}
-      {...props}
-    />
-  ),
-);
-BreadcrumbPage.displayName = "BreadcrumbPage";
-
-const BreadcrumbSeparator = ({ children, className, ...props }: React.ComponentProps<"li">) => (
-  <li role="presentation" aria-hidden="true" className={cn("[&>svg]:size-3.5", className)} {...props}>
-    {children ?? <ChevronRight />}
-  </li>
-);
-BreadcrumbSeparator.displayName = "BreadcrumbSeparator";
-
-const BreadcrumbEllipsis = ({ className, ...props }: React.ComponentProps<"span">) => (
-  <span
-    role="presentation"
-    aria-hidden="true"
-    className={cn("flex h-9 w-9 items-center justify-center", className)}
-    {...props}
-  >
-    <MoreHorizontal className="h-4 w-4" />
-    <span className="sr-only">More</span>
-  </span>
-);
-BreadcrumbEllipsis.displayName = "BreadcrumbElipssis";
-
-export {
-  Breadcrumb,
-  BreadcrumbList,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-  BreadcrumbEllipsis,
-};
-
-```
-
----
-
-## frontend/src/components/ui/button.tsx
-
-```tsx
-import * as React from "react";
-import { Slot } from "@radix-ui/react-slot";
-import { cva, type VariantProps } from "class-variance-authority";
-
-import { cn } from "@/lib/utils";
-
-const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
-  {
-    variants: {
-      variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
-        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
-        link: "text-primary underline-offset-4 hover:underline",
-        gradient: "gradient-primary text-primary-foreground hover:opacity-90 shadow-md",
-      },
-      size: {
-        default: "h-10 px-4 py-2",
-        sm: "h-9 rounded-md px-3",
-        lg: "h-11 rounded-md px-8",
-        icon: "h-10 w-10",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-      size: "default",
-    },
-  },
-);
-
-export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
-  asChild?: boolean;
-}
-
-const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button";
-    return <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />;
-  },
-);
-Button.displayName = "Button";
-
-export { Button, buttonVariants };
-
-```
-
----
-
-## frontend/src/components/ui/calendar.tsx
-
-```tsx
-import * as React from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { DayPicker } from "react-day-picker";
-
-import { cn } from "@/lib/utils";
-import { buttonVariants } from "@/components/ui/button";
-
-export type CalendarProps = React.ComponentProps<typeof DayPicker>;
-
-function Calendar({ className, classNames, showOutsideDays = true, ...props }: CalendarProps) {
-  return (
-    <DayPicker
-      showOutsideDays={showOutsideDays}
-      className={cn("p-3", className)}
-      classNames={{
-        months: "flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0",
-        month: "space-y-4",
-        caption: "flex justify-center pt-1 relative items-center",
-        caption_label: "text-sm font-medium",
-        nav: "space-x-1 flex items-center",
-        nav_button: cn(
-          buttonVariants({ variant: "outline" }),
-          "h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100",
-        ),
-        nav_button_previous: "absolute left-1",
-        nav_button_next: "absolute right-1",
-        table: "w-full border-collapse space-y-1",
-        head_row: "flex",
-        head_cell: "text-muted-foreground rounded-md w-9 font-normal text-[0.8rem]",
-        row: "flex w-full mt-2",
-        cell: "h-9 w-9 text-center text-sm p-0 relative [&:has([aria-selected].day-range-end)]:rounded-r-md [&:has([aria-selected].day-outside)]:bg-accent/50 [&:has([aria-selected])]:bg-accent first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
-        day: cn(buttonVariants({ variant: "ghost" }), "h-9 w-9 p-0 font-normal aria-selected:opacity-100"),
-        day_range_end: "day-range-end",
-        day_selected:
-          "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
-        day_today: "bg-accent text-accent-foreground",
-        day_outside:
-          "day-outside text-muted-foreground opacity-50 aria-selected:bg-accent/50 aria-selected:text-muted-foreground aria-selected:opacity-30",
-        day_disabled: "text-muted-foreground opacity-50",
-        day_range_middle: "aria-selected:bg-accent aria-selected:text-accent-foreground",
-        day_hidden: "invisible",
-        ...classNames,
-      }}
-      components={{
-        IconLeft: ({ ..._props }) => <ChevronLeft className="h-4 w-4" />,
-        IconRight: ({ ..._props }) => <ChevronRight className="h-4 w-4" />,
-      }}
-      {...props}
-    />
-  );
-}
-Calendar.displayName = "Calendar";
-
-export { Calendar };
-
-```
-
----
-
-## frontend/src/components/ui/card.tsx
-
-```tsx
-import * as React from "react";
-
-import { cn } from "@/lib/utils";
-
-const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
-  <div ref={ref} className={cn("rounded-lg border bg-card text-card-foreground shadow-sm", className)} {...props} />
-));
-Card.displayName = "Card";
-
-const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("flex flex-col space-y-1.5 p-6", className)} {...props} />
-  ),
-);
-CardHeader.displayName = "CardHeader";
-
-const CardTitle = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLHeadingElement>>(
-  ({ className, ...props }, ref) => (
-    <h3 ref={ref} className={cn("text-2xl font-semibold leading-none tracking-tight", className)} {...props} />
-  ),
-);
-CardTitle.displayName = "CardTitle";
-
-const CardDescription = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(
-  ({ className, ...props }, ref) => (
-    <p ref={ref} className={cn("text-sm text-muted-foreground", className)} {...props} />
-  ),
-);
-CardDescription.displayName = "CardDescription";
-
-const CardContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => <div ref={ref} className={cn("p-6 pt-0", className)} {...props} />,
-);
-CardContent.displayName = "CardContent";
-
-const CardFooter = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("flex items-center p-6 pt-0", className)} {...props} />
-  ),
-);
-CardFooter.displayName = "CardFooter";
-
-export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent };
-
-```
-
----
-
-## frontend/src/components/ui/carousel.tsx
-
-```tsx
-import * as React from "react";
-import useEmblaCarousel, { type UseEmblaCarouselType } from "embla-carousel-react";
-import { ArrowLeft, ArrowRight } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-
-type CarouselApi = UseEmblaCarouselType[1];
-type UseCarouselParameters = Parameters<typeof useEmblaCarousel>;
-type CarouselOptions = UseCarouselParameters[0];
-type CarouselPlugin = UseCarouselParameters[1];
-
-type CarouselProps = {
-  opts?: CarouselOptions;
-  plugins?: CarouselPlugin;
-  orientation?: "horizontal" | "vertical";
-  setApi?: (api: CarouselApi) => void;
-};
-
-type CarouselContextProps = {
-  carouselRef: ReturnType<typeof useEmblaCarousel>[0];
-  api: ReturnType<typeof useEmblaCarousel>[1];
-  scrollPrev: () => void;
-  scrollNext: () => void;
-  canScrollPrev: boolean;
-  canScrollNext: boolean;
-} & CarouselProps;
-
-const CarouselContext = React.createContext<CarouselContextProps | null>(null);
-
-function useCarousel() {
-  const context = React.useContext(CarouselContext);
-
-  if (!context) {
-    throw new Error("useCarousel must be used within a <Carousel />");
-  }
-
-  return context;
-}
-
-const Carousel = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement> & CarouselProps>(
-  ({ orientation = "horizontal", opts, setApi, plugins, className, children, ...props }, ref) => {
-    const [carouselRef, api] = useEmblaCarousel(
-      {
-        ...opts,
-        axis: orientation === "horizontal" ? "x" : "y",
-      },
-      plugins,
-    );
-    const [canScrollPrev, setCanScrollPrev] = React.useState(false);
-    const [canScrollNext, setCanScrollNext] = React.useState(false);
-
-    const onSelect = React.useCallback((api: CarouselApi) => {
-      if (!api) {
-        return;
-      }
-
-      setCanScrollPrev(api.canScrollPrev());
-      setCanScrollNext(api.canScrollNext());
-    }, []);
-
-    const scrollPrev = React.useCallback(() => {
-      api?.scrollPrev();
-    }, [api]);
-
-    const scrollNext = React.useCallback(() => {
-      api?.scrollNext();
-    }, [api]);
-
-    const handleKeyDown = React.useCallback(
-      (event: React.KeyboardEvent<HTMLDivElement>) => {
-        if (event.key === "ArrowLeft") {
-          event.preventDefault();
-          scrollPrev();
-        } else if (event.key === "ArrowRight") {
-          event.preventDefault();
-          scrollNext();
-        }
-      },
-      [scrollPrev, scrollNext],
-    );
-
-    React.useEffect(() => {
-      if (!api || !setApi) {
-        return;
-      }
-
-      setApi(api);
-    }, [api, setApi]);
-
-    React.useEffect(() => {
-      if (!api) {
-        return;
-      }
-
-      onSelect(api);
-      api.on("reInit", onSelect);
-      api.on("select", onSelect);
-
-      return () => {
-        api?.off("select", onSelect);
-      };
-    }, [api, onSelect]);
-
-    return (
-      <CarouselContext.Provider
-        value={{
-          carouselRef,
-          api: api,
-          opts,
-          orientation: orientation || (opts?.axis === "y" ? "vertical" : "horizontal"),
-          scrollPrev,
-          scrollNext,
-          canScrollPrev,
-          canScrollNext,
-        }}
-      >
-        <div
-          ref={ref}
-          onKeyDownCapture={handleKeyDown}
-          className={cn("relative", className)}
-          role="region"
-          aria-roledescription="carousel"
-          {...props}
-        >
-          {children}
-        </div>
-      </CarouselContext.Provider>
-    );
-  },
-);
-Carousel.displayName = "Carousel";
-
-const CarouselContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => {
-    const { carouselRef, orientation } = useCarousel();
-
-    return (
-      <div ref={carouselRef} className="overflow-hidden">
-        <div
-          ref={ref}
-          className={cn("flex", orientation === "horizontal" ? "-ml-4" : "-mt-4 flex-col", className)}
-          {...props}
-        />
-      </div>
-    );
-  },
-);
-CarouselContent.displayName = "CarouselContent";
-
-const CarouselItem = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => {
-    const { orientation } = useCarousel();
-
-    return (
-      <div
-        ref={ref}
-        role="group"
-        aria-roledescription="slide"
-        className={cn("min-w-0 shrink-0 grow-0 basis-full", orientation === "horizontal" ? "pl-4" : "pt-4", className)}
-        {...props}
-      />
-    );
-  },
-);
-CarouselItem.displayName = "CarouselItem";
-
-const CarouselPrevious = React.forwardRef<HTMLButtonElement, React.ComponentProps<typeof Button>>(
-  ({ className, variant = "outline", size = "icon", ...props }, ref) => {
-    const { orientation, scrollPrev, canScrollPrev } = useCarousel();
-
-    return (
-      <Button
-        ref={ref}
-        variant={variant}
-        size={size}
-        className={cn(
-          "absolute h-8 w-8 rounded-full",
-          orientation === "horizontal"
-            ? "-left-12 top-1/2 -translate-y-1/2"
-            : "-top-12 left-1/2 -translate-x-1/2 rotate-90",
-          className,
-        )}
-        disabled={!canScrollPrev}
-        onClick={scrollPrev}
-        {...props}
-      >
-        <ArrowLeft className="h-4 w-4" />
-        <span className="sr-only">Previous slide</span>
-      </Button>
-    );
-  },
-);
-CarouselPrevious.displayName = "CarouselPrevious";
-
-const CarouselNext = React.forwardRef<HTMLButtonElement, React.ComponentProps<typeof Button>>(
-  ({ className, variant = "outline", size = "icon", ...props }, ref) => {
-    const { orientation, scrollNext, canScrollNext } = useCarousel();
-
-    return (
-      <Button
-        ref={ref}
-        variant={variant}
-        size={size}
-        className={cn(
-          "absolute h-8 w-8 rounded-full",
-          orientation === "horizontal"
-            ? "-right-12 top-1/2 -translate-y-1/2"
-            : "-bottom-12 left-1/2 -translate-x-1/2 rotate-90",
-          className,
-        )}
-        disabled={!canScrollNext}
-        onClick={scrollNext}
-        {...props}
-      >
-        <ArrowRight className="h-4 w-4" />
-        <span className="sr-only">Next slide</span>
-      </Button>
-    );
-  },
-);
-CarouselNext.displayName = "CarouselNext";
-
-export { type CarouselApi, Carousel, CarouselContent, CarouselItem, CarouselPrevious, CarouselNext };
-
-```
-
----
-
-## frontend/src/components/ui/chart.tsx
-
-```tsx
-import * as React from "react";
-import * as RechartsPrimitive from "recharts";
-
-import { cn } from "@/lib/utils";
-
-// Format: { THEME_NAME: CSS_SELECTOR }
-const THEMES = { light: "", dark: ".dark" } as const;
-
-export type ChartConfig = {
-  [k in string]: {
-    label?: React.ReactNode;
-    icon?: React.ComponentType;
-  } & ({ color?: string; theme?: never } | { color?: never; theme: Record<keyof typeof THEMES, string> });
-};
-
-type ChartContextProps = {
-  config: ChartConfig;
-};
-
-const ChartContext = React.createContext<ChartContextProps | null>(null);
-
-function useChart() {
-  const context = React.useContext(ChartContext);
-
-  if (!context) {
-    throw new Error("useChart must be used within a <ChartContainer />");
-  }
-
-  return context;
-}
-
-const ChartContainer = React.forwardRef<
-  HTMLDivElement,
-  React.ComponentProps<"div"> & {
-    config: ChartConfig;
-    children: React.ComponentProps<typeof RechartsPrimitive.ResponsiveContainer>["children"];
-  }
->(({ id, className, children, config, ...props }, ref) => {
-  const uniqueId = React.useId();
-  const chartId = `chart-${id || uniqueId.replace(/:/g, "")}`;
-
-  return (
-    <ChartContext.Provider value={{ config }}>
-      <div
-        data-chart={chartId}
-        ref={ref}
-        className={cn(
-          "flex aspect-video justify-center text-xs [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-none [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-sector]:outline-none [&_.recharts-surface]:outline-none",
-          className,
-        )}
-        {...props}
-      >
-        <ChartStyle id={chartId} config={config} />
-        <RechartsPrimitive.ResponsiveContainer>{children}</RechartsPrimitive.ResponsiveContainer>
-      </div>
-    </ChartContext.Provider>
-  );
-});
-ChartContainer.displayName = "Chart";
-
-const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
-  const colorConfig = Object.entries(config).filter(([_, config]) => config.theme || config.color);
-
-  if (!colorConfig.length) {
-    return null;
-  }
-
-  return (
-    <style
-      dangerouslySetInnerHTML={{
-        __html: Object.entries(THEMES)
-          .map(
-            ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
-${colorConfig
-  .map(([key, itemConfig]) => {
-    const color = itemConfig.theme?.[theme as keyof typeof itemConfig.theme] || itemConfig.color;
-    return color ? `  --color-${key}: ${color};` : null;
-  })
-  .join("\n")}
-}
-`,
-          )
-          .join("\n"),
-      }}
-    />
-  );
-};
-
-const ChartTooltip = RechartsPrimitive.Tooltip;
-
-const ChartTooltipContent = React.forwardRef<
-  HTMLDivElement,
-  React.ComponentProps<typeof RechartsPrimitive.Tooltip> &
-    React.ComponentProps<"div"> & {
-      hideLabel?: boolean;
-      hideIndicator?: boolean;
-      indicator?: "line" | "dot" | "dashed";
-      nameKey?: string;
-      labelKey?: string;
-    }
->(
-  (
-    {
-      active,
-      payload,
-      className,
-      indicator = "dot",
-      hideLabel = false,
-      hideIndicator = false,
-      label,
-      labelFormatter,
-      labelClassName,
-      formatter,
-      color,
-      nameKey,
-      labelKey,
-    },
-    ref,
-  ) => {
-    const { config } = useChart();
-
-    const tooltipLabel = React.useMemo(() => {
-      if (hideLabel || !payload?.length) {
-        return null;
-      }
-
-      const [item] = payload;
-      const key = `${labelKey || item.dataKey || item.name || "value"}`;
-      const itemConfig = getPayloadConfigFromPayload(config, item, key);
-      const value =
-        !labelKey && typeof label === "string"
-          ? config[label as keyof typeof config]?.label || label
-          : itemConfig?.label;
-
-      if (labelFormatter) {
-        return <div className={cn("font-medium", labelClassName)}>{labelFormatter(value, payload)}</div>;
-      }
-
-      if (!value) {
-        return null;
-      }
-
-      return <div className={cn("font-medium", labelClassName)}>{value}</div>;
-    }, [label, labelFormatter, payload, hideLabel, labelClassName, config, labelKey]);
-
-    if (!active || !payload?.length) {
-      return null;
-    }
-
-    const nestLabel = payload.length === 1 && indicator !== "dot";
-
-    return (
-      <div
-        ref={ref}
-        className={cn(
-          "grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl",
-          className,
-        )}
-      >
-        {!nestLabel ? tooltipLabel : null}
-        <div className="grid gap-1.5">
-          {payload.map((item, index) => {
-            const key = `${nameKey || item.name || item.dataKey || "value"}`;
-            const itemConfig = getPayloadConfigFromPayload(config, item, key);
-            const indicatorColor = color || item.payload.fill || item.color;
-
-            return (
-              <div
-                key={item.dataKey}
-                className={cn(
-                  "flex w-full flex-wrap items-stretch gap-2 [&>svg]:h-2.5 [&>svg]:w-2.5 [&>svg]:text-muted-foreground",
-                  indicator === "dot" && "items-center",
-                )}
-              >
-                {formatter && item?.value !== undefined && item.name ? (
-                  formatter(item.value, item.name, item, index, item.payload)
-                ) : (
-                  <>
-                    {itemConfig?.icon ? (
-                      <itemConfig.icon />
-                    ) : (
-                      !hideIndicator && (
-                        <div
-                          className={cn("shrink-0 rounded-[2px] border-[--color-border] bg-[--color-bg]", {
-                            "h-2.5 w-2.5": indicator === "dot",
-                            "w-1": indicator === "line",
-                            "w-0 border-[1.5px] border-dashed bg-transparent": indicator === "dashed",
-                            "my-0.5": nestLabel && indicator === "dashed",
-                          })}
-                          style={
-                            {
-                              "--color-bg": indicatorColor,
-                              "--color-border": indicatorColor,
-                            } as React.CSSProperties
-                          }
-                        />
-                      )
-                    )}
-                    <div
-                      className={cn(
-                        "flex flex-1 justify-between leading-none",
-                        nestLabel ? "items-end" : "items-center",
-                      )}
-                    >
-                      <div className="grid gap-1.5">
-                        {nestLabel ? tooltipLabel : null}
-                        <span className="text-muted-foreground">{itemConfig?.label || item.name}</span>
-                      </div>
-                      {item.value && (
-                        <span className="font-mono font-medium tabular-nums text-foreground">
-                          {item.value.toLocaleString()}
-                        </span>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  },
-);
-ChartTooltipContent.displayName = "ChartTooltip";
-
-const ChartLegend = RechartsPrimitive.Legend;
-
-const ChartLegendContent = React.forwardRef<
-  HTMLDivElement,
-  React.ComponentProps<"div"> &
-    Pick<RechartsPrimitive.LegendProps, "payload" | "verticalAlign"> & {
-      hideIcon?: boolean;
-      nameKey?: string;
-    }
->(({ className, hideIcon = false, payload, verticalAlign = "bottom", nameKey }, ref) => {
-  const { config } = useChart();
-
-  if (!payload?.length) {
-    return null;
-  }
-
-  return (
-    <div
-      ref={ref}
-      className={cn("flex items-center justify-center gap-4", verticalAlign === "top" ? "pb-3" : "pt-3", className)}
-    >
-      {payload.map((item) => {
-        const key = `${nameKey || item.dataKey || "value"}`;
-        const itemConfig = getPayloadConfigFromPayload(config, item, key);
-
-        return (
-          <div
-            key={item.value}
-            className={cn("flex items-center gap-1.5 [&>svg]:h-3 [&>svg]:w-3 [&>svg]:text-muted-foreground")}
-          >
-            {itemConfig?.icon && !hideIcon ? (
-              <itemConfig.icon />
-            ) : (
-              <div
-                className="h-2 w-2 shrink-0 rounded-[2px]"
-                style={{
-                  backgroundColor: item.color,
-                }}
-              />
-            )}
-            {itemConfig?.label}
-          </div>
-        );
-      })}
-    </div>
-  );
-});
-ChartLegendContent.displayName = "ChartLegend";
-
-// Helper to extract item config from a payload.
-function getPayloadConfigFromPayload(config: ChartConfig, payload: unknown, key: string) {
-  if (typeof payload !== "object" || payload === null) {
-    return undefined;
-  }
-
-  const payloadPayload =
-    "payload" in payload && typeof payload.payload === "object" && payload.payload !== null
-      ? payload.payload
-      : undefined;
-
-  let configLabelKey: string = key;
-
-  if (key in payload && typeof payload[key as keyof typeof payload] === "string") {
-    configLabelKey = payload[key as keyof typeof payload] as string;
-  } else if (
-    payloadPayload &&
-    key in payloadPayload &&
-    typeof payloadPayload[key as keyof typeof payloadPayload] === "string"
-  ) {
-    configLabelKey = payloadPayload[key as keyof typeof payloadPayload] as string;
-  }
-
-  return configLabelKey in config ? config[configLabelKey] : config[key as keyof typeof config];
-}
-
-export { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, ChartStyle };
-
-```
-
----
-
-## frontend/src/components/ui/checkbox.tsx
-
-```tsx
-import * as React from "react";
-import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
-import { Check } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const Checkbox = React.forwardRef<
-  React.ElementRef<typeof CheckboxPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof CheckboxPrimitive.Root>
->(({ className, ...props }, ref) => (
-  <CheckboxPrimitive.Root
-    ref={ref}
-    className={cn(
-      "peer h-4 w-4 shrink-0 rounded-sm border border-primary ring-offset-background data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
-      className,
-    )}
-    {...props}
-  >
-    <CheckboxPrimitive.Indicator className={cn("flex items-center justify-center text-current")}>
-      <Check className="h-4 w-4" />
-    </CheckboxPrimitive.Indicator>
-  </CheckboxPrimitive.Root>
-));
-Checkbox.displayName = CheckboxPrimitive.Root.displayName;
-
-export { Checkbox };
-
-```
-
----
-
-## frontend/src/components/ui/collapsible.tsx
-
-```tsx
-import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";
-
-const Collapsible = CollapsiblePrimitive.Root;
-
-const CollapsibleTrigger = CollapsiblePrimitive.CollapsibleTrigger;
-
-const CollapsibleContent = CollapsiblePrimitive.CollapsibleContent;
-
-export { Collapsible, CollapsibleTrigger, CollapsibleContent };
-
-```
-
----
-
-## frontend/src/components/ui/command.tsx
-
-```tsx
-import * as React from "react";
-import { type DialogProps } from "@radix-ui/react-dialog";
-import { Command as CommandPrimitive } from "cmdk";
-import { Search } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
-
-const Command = React.forwardRef<
-  React.ElementRef<typeof CommandPrimitive>,
-  React.ComponentPropsWithoutRef<typeof CommandPrimitive>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive
-    ref={ref}
-    className={cn(
-      "flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground",
-      className,
-    )}
-    {...props}
-  />
-));
-Command.displayName = CommandPrimitive.displayName;
-
-interface CommandDialogProps extends DialogProps {}
-
-const CommandDialog = ({ children, ...props }: CommandDialogProps) => {
-  return (
-    <Dialog {...props}>
-      <DialogContent className="overflow-hidden p-0 shadow-lg">
-        <Command className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5">
-          {children}
-        </Command>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
-const CommandInput = React.forwardRef<
-  React.ElementRef<typeof CommandPrimitive.Input>,
-  React.ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
->(({ className, ...props }, ref) => (
-  <div className="flex items-center border-b px-3" cmdk-input-wrapper="">
-    <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-    <CommandPrimitive.Input
-      ref={ref}
-      className={cn(
-        "flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      )}
-      {...props}
-    />
-  </div>
-));
-
-CommandInput.displayName = CommandPrimitive.Input.displayName;
-
-const CommandList = React.forwardRef<
-  React.ElementRef<typeof CommandPrimitive.List>,
-  React.ComponentPropsWithoutRef<typeof CommandPrimitive.List>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive.List
-    ref={ref}
-    className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden", className)}
-    {...props}
-  />
-));
-
-CommandList.displayName = CommandPrimitive.List.displayName;
-
-const CommandEmpty = React.forwardRef<
-  React.ElementRef<typeof CommandPrimitive.Empty>,
-  React.ComponentPropsWithoutRef<typeof CommandPrimitive.Empty>
->((props, ref) => <CommandPrimitive.Empty ref={ref} className="py-6 text-center text-sm" {...props} />);
-
-CommandEmpty.displayName = CommandPrimitive.Empty.displayName;
-
-const CommandGroup = React.forwardRef<
-  React.ElementRef<typeof CommandPrimitive.Group>,
-  React.ComponentPropsWithoutRef<typeof CommandPrimitive.Group>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive.Group
-    ref={ref}
-    className={cn(
-      "overflow-hidden p-1 text-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground",
-      className,
-    )}
-    {...props}
-  />
-));
-
-CommandGroup.displayName = CommandPrimitive.Group.displayName;
-
-const CommandSeparator = React.forwardRef<
-  React.ElementRef<typeof CommandPrimitive.Separator>,
-  React.ComponentPropsWithoutRef<typeof CommandPrimitive.Separator>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive.Separator ref={ref} className={cn("-mx-1 h-px bg-border", className)} {...props} />
-));
-CommandSeparator.displayName = CommandPrimitive.Separator.displayName;
-
-const CommandItem = React.forwardRef<
-  React.ElementRef<typeof CommandPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof CommandPrimitive.Item>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive.Item
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none data-[disabled=true]:pointer-events-none data-[selected='true']:bg-accent data-[selected=true]:text-accent-foreground data-[disabled=true]:opacity-50",
-      className,
-    )}
-    {...props}
-  />
-));
-
-CommandItem.displayName = CommandPrimitive.Item.displayName;
-
-const CommandShortcut = ({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) => {
-  return <span className={cn("ml-auto text-xs tracking-widest text-muted-foreground", className)} {...props} />;
-};
-CommandShortcut.displayName = "CommandShortcut";
-
-export {
-  Command,
-  CommandDialog,
-  CommandInput,
-  CommandList,
-  CommandEmpty,
-  CommandGroup,
-  CommandItem,
-  CommandShortcut,
-  CommandSeparator,
-};
-
-```
-
----
-
-## frontend/src/components/ui/context-menu.tsx
-
-```tsx
-import * as React from "react";
-import * as ContextMenuPrimitive from "@radix-ui/react-context-menu";
-import { Check, ChevronRight, Circle } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const ContextMenu = ContextMenuPrimitive.Root;
-
-const ContextMenuTrigger = ContextMenuPrimitive.Trigger;
-
-const ContextMenuGroup = ContextMenuPrimitive.Group;
-
-const ContextMenuPortal = ContextMenuPrimitive.Portal;
-
-const ContextMenuSub = ContextMenuPrimitive.Sub;
-
-const ContextMenuRadioGroup = ContextMenuPrimitive.RadioGroup;
-
-const ContextMenuSubTrigger = React.forwardRef<
-  React.ElementRef<typeof ContextMenuPrimitive.SubTrigger>,
-  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.SubTrigger> & {
-    inset?: boolean;
-  }
->(({ className, inset, children, ...props }, ref) => (
-  <ContextMenuPrimitive.SubTrigger
-    ref={ref}
-    className={cn(
-      "flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none data-[state=open]:bg-accent data-[state=open]:text-accent-foreground focus:bg-accent focus:text-accent-foreground",
-      inset && "pl-8",
-      className,
-    )}
-    {...props}
-  >
-    {children}
-    <ChevronRight className="ml-auto h-4 w-4" />
-  </ContextMenuPrimitive.SubTrigger>
-));
-ContextMenuSubTrigger.displayName = ContextMenuPrimitive.SubTrigger.displayName;
-
-const ContextMenuSubContent = React.forwardRef<
-  React.ElementRef<typeof ContextMenuPrimitive.SubContent>,
-  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.SubContent>
->(({ className, ...props }, ref) => (
-  <ContextMenuPrimitive.SubContent
-    ref={ref}
-    className={cn(
-      "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-      className,
-    )}
-    {...props}
-  />
-));
-ContextMenuSubContent.displayName = ContextMenuPrimitive.SubContent.displayName;
-
-const ContextMenuContent = React.forwardRef<
-  React.ElementRef<typeof ContextMenuPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <ContextMenuPrimitive.Portal>
-    <ContextMenuPrimitive.Content
-      ref={ref}
-      className={cn(
-        "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md animate-in fade-in-80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-        className,
-      )}
-      {...props}
-    />
-  </ContextMenuPrimitive.Portal>
-));
-ContextMenuContent.displayName = ContextMenuPrimitive.Content.displayName;
-
-const ContextMenuItem = React.forwardRef<
-  React.ElementRef<typeof ContextMenuPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Item> & {
-    inset?: boolean;
-  }
->(({ className, inset, ...props }, ref) => (
-  <ContextMenuPrimitive.Item
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 focus:bg-accent focus:text-accent-foreground",
-      inset && "pl-8",
-      className,
-    )}
-    {...props}
-  />
-));
-ContextMenuItem.displayName = ContextMenuPrimitive.Item.displayName;
-
-const ContextMenuCheckboxItem = React.forwardRef<
-  React.ElementRef<typeof ContextMenuPrimitive.CheckboxItem>,
-  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.CheckboxItem>
->(({ className, children, checked, ...props }, ref) => (
-  <ContextMenuPrimitive.CheckboxItem
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 focus:bg-accent focus:text-accent-foreground",
-      className,
-    )}
-    checked={checked}
-    {...props}
-  >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <ContextMenuPrimitive.ItemIndicator>
-        <Check className="h-4 w-4" />
-      </ContextMenuPrimitive.ItemIndicator>
-    </span>
-    {children}
-  </ContextMenuPrimitive.CheckboxItem>
-));
-ContextMenuCheckboxItem.displayName = ContextMenuPrimitive.CheckboxItem.displayName;
-
-const ContextMenuRadioItem = React.forwardRef<
-  React.ElementRef<typeof ContextMenuPrimitive.RadioItem>,
-  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.RadioItem>
->(({ className, children, ...props }, ref) => (
-  <ContextMenuPrimitive.RadioItem
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 focus:bg-accent focus:text-accent-foreground",
-      className,
-    )}
-    {...props}
-  >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <ContextMenuPrimitive.ItemIndicator>
-        <Circle className="h-2 w-2 fill-current" />
-      </ContextMenuPrimitive.ItemIndicator>
-    </span>
-    {children}
-  </ContextMenuPrimitive.RadioItem>
-));
-ContextMenuRadioItem.displayName = ContextMenuPrimitive.RadioItem.displayName;
-
-const ContextMenuLabel = React.forwardRef<
-  React.ElementRef<typeof ContextMenuPrimitive.Label>,
-  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Label> & {
-    inset?: boolean;
-  }
->(({ className, inset, ...props }, ref) => (
-  <ContextMenuPrimitive.Label
-    ref={ref}
-    className={cn("px-2 py-1.5 text-sm font-semibold text-foreground", inset && "pl-8", className)}
-    {...props}
-  />
-));
-ContextMenuLabel.displayName = ContextMenuPrimitive.Label.displayName;
-
-const ContextMenuSeparator = React.forwardRef<
-  React.ElementRef<typeof ContextMenuPrimitive.Separator>,
-  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Separator>
->(({ className, ...props }, ref) => (
-  <ContextMenuPrimitive.Separator ref={ref} className={cn("-mx-1 my-1 h-px bg-border", className)} {...props} />
-));
-ContextMenuSeparator.displayName = ContextMenuPrimitive.Separator.displayName;
-
-const ContextMenuShortcut = ({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) => {
-  return <span className={cn("ml-auto text-xs tracking-widest text-muted-foreground", className)} {...props} />;
-};
-ContextMenuShortcut.displayName = "ContextMenuShortcut";
-
-export {
-  ContextMenu,
-  ContextMenuTrigger,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuCheckboxItem,
-  ContextMenuRadioItem,
-  ContextMenuLabel,
-  ContextMenuSeparator,
-  ContextMenuShortcut,
-  ContextMenuGroup,
-  ContextMenuPortal,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuRadioGroup,
-};
-
-```
-
----
-
-## frontend/src/components/ui/dialog.tsx
-
-```tsx
-import * as React from "react";
-import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const Dialog = DialogPrimitive.Root;
-
-const DialogTrigger = DialogPrimitive.Trigger;
-
-const DialogPortal = DialogPrimitive.Portal;
-
-const DialogClose = DialogPrimitive.Close;
-
-const DialogOverlay = React.forwardRef<
-  React.ElementRef<typeof DialogPrimitive.Overlay>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Overlay
-    ref={ref}
-    className={cn(
-      "fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-      className,
-    )}
-    {...props}
-  />
-));
-DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
-
-const DialogContent = React.forwardRef<
-  React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
-        className,
-      )}
-      {...props}
-    >
-      {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity data-[state=open]:bg-accent data-[state=open]:text-muted-foreground hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
-        <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
-      </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
-  </DialogPortal>
-));
-DialogContent.displayName = DialogPrimitive.Content.displayName;
-
-const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col space-y-1.5 text-center sm:text-left", className)} {...props} />
-);
-DialogHeader.displayName = "DialogHeader";
-
-const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", className)} {...props} />
-);
-DialogFooter.displayName = "DialogFooter";
-
-const DialogTitle = React.forwardRef<
-  React.ElementRef<typeof DialogPrimitive.Title>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Title
-    ref={ref}
-    className={cn("text-lg font-semibold leading-none tracking-tight", className)}
-    {...props}
-  />
-));
-DialogTitle.displayName = DialogPrimitive.Title.displayName;
-
-const DialogDescription = React.forwardRef<
-  React.ElementRef<typeof DialogPrimitive.Description>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Description>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Description ref={ref} className={cn("text-sm text-muted-foreground", className)} {...props} />
-));
-DialogDescription.displayName = DialogPrimitive.Description.displayName;
-
-export {
-  Dialog,
-  DialogPortal,
-  DialogOverlay,
-  DialogClose,
-  DialogTrigger,
-  DialogContent,
-  DialogHeader,
-  DialogFooter,
-  DialogTitle,
-  DialogDescription,
-};
-
-```
-
----
-
-## frontend/src/components/ui/drawer.tsx
-
-```tsx
-import * as React from "react";
-import { Drawer as DrawerPrimitive } from "vaul";
-
-import { cn } from "@/lib/utils";
-
-const Drawer = ({ shouldScaleBackground = true, ...props }: React.ComponentProps<typeof DrawerPrimitive.Root>) => (
-  <DrawerPrimitive.Root shouldScaleBackground={shouldScaleBackground} {...props} />
-);
-Drawer.displayName = "Drawer";
-
-const DrawerTrigger = DrawerPrimitive.Trigger;
-
-const DrawerPortal = DrawerPrimitive.Portal;
-
-const DrawerClose = DrawerPrimitive.Close;
-
-const DrawerOverlay = React.forwardRef<
-  React.ElementRef<typeof DrawerPrimitive.Overlay>,
-  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <DrawerPrimitive.Overlay ref={ref} className={cn("fixed inset-0 z-50 bg-black/80", className)} {...props} />
-));
-DrawerOverlay.displayName = DrawerPrimitive.Overlay.displayName;
-
-const DrawerContent = React.forwardRef<
-  React.ElementRef<typeof DrawerPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <DrawerPortal>
-    <DrawerOverlay />
-    <DrawerPrimitive.Content
-      ref={ref}
-      className={cn(
-        "fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto flex-col rounded-t-[10px] border bg-background",
-        className,
-      )}
-      {...props}
-    >
-      <div className="mx-auto mt-4 h-2 w-[100px] rounded-full bg-muted" />
-      {children}
-    </DrawerPrimitive.Content>
-  </DrawerPortal>
-));
-DrawerContent.displayName = "DrawerContent";
-
-const DrawerHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("grid gap-1.5 p-4 text-center sm:text-left", className)} {...props} />
-);
-DrawerHeader.displayName = "DrawerHeader";
-
-const DrawerFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("mt-auto flex flex-col gap-2 p-4", className)} {...props} />
-);
-DrawerFooter.displayName = "DrawerFooter";
-
-const DrawerTitle = React.forwardRef<
-  React.ElementRef<typeof DrawerPrimitive.Title>,
-  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Title>
->(({ className, ...props }, ref) => (
-  <DrawerPrimitive.Title
-    ref={ref}
-    className={cn("text-lg font-semibold leading-none tracking-tight", className)}
-    {...props}
-  />
-));
-DrawerTitle.displayName = DrawerPrimitive.Title.displayName;
-
-const DrawerDescription = React.forwardRef<
-  React.ElementRef<typeof DrawerPrimitive.Description>,
-  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Description>
->(({ className, ...props }, ref) => (
-  <DrawerPrimitive.Description ref={ref} className={cn("text-sm text-muted-foreground", className)} {...props} />
-));
-DrawerDescription.displayName = DrawerPrimitive.Description.displayName;
-
-export {
-  Drawer,
-  DrawerPortal,
-  DrawerOverlay,
-  DrawerTrigger,
-  DrawerClose,
-  DrawerContent,
-  DrawerHeader,
-  DrawerFooter,
-  DrawerTitle,
-  DrawerDescription,
-};
-
-```
-
----
-
-## frontend/src/components/ui/dropdown-menu.tsx
-
-```tsx
-import * as React from "react";
-import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
-import { Check, ChevronRight, Circle } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const DropdownMenu = DropdownMenuPrimitive.Root;
-
-const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
-
-const DropdownMenuGroup = DropdownMenuPrimitive.Group;
-
-const DropdownMenuPortal = DropdownMenuPrimitive.Portal;
-
-const DropdownMenuSub = DropdownMenuPrimitive.Sub;
-
-const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
-
-const DropdownMenuSubTrigger = React.forwardRef<
-  React.ElementRef<typeof DropdownMenuPrimitive.SubTrigger>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubTrigger> & {
-    inset?: boolean;
-  }
->(({ className, inset, children, ...props }, ref) => (
-  <DropdownMenuPrimitive.SubTrigger
-    ref={ref}
-    className={cn(
-      "flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none data-[state=open]:bg-accent focus:bg-accent",
-      inset && "pl-8",
-      className,
-    )}
-    {...props}
-  >
-    {children}
-    <ChevronRight className="ml-auto h-4 w-4" />
-  </DropdownMenuPrimitive.SubTrigger>
-));
-DropdownMenuSubTrigger.displayName = DropdownMenuPrimitive.SubTrigger.displayName;
-
-const DropdownMenuSubContent = React.forwardRef<
-  React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.SubContent
-    ref={ref}
-    className={cn(
-      "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-      className,
-    )}
-    {...props}
-  />
-));
-DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName;
-
-const DropdownMenuContent = React.forwardRef<
-  React.ElementRef<typeof DropdownMenuPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 4, ...props }, ref) => (
-  <DropdownMenuPrimitive.Portal>
-    <DropdownMenuPrimitive.Content
-      ref={ref}
-      sideOffset={sideOffset}
-      className={cn(
-        "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-        className,
-      )}
-      {...props}
-    />
-  </DropdownMenuPrimitive.Portal>
-));
-DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;
-
-const DropdownMenuItem = React.forwardRef<
-  React.ElementRef<typeof DropdownMenuPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> & {
-    inset?: boolean;
-  }
->(({ className, inset, ...props }, ref) => (
-  <DropdownMenuPrimitive.Item
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50 focus:bg-accent focus:text-accent-foreground",
-      inset && "pl-8",
-      className,
-    )}
-    {...props}
-  />
-));
-DropdownMenuItem.displayName = DropdownMenuPrimitive.Item.displayName;
-
-const DropdownMenuCheckboxItem = React.forwardRef<
-  React.ElementRef<typeof DropdownMenuPrimitive.CheckboxItem>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.CheckboxItem>
->(({ className, children, checked, ...props }, ref) => (
-  <DropdownMenuPrimitive.CheckboxItem
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50 focus:bg-accent focus:text-accent-foreground",
-      className,
-    )}
-    checked={checked}
-    {...props}
-  >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <DropdownMenuPrimitive.ItemIndicator>
-        <Check className="h-4 w-4" />
-      </DropdownMenuPrimitive.ItemIndicator>
-    </span>
-    {children}
-  </DropdownMenuPrimitive.CheckboxItem>
-));
-DropdownMenuCheckboxItem.displayName = DropdownMenuPrimitive.CheckboxItem.displayName;
-
-const DropdownMenuRadioItem = React.forwardRef<
-  React.ElementRef<typeof DropdownMenuPrimitive.RadioItem>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.RadioItem>
->(({ className, children, ...props }, ref) => (
-  <DropdownMenuPrimitive.RadioItem
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50 focus:bg-accent focus:text-accent-foreground",
-      className,
-    )}
-    {...props}
-  >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <DropdownMenuPrimitive.ItemIndicator>
-        <Circle className="h-2 w-2 fill-current" />
-      </DropdownMenuPrimitive.ItemIndicator>
-    </span>
-    {children}
-  </DropdownMenuPrimitive.RadioItem>
-));
-DropdownMenuRadioItem.displayName = DropdownMenuPrimitive.RadioItem.displayName;
-
-const DropdownMenuLabel = React.forwardRef<
-  React.ElementRef<typeof DropdownMenuPrimitive.Label>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Label> & {
-    inset?: boolean;
-  }
->(({ className, inset, ...props }, ref) => (
-  <DropdownMenuPrimitive.Label
-    ref={ref}
-    className={cn("px-2 py-1.5 text-sm font-semibold", inset && "pl-8", className)}
-    {...props}
-  />
-));
-DropdownMenuLabel.displayName = DropdownMenuPrimitive.Label.displayName;
-
-const DropdownMenuSeparator = React.forwardRef<
-  React.ElementRef<typeof DropdownMenuPrimitive.Separator>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Separator>
->(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.Separator ref={ref} className={cn("-mx-1 my-1 h-px bg-muted", className)} {...props} />
-));
-DropdownMenuSeparator.displayName = DropdownMenuPrimitive.Separator.displayName;
-
-const DropdownMenuShortcut = ({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) => {
-  return <span className={cn("ml-auto text-xs tracking-widest opacity-60", className)} {...props} />;
-};
-DropdownMenuShortcut.displayName = "DropdownMenuShortcut";
-
-export {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuCheckboxItem,
-  DropdownMenuRadioItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuGroup,
-  DropdownMenuPortal,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuRadioGroup,
-};
-
-```
-
----
-
-## frontend/src/components/ui/form.tsx
-
-```tsx
-import * as React from "react";
-import * as LabelPrimitive from "@radix-ui/react-label";
-import { Slot } from "@radix-ui/react-slot";
-import { Controller, ControllerProps, FieldPath, FieldValues, FormProvider, useFormContext } from "react-hook-form";
-
-import { cn } from "@/lib/utils";
-import { Label } from "@/components/ui/label";
-
-const Form = FormProvider;
-
-type FormFieldContextValue<
-  TFieldValues extends FieldValues = FieldValues,
-  TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>,
-> = {
-  name: TName;
-};
-
-const FormFieldContext = React.createContext<FormFieldContextValue>({} as FormFieldContextValue);
-
-const FormField = <
-  TFieldValues extends FieldValues = FieldValues,
-  TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>,
->({
-  ...props
-}: ControllerProps<TFieldValues, TName>) => {
-  return (
-    <FormFieldContext.Provider value={{ name: props.name }}>
-      <Controller {...props} />
-    </FormFieldContext.Provider>
-  );
-};
-
-const useFormField = () => {
-  const fieldContext = React.useContext(FormFieldContext);
-  const itemContext = React.useContext(FormItemContext);
-  const { getFieldState, formState } = useFormContext();
-
-  const fieldState = getFieldState(fieldContext.name, formState);
-
-  if (!fieldContext) {
-    throw new Error("useFormField should be used within <FormField>");
-  }
-
-  const { id } = itemContext;
-
-  return {
-    id,
-    name: fieldContext.name,
-    formItemId: `${id}-form-item`,
-    formDescriptionId: `${id}-form-item-description`,
-    formMessageId: `${id}-form-item-message`,
-    ...fieldState,
-  };
-};
-
-type FormItemContextValue = {
-  id: string;
-};
-
-const FormItemContext = React.createContext<FormItemContextValue>({} as FormItemContextValue);
-
-const FormItem = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => {
-    const id = React.useId();
-
-    return (
-      <FormItemContext.Provider value={{ id }}>
-        <div ref={ref} className={cn("space-y-2", className)} {...props} />
-      </FormItemContext.Provider>
-    );
-  },
-);
-FormItem.displayName = "FormItem";
-
-const FormLabel = React.forwardRef<
-  React.ElementRef<typeof LabelPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof LabelPrimitive.Root>
->(({ className, ...props }, ref) => {
-  const { error, formItemId } = useFormField();
-
-  return <Label ref={ref} className={cn(error && "text-destructive", className)} htmlFor={formItemId} {...props} />;
-});
-FormLabel.displayName = "FormLabel";
-
-const FormControl = React.forwardRef<React.ElementRef<typeof Slot>, React.ComponentPropsWithoutRef<typeof Slot>>(
-  ({ ...props }, ref) => {
-    const { error, formItemId, formDescriptionId, formMessageId } = useFormField();
-
-    return (
-      <Slot
-        ref={ref}
-        id={formItemId}
-        aria-describedby={!error ? `${formDescriptionId}` : `${formDescriptionId} ${formMessageId}`}
-        aria-invalid={!!error}
-        {...props}
-      />
-    );
-  },
-);
-FormControl.displayName = "FormControl";
-
-const FormDescription = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(
-  ({ className, ...props }, ref) => {
-    const { formDescriptionId } = useFormField();
-
-    return <p ref={ref} id={formDescriptionId} className={cn("text-sm text-muted-foreground", className)} {...props} />;
-  },
-);
-FormDescription.displayName = "FormDescription";
-
-const FormMessage = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(
-  ({ className, children, ...props }, ref) => {
-    const { error, formMessageId } = useFormField();
-    const body = error ? String(error?.message) : children;
-
-    if (!body) {
-      return null;
-    }
-
-    return (
-      <p ref={ref} id={formMessageId} className={cn("text-sm font-medium text-destructive", className)} {...props}>
-        {body}
-      </p>
-    );
-  },
-);
-FormMessage.displayName = "FormMessage";
-
-export { useFormField, Form, FormItem, FormLabel, FormControl, FormDescription, FormMessage, FormField };
-
-```
-
----
-
-## frontend/src/components/ui/hover-card.tsx
-
-```tsx
-import * as React from "react";
-import * as HoverCardPrimitive from "@radix-ui/react-hover-card";
-
-import { cn } from "@/lib/utils";
-
-const HoverCard = HoverCardPrimitive.Root;
-
-const HoverCardTrigger = HoverCardPrimitive.Trigger;
-
-const HoverCardContent = React.forwardRef<
-  React.ElementRef<typeof HoverCardPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof HoverCardPrimitive.Content>
->(({ className, align = "center", sideOffset = 4, ...props }, ref) => (
-  <HoverCardPrimitive.Content
-    ref={ref}
-    align={align}
-    sideOffset={sideOffset}
-    className={cn(
-      "z-50 w-64 rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-      className,
-    )}
-    {...props}
-  />
-));
-HoverCardContent.displayName = HoverCardPrimitive.Content.displayName;
-
-export { HoverCard, HoverCardTrigger, HoverCardContent };
-
-```
-
----
-
-## frontend/src/components/ui/input-otp.tsx
-
-```tsx
-import * as React from "react";
-import { OTPInput, OTPInputContext } from "input-otp";
-import { Dot } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const InputOTP = React.forwardRef<React.ElementRef<typeof OTPInput>, React.ComponentPropsWithoutRef<typeof OTPInput>>(
-  ({ className, containerClassName, ...props }, ref) => (
-    <OTPInput
-      ref={ref}
-      containerClassName={cn("flex items-center gap-2 has-[:disabled]:opacity-50", containerClassName)}
-      className={cn("disabled:cursor-not-allowed", className)}
-      {...props}
-    />
-  ),
-);
-InputOTP.displayName = "InputOTP";
-
-const InputOTPGroup = React.forwardRef<React.ElementRef<"div">, React.ComponentPropsWithoutRef<"div">>(
-  ({ className, ...props }, ref) => <div ref={ref} className={cn("flex items-center", className)} {...props} />,
-);
-InputOTPGroup.displayName = "InputOTPGroup";
-
-const InputOTPSlot = React.forwardRef<
-  React.ElementRef<"div">,
-  React.ComponentPropsWithoutRef<"div"> & { index: number }
->(({ index, className, ...props }, ref) => {
-  const inputOTPContext = React.useContext(OTPInputContext);
-  const { char, hasFakeCaret, isActive } = inputOTPContext.slots[index];
-
-  return (
-    <div
-      ref={ref}
-      className={cn(
-        "relative flex h-10 w-10 items-center justify-center border-y border-r border-input text-sm transition-all first:rounded-l-md first:border-l last:rounded-r-md",
-        isActive && "z-10 ring-2 ring-ring ring-offset-background",
-        className,
-      )}
-      {...props}
-    >
-      {char}
-      {hasFakeCaret && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="animate-caret-blink h-4 w-px bg-foreground duration-1000" />
-        </div>
-      )}
-    </div>
-  );
-});
-InputOTPSlot.displayName = "InputOTPSlot";
-
-const InputOTPSeparator = React.forwardRef<React.ElementRef<"div">, React.ComponentPropsWithoutRef<"div">>(
-  ({ ...props }, ref) => (
-    <div ref={ref} role="separator" {...props}>
-      <Dot />
-    </div>
-  ),
-);
-InputOTPSeparator.displayName = "InputOTPSeparator";
-
-export { InputOTP, InputOTPGroup, InputOTPSlot, InputOTPSeparator };
-
-```
-
----
-
-## frontend/src/components/ui/input.tsx
-
-```tsx
-import * as React from "react";
-
-import { cn } from "@/lib/utils";
-
-const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
-  ({ className, type, ...props }, ref) => {
-    return (
-      <input
-        type={type}
-        className={cn(
-          "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
-          className,
-        )}
-        ref={ref}
-        {...props}
-      />
-    );
-  },
-);
-Input.displayName = "Input";
-
-export { Input };
-
-```
-
----
-
-## frontend/src/components/ui/label.tsx
-
-```tsx
-import * as React from "react";
-import * as LabelPrimitive from "@radix-ui/react-label";
-import { cva, type VariantProps } from "class-variance-authority";
-
-import { cn } from "@/lib/utils";
-
-const labelVariants = cva("text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70");
-
-const Label = React.forwardRef<
-  React.ElementRef<typeof LabelPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof LabelPrimitive.Root> & VariantProps<typeof labelVariants>
->(({ className, ...props }, ref) => (
-  <LabelPrimitive.Root ref={ref} className={cn(labelVariants(), className)} {...props} />
-));
-Label.displayName = LabelPrimitive.Root.displayName;
-
-export { Label };
-
-```
-
----
-
-## frontend/src/components/ui/menubar.tsx
-
-```tsx
-import * as React from "react";
-import * as MenubarPrimitive from "@radix-ui/react-menubar";
-import { Check, ChevronRight, Circle } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const MenubarMenu = MenubarPrimitive.Menu;
-
-const MenubarGroup = MenubarPrimitive.Group;
-
-const MenubarPortal = MenubarPrimitive.Portal;
-
-const MenubarSub = MenubarPrimitive.Sub;
-
-const MenubarRadioGroup = MenubarPrimitive.RadioGroup;
-
-const Menubar = React.forwardRef<
-  React.ElementRef<typeof MenubarPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof MenubarPrimitive.Root>
->(({ className, ...props }, ref) => (
-  <MenubarPrimitive.Root
-    ref={ref}
-    className={cn("flex h-10 items-center space-x-1 rounded-md border bg-background p-1", className)}
-    {...props}
-  />
-));
-Menubar.displayName = MenubarPrimitive.Root.displayName;
-
-const MenubarTrigger = React.forwardRef<
-  React.ElementRef<typeof MenubarPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof MenubarPrimitive.Trigger>
->(({ className, ...props }, ref) => (
-  <MenubarPrimitive.Trigger
-    ref={ref}
-    className={cn(
-      "flex cursor-default select-none items-center rounded-sm px-3 py-1.5 text-sm font-medium outline-none data-[state=open]:bg-accent data-[state=open]:text-accent-foreground focus:bg-accent focus:text-accent-foreground",
-      className,
-    )}
-    {...props}
-  />
-));
-MenubarTrigger.displayName = MenubarPrimitive.Trigger.displayName;
-
-const MenubarSubTrigger = React.forwardRef<
-  React.ElementRef<typeof MenubarPrimitive.SubTrigger>,
-  React.ComponentPropsWithoutRef<typeof MenubarPrimitive.SubTrigger> & {
-    inset?: boolean;
-  }
->(({ className, inset, children, ...props }, ref) => (
-  <MenubarPrimitive.SubTrigger
-    ref={ref}
-    className={cn(
-      "flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none data-[state=open]:bg-accent data-[state=open]:text-accent-foreground focus:bg-accent focus:text-accent-foreground",
-      inset && "pl-8",
-      className,
-    )}
-    {...props}
-  >
-    {children}
-    <ChevronRight className="ml-auto h-4 w-4" />
-  </MenubarPrimitive.SubTrigger>
-));
-MenubarSubTrigger.displayName = MenubarPrimitive.SubTrigger.displayName;
-
-const MenubarSubContent = React.forwardRef<
-  React.ElementRef<typeof MenubarPrimitive.SubContent>,
-  React.ComponentPropsWithoutRef<typeof MenubarPrimitive.SubContent>
->(({ className, ...props }, ref) => (
-  <MenubarPrimitive.SubContent
-    ref={ref}
-    className={cn(
-      "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-      className,
-    )}
-    {...props}
-  />
-));
-MenubarSubContent.displayName = MenubarPrimitive.SubContent.displayName;
-
-const MenubarContent = React.forwardRef<
-  React.ElementRef<typeof MenubarPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof MenubarPrimitive.Content>
->(({ className, align = "start", alignOffset = -4, sideOffset = 8, ...props }, ref) => (
-  <MenubarPrimitive.Portal>
-    <MenubarPrimitive.Content
-      ref={ref}
-      align={align}
-      alignOffset={alignOffset}
-      sideOffset={sideOffset}
-      className={cn(
-        "z-50 min-w-[12rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-        className,
-      )}
-      {...props}
-    />
-  </MenubarPrimitive.Portal>
-));
-MenubarContent.displayName = MenubarPrimitive.Content.displayName;
-
-const MenubarItem = React.forwardRef<
-  React.ElementRef<typeof MenubarPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof MenubarPrimitive.Item> & {
-    inset?: boolean;
-  }
->(({ className, inset, ...props }, ref) => (
-  <MenubarPrimitive.Item
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 focus:bg-accent focus:text-accent-foreground",
-      inset && "pl-8",
-      className,
-    )}
-    {...props}
-  />
-));
-MenubarItem.displayName = MenubarPrimitive.Item.displayName;
-
-const MenubarCheckboxItem = React.forwardRef<
-  React.ElementRef<typeof MenubarPrimitive.CheckboxItem>,
-  React.ComponentPropsWithoutRef<typeof MenubarPrimitive.CheckboxItem>
->(({ className, children, checked, ...props }, ref) => (
-  <MenubarPrimitive.CheckboxItem
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 focus:bg-accent focus:text-accent-foreground",
-      className,
-    )}
-    checked={checked}
-    {...props}
-  >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <MenubarPrimitive.ItemIndicator>
-        <Check className="h-4 w-4" />
-      </MenubarPrimitive.ItemIndicator>
-    </span>
-    {children}
-  </MenubarPrimitive.CheckboxItem>
-));
-MenubarCheckboxItem.displayName = MenubarPrimitive.CheckboxItem.displayName;
-
-const MenubarRadioItem = React.forwardRef<
-  React.ElementRef<typeof MenubarPrimitive.RadioItem>,
-  React.ComponentPropsWithoutRef<typeof MenubarPrimitive.RadioItem>
->(({ className, children, ...props }, ref) => (
-  <MenubarPrimitive.RadioItem
-    ref={ref}
-    className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 focus:bg-accent focus:text-accent-foreground",
-      className,
-    )}
-    {...props}
-  >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <MenubarPrimitive.ItemIndicator>
-        <Circle className="h-2 w-2 fill-current" />
-      </MenubarPrimitive.ItemIndicator>
-    </span>
-    {children}
-  </MenubarPrimitive.RadioItem>
-));
-MenubarRadioItem.displayName = MenubarPrimitive.RadioItem.displayName;
-
-const MenubarLabel = React.forwardRef<
-  React.ElementRef<typeof MenubarPrimitive.Label>,
-  React.ComponentPropsWithoutRef<typeof MenubarPrimitive.Label> & {
-    inset?: boolean;
-  }
->(({ className, inset, ...props }, ref) => (
-  <MenubarPrimitive.Label
-    ref={ref}
-    className={cn("px-2 py-1.5 text-sm font-semibold", inset && "pl-8", className)}
-    {...props}
-  />
-));
-MenubarLabel.displayName = MenubarPrimitive.Label.displayName;
-
-const MenubarSeparator = React.forwardRef<
-  React.ElementRef<typeof MenubarPrimitive.Separator>,
-  React.ComponentPropsWithoutRef<typeof MenubarPrimitive.Separator>
->(({ className, ...props }, ref) => (
-  <MenubarPrimitive.Separator ref={ref} className={cn("-mx-1 my-1 h-px bg-muted", className)} {...props} />
-));
-MenubarSeparator.displayName = MenubarPrimitive.Separator.displayName;
-
-const MenubarShortcut = ({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) => {
-  return <span className={cn("ml-auto text-xs tracking-widest text-muted-foreground", className)} {...props} />;
-};
-MenubarShortcut.displayname = "MenubarShortcut";
-
-export {
-  Menubar,
-  MenubarMenu,
-  MenubarTrigger,
-  MenubarContent,
-  MenubarItem,
-  MenubarSeparator,
-  MenubarLabel,
-  MenubarCheckboxItem,
-  MenubarRadioGroup,
-  MenubarRadioItem,
-  MenubarPortal,
-  MenubarSubContent,
-  MenubarSubTrigger,
-  MenubarGroup,
-  MenubarSub,
-  MenubarShortcut,
-};
-
-```
-
----
-
-## frontend/src/components/ui/navigation-menu.tsx
-
-```tsx
-import * as React from "react";
-import * as NavigationMenuPrimitive from "@radix-ui/react-navigation-menu";
-import { cva } from "class-variance-authority";
-import { ChevronDown } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const NavigationMenu = React.forwardRef<
-  React.ElementRef<typeof NavigationMenuPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof NavigationMenuPrimitive.Root>
->(({ className, children, ...props }, ref) => (
-  <NavigationMenuPrimitive.Root
-    ref={ref}
-    className={cn("relative z-10 flex max-w-max flex-1 items-center justify-center", className)}
-    {...props}
-  >
-    {children}
-    <NavigationMenuViewport />
-  </NavigationMenuPrimitive.Root>
-));
-NavigationMenu.displayName = NavigationMenuPrimitive.Root.displayName;
-
-const NavigationMenuList = React.forwardRef<
-  React.ElementRef<typeof NavigationMenuPrimitive.List>,
-  React.ComponentPropsWithoutRef<typeof NavigationMenuPrimitive.List>
->(({ className, ...props }, ref) => (
-  <NavigationMenuPrimitive.List
-    ref={ref}
-    className={cn("group flex flex-1 list-none items-center justify-center space-x-1", className)}
-    {...props}
-  />
-));
-NavigationMenuList.displayName = NavigationMenuPrimitive.List.displayName;
-
-const NavigationMenuItem = NavigationMenuPrimitive.Item;
-
-const navigationMenuTriggerStyle = cva(
-  "group inline-flex h-10 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[active]:bg-accent/50 data-[state=open]:bg-accent/50",
-);
-
-const NavigationMenuTrigger = React.forwardRef<
-  React.ElementRef<typeof NavigationMenuPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof NavigationMenuPrimitive.Trigger>
->(({ className, children, ...props }, ref) => (
-  <NavigationMenuPrimitive.Trigger
-    ref={ref}
-    className={cn(navigationMenuTriggerStyle(), "group", className)}
-    {...props}
-  >
-    {children}{" "}
-    <ChevronDown
-      className="relative top-[1px] ml-1 h-3 w-3 transition duration-200 group-data-[state=open]:rotate-180"
-      aria-hidden="true"
-    />
-  </NavigationMenuPrimitive.Trigger>
-));
-NavigationMenuTrigger.displayName = NavigationMenuPrimitive.Trigger.displayName;
-
-const NavigationMenuContent = React.forwardRef<
-  React.ElementRef<typeof NavigationMenuPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof NavigationMenuPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <NavigationMenuPrimitive.Content
-    ref={ref}
-    className={cn(
-      "left-0 top-0 w-full data-[motion^=from-]:animate-in data-[motion^=to-]:animate-out data-[motion^=from-]:fade-in data-[motion^=to-]:fade-out data-[motion=from-end]:slide-in-from-right-52 data-[motion=from-start]:slide-in-from-left-52 data-[motion=to-end]:slide-out-to-right-52 data-[motion=to-start]:slide-out-to-left-52 md:absolute md:w-auto",
-      className,
-    )}
-    {...props}
-  />
-));
-NavigationMenuContent.displayName = NavigationMenuPrimitive.Content.displayName;
-
-const NavigationMenuLink = NavigationMenuPrimitive.Link;
-
-const NavigationMenuViewport = React.forwardRef<
-  React.ElementRef<typeof NavigationMenuPrimitive.Viewport>,
-  React.ComponentPropsWithoutRef<typeof NavigationMenuPrimitive.Viewport>
->(({ className, ...props }, ref) => (
-  <div className={cn("absolute left-0 top-full flex justify-center")}>
-    <NavigationMenuPrimitive.Viewport
-      className={cn(
-        "origin-top-center relative mt-1.5 h-[var(--radix-navigation-menu-viewport-height)] w-full overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-90 md:w-[var(--radix-navigation-menu-viewport-width)]",
-        className,
-      )}
-      ref={ref}
-      {...props}
-    />
-  </div>
-));
-NavigationMenuViewport.displayName = NavigationMenuPrimitive.Viewport.displayName;
-
-const NavigationMenuIndicator = React.forwardRef<
-  React.ElementRef<typeof NavigationMenuPrimitive.Indicator>,
-  React.ComponentPropsWithoutRef<typeof NavigationMenuPrimitive.Indicator>
->(({ className, ...props }, ref) => (
-  <NavigationMenuPrimitive.Indicator
-    ref={ref}
-    className={cn(
-      "top-full z-[1] flex h-1.5 items-end justify-center overflow-hidden data-[state=visible]:animate-in data-[state=hidden]:animate-out data-[state=hidden]:fade-out data-[state=visible]:fade-in",
-      className,
-    )}
-    {...props}
-  >
-    <div className="relative top-[60%] h-2 w-2 rotate-45 rounded-tl-sm bg-border shadow-md" />
-  </NavigationMenuPrimitive.Indicator>
-));
-NavigationMenuIndicator.displayName = NavigationMenuPrimitive.Indicator.displayName;
-
-export {
-  navigationMenuTriggerStyle,
-  NavigationMenu,
-  NavigationMenuList,
-  NavigationMenuItem,
-  NavigationMenuContent,
-  NavigationMenuTrigger,
-  NavigationMenuLink,
-  NavigationMenuIndicator,
-  NavigationMenuViewport,
-};
-
-```
-
----
-
-## frontend/src/components/ui/pagination.tsx
-
-```tsx
-import * as React from "react";
-import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-import { ButtonProps, buttonVariants } from "@/components/ui/button";
-
-const Pagination = ({ className, ...props }: React.ComponentProps<"nav">) => (
-  <nav
-    role="navigation"
-    aria-label="pagination"
-    className={cn("mx-auto flex w-full justify-center", className)}
-    {...props}
-  />
-);
-Pagination.displayName = "Pagination";
-
-const PaginationContent = React.forwardRef<HTMLUListElement, React.ComponentProps<"ul">>(
-  ({ className, ...props }, ref) => (
-    <ul ref={ref} className={cn("flex flex-row items-center gap-1", className)} {...props} />
-  ),
-);
-PaginationContent.displayName = "PaginationContent";
-
-const PaginationItem = React.forwardRef<HTMLLIElement, React.ComponentProps<"li">>(({ className, ...props }, ref) => (
-  <li ref={ref} className={cn("", className)} {...props} />
-));
-PaginationItem.displayName = "PaginationItem";
-
-type PaginationLinkProps = {
-  isActive?: boolean;
-} & Pick<ButtonProps, "size"> &
-  React.ComponentProps<"a">;
-
-const PaginationLink = ({ className, isActive, size = "icon", ...props }: PaginationLinkProps) => (
-  <a
-    aria-current={isActive ? "page" : undefined}
-    className={cn(
-      buttonVariants({
-        variant: isActive ? "outline" : "ghost",
-        size,
-      }),
-      className,
-    )}
-    {...props}
-  />
-);
-PaginationLink.displayName = "PaginationLink";
-
-const PaginationPrevious = ({ className, ...props }: React.ComponentProps<typeof PaginationLink>) => (
-  <PaginationLink aria-label="Go to previous page" size="default" className={cn("gap-1 pl-2.5", className)} {...props}>
-    <ChevronLeft className="h-4 w-4" />
-    <span>Previous</span>
-  </PaginationLink>
-);
-PaginationPrevious.displayName = "PaginationPrevious";
-
-const PaginationNext = ({ className, ...props }: React.ComponentProps<typeof PaginationLink>) => (
-  <PaginationLink aria-label="Go to next page" size="default" className={cn("gap-1 pr-2.5", className)} {...props}>
-    <span>Next</span>
-    <ChevronRight className="h-4 w-4" />
-  </PaginationLink>
-);
-PaginationNext.displayName = "PaginationNext";
-
-const PaginationEllipsis = ({ className, ...props }: React.ComponentProps<"span">) => (
-  <span aria-hidden className={cn("flex h-9 w-9 items-center justify-center", className)} {...props}>
-    <MoreHorizontal className="h-4 w-4" />
-    <span className="sr-only">More pages</span>
-  </span>
-);
-PaginationEllipsis.displayName = "PaginationEllipsis";
-
-export {
-  Pagination,
-  PaginationContent,
-  PaginationEllipsis,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-};
-
-```
-
----
-
-## frontend/src/components/ui/popover.tsx
-
-```tsx
-import * as React from "react";
-import * as PopoverPrimitive from "@radix-ui/react-popover";
-
-import { cn } from "@/lib/utils";
-
-const Popover = PopoverPrimitive.Root;
-
-const PopoverTrigger = PopoverPrimitive.Trigger;
-
-const PopoverContent = React.forwardRef<
-  React.ElementRef<typeof PopoverPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
->(({ className, align = "center", sideOffset = 4, ...props }, ref) => (
-  <PopoverPrimitive.Portal>
-    <PopoverPrimitive.Content
-      ref={ref}
-      align={align}
-      sideOffset={sideOffset}
-      className={cn(
-        "z-50 w-72 rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-        className,
-      )}
-      {...props}
-    />
-  </PopoverPrimitive.Portal>
-));
-PopoverContent.displayName = PopoverPrimitive.Content.displayName;
-
-export { Popover, PopoverTrigger, PopoverContent };
-
-```
-
----
-
-## frontend/src/components/ui/progress.tsx
-
-```tsx
-import * as React from "react";
-import * as ProgressPrimitive from "@radix-ui/react-progress";
-
-import { cn } from "@/lib/utils";
-
-const Progress = React.forwardRef<
-  React.ElementRef<typeof ProgressPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof ProgressPrimitive.Root>
->(({ className, value, ...props }, ref) => (
-  <ProgressPrimitive.Root
-    ref={ref}
-    className={cn("relative h-4 w-full overflow-hidden rounded-full bg-secondary", className)}
-    {...props}
-  >
-    <ProgressPrimitive.Indicator
-      className="h-full w-full flex-1 bg-primary transition-all"
-      style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
-    />
-  </ProgressPrimitive.Root>
-));
-Progress.displayName = ProgressPrimitive.Root.displayName;
-
-export { Progress };
-
-```
-
----
-
-## frontend/src/components/ui/radio-group.tsx
-
-```tsx
-import * as React from "react";
-import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
-import { Circle } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const RadioGroup = React.forwardRef<
-  React.ElementRef<typeof RadioGroupPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Root>
->(({ className, ...props }, ref) => {
-  return <RadioGroupPrimitive.Root className={cn("grid gap-2", className)} {...props} ref={ref} />;
-});
-RadioGroup.displayName = RadioGroupPrimitive.Root.displayName;
-
-const RadioGroupItem = React.forwardRef<
-  React.ElementRef<typeof RadioGroupPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item>
->(({ className, ...props }, ref) => {
-  return (
-    <RadioGroupPrimitive.Item
-      ref={ref}
-      className={cn(
-        "aspect-square h-4 w-4 rounded-full border border-primary text-primary ring-offset-background focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      )}
-      {...props}
-    >
-      <RadioGroupPrimitive.Indicator className="flex items-center justify-center">
-        <Circle className="h-2.5 w-2.5 fill-current text-current" />
-      </RadioGroupPrimitive.Indicator>
-    </RadioGroupPrimitive.Item>
-  );
-});
-RadioGroupItem.displayName = RadioGroupPrimitive.Item.displayName;
-
-export { RadioGroup, RadioGroupItem };
-
-```
-
----
-
-## frontend/src/components/ui/resizable.tsx
-
-```tsx
-import { GripVertical } from "lucide-react";
-import * as ResizablePrimitive from "react-resizable-panels";
-
-import { cn } from "@/lib/utils";
-
-const ResizablePanelGroup = ({ className, ...props }: React.ComponentProps<typeof ResizablePrimitive.PanelGroup>) => (
-  <ResizablePrimitive.PanelGroup
-    className={cn("flex h-full w-full data-[panel-group-direction=vertical]:flex-col", className)}
-    {...props}
-  />
-);
-
-const ResizablePanel = ResizablePrimitive.Panel;
-
-const ResizableHandle = ({
-  withHandle,
-  className,
-  ...props
-}: React.ComponentProps<typeof ResizablePrimitive.PanelResizeHandle> & {
-  withHandle?: boolean;
-}) => (
-  <ResizablePrimitive.PanelResizeHandle
-    className={cn(
-      "relative flex w-px items-center justify-center bg-border after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2 data-[panel-group-direction=vertical]:h-px data-[panel-group-direction=vertical]:w-full data-[panel-group-direction=vertical]:after:left-0 data-[panel-group-direction=vertical]:after:h-1 data-[panel-group-direction=vertical]:after:w-full data-[panel-group-direction=vertical]:after:-translate-y-1/2 data-[panel-group-direction=vertical]:after:translate-x-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 [&[data-panel-group-direction=vertical]>div]:rotate-90",
-      className,
-    )}
-    {...props}
-  >
-    {withHandle && (
-      <div className="z-10 flex h-4 w-3 items-center justify-center rounded-sm border bg-border">
-        <GripVertical className="h-2.5 w-2.5" />
-      </div>
-    )}
-  </ResizablePrimitive.PanelResizeHandle>
-);
-
-export { ResizablePanelGroup, ResizablePanel, ResizableHandle };
-
-```
-
----
-
-## frontend/src/components/ui/scroll-area.tsx
-
-```tsx
-import * as React from "react";
-import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area";
-
-import { cn } from "@/lib/utils";
-
-const ScrollArea = React.forwardRef<
-  React.ElementRef<typeof ScrollAreaPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root>
->(({ className, children, ...props }, ref) => (
-  <ScrollAreaPrimitive.Root ref={ref} className={cn("relative overflow-hidden", className)} {...props}>
-    <ScrollAreaPrimitive.Viewport className="h-full w-full rounded-[inherit]">{children}</ScrollAreaPrimitive.Viewport>
-    <ScrollBar />
-    <ScrollAreaPrimitive.Corner />
-  </ScrollAreaPrimitive.Root>
-));
-ScrollArea.displayName = ScrollAreaPrimitive.Root.displayName;
-
-const ScrollBar = React.forwardRef<
-  React.ElementRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>,
-  React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>
->(({ className, orientation = "vertical", ...props }, ref) => (
-  <ScrollAreaPrimitive.ScrollAreaScrollbar
-    ref={ref}
-    orientation={orientation}
-    className={cn(
-      "flex touch-none select-none transition-colors",
-      orientation === "vertical" && "h-full w-2.5 border-l border-l-transparent p-[1px]",
-      orientation === "horizontal" && "h-2.5 flex-col border-t border-t-transparent p-[1px]",
-      className,
-    )}
-    {...props}
-  >
-    <ScrollAreaPrimitive.ScrollAreaThumb className="relative flex-1 rounded-full bg-border" />
-  </ScrollAreaPrimitive.ScrollAreaScrollbar>
-));
-ScrollBar.displayName = ScrollAreaPrimitive.ScrollAreaScrollbar.displayName;
-
-export { ScrollArea, ScrollBar };
-
-```
-
----
-
-## frontend/src/components/ui/select.tsx
-
-```tsx
-import * as React from "react";
-import * as SelectPrimitive from "@radix-ui/react-select";
-import { Check, ChevronDown, ChevronUp } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const Select = SelectPrimitive.Root;
-
-const SelectGroup = SelectPrimitive.Group;
-
-const SelectValue = SelectPrimitive.Value;
-
-const SelectTrigger = React.forwardRef<
-  React.ElementRef<typeof SelectPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
->(({ className, children, ...props }, ref) => (
-  <SelectPrimitive.Trigger
-    ref={ref}
-    className={cn(
-      "flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
-      className,
-    )}
-    {...props}
-  >
-    {children}
-    <SelectPrimitive.Icon asChild>
-      <ChevronDown className="h-4 w-4 opacity-50" />
-    </SelectPrimitive.Icon>
-  </SelectPrimitive.Trigger>
-));
-SelectTrigger.displayName = SelectPrimitive.Trigger.displayName;
-
-const SelectScrollUpButton = React.forwardRef<
-  React.ElementRef<typeof SelectPrimitive.ScrollUpButton>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.ScrollUpButton>
->(({ className, ...props }, ref) => (
-  <SelectPrimitive.ScrollUpButton
-    ref={ref}
-    className={cn("flex cursor-default items-center justify-center py-1", className)}
-    {...props}
-  >
-    <ChevronUp className="h-4 w-4" />
-  </SelectPrimitive.ScrollUpButton>
-));
-SelectScrollUpButton.displayName = SelectPrimitive.ScrollUpButton.displayName;
-
-const SelectScrollDownButton = React.forwardRef<
-  React.ElementRef<typeof SelectPrimitive.ScrollDownButton>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.ScrollDownButton>
->(({ className, ...props }, ref) => (
-  <SelectPrimitive.ScrollDownButton
-    ref={ref}
-    className={cn("flex cursor-default items-center justify-center py-1", className)}
-    {...props}
-  >
-    <ChevronDown className="h-4 w-4" />
-  </SelectPrimitive.ScrollDownButton>
-));
-SelectScrollDownButton.displayName = SelectPrimitive.ScrollDownButton.displayName;
-
-const SelectContent = React.forwardRef<
-  React.ElementRef<typeof SelectPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = "popper", ...props }, ref) => (
-  <SelectPrimitive.Portal>
-    <SelectPrimitive.Content
-      ref={ref}
-      className={cn(
-        "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-        position === "popper" &&
-          "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
-        className,
-      )}
-      position={position}
-      {...props}
-    >
-      <SelectScrollUpButton />
-      <SelectPrimitive.Viewport
-        className={cn(
-          "p-1",
-          position === "popper" &&
-            "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]",
-        )}
-      >
-        {children}
-      </SelectPrimitive.Viewport>
-      <SelectScrollDownButton />
-    </SelectPrimitive.Content>
-  </SelectPrimitive.Portal>
-));
-SelectContent.displayName = SelectPrimitive.Content.displayName;
-
-const SelectLabel = React.forwardRef<
-  React.ElementRef<typeof SelectPrimitive.Label>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Label>
->(({ className, ...props }, ref) => (
-  <SelectPrimitive.Label ref={ref} className={cn("py-1.5 pl-8 pr-2 text-sm font-semibold", className)} {...props} />
-));
-SelectLabel.displayName = SelectPrimitive.Label.displayName;
-
-const SelectItem = React.forwardRef<
-  React.ElementRef<typeof SelectPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
->(({ className, children, ...props }, ref) => (
-  <SelectPrimitive.Item
-    ref={ref}
-    className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 focus:bg-accent focus:text-accent-foreground",
-      className,
-    )}
-    {...props}
-  >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <SelectPrimitive.ItemIndicator>
-        <Check className="h-4 w-4" />
-      </SelectPrimitive.ItemIndicator>
-    </span>
-
-    <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
-  </SelectPrimitive.Item>
-));
-SelectItem.displayName = SelectPrimitive.Item.displayName;
-
-const SelectSeparator = React.forwardRef<
-  React.ElementRef<typeof SelectPrimitive.Separator>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Separator>
->(({ className, ...props }, ref) => (
-  <SelectPrimitive.Separator ref={ref} className={cn("-mx-1 my-1 h-px bg-muted", className)} {...props} />
-));
-SelectSeparator.displayName = SelectPrimitive.Separator.displayName;
-
-export {
-  Select,
-  SelectGroup,
-  SelectValue,
-  SelectTrigger,
-  SelectContent,
-  SelectLabel,
-  SelectItem,
-  SelectSeparator,
-  SelectScrollUpButton,
-  SelectScrollDownButton,
-};
-
-```
-
----
-
-## frontend/src/components/ui/separator.tsx
-
-```tsx
-import * as React from "react";
-import * as SeparatorPrimitive from "@radix-ui/react-separator";
-
-import { cn } from "@/lib/utils";
-
-const Separator = React.forwardRef<
-  React.ElementRef<typeof SeparatorPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof SeparatorPrimitive.Root>
->(({ className, orientation = "horizontal", decorative = true, ...props }, ref) => (
-  <SeparatorPrimitive.Root
-    ref={ref}
-    decorative={decorative}
-    orientation={orientation}
-    className={cn("shrink-0 bg-border", orientation === "horizontal" ? "h-[1px] w-full" : "h-full w-[1px]", className)}
-    {...props}
-  />
-));
-Separator.displayName = SeparatorPrimitive.Root.displayName;
-
-export { Separator };
-
-```
-
----
-
-## frontend/src/components/ui/sheet.tsx
-
-```tsx
-import * as SheetPrimitive from "@radix-ui/react-dialog";
-import { cva, type VariantProps } from "class-variance-authority";
-import { X } from "lucide-react";
-import * as React from "react";
-
-import { cn } from "@/lib/utils";
-
-const Sheet = SheetPrimitive.Root;
-
-const SheetTrigger = SheetPrimitive.Trigger;
-
-const SheetClose = SheetPrimitive.Close;
-
-const SheetPortal = SheetPrimitive.Portal;
-
-const SheetOverlay = React.forwardRef<
-  React.ElementRef<typeof SheetPrimitive.Overlay>,
-  React.ComponentPropsWithoutRef<typeof SheetPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <SheetPrimitive.Overlay
-    className={cn(
-      "fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-      className,
-    )}
-    {...props}
-    ref={ref}
-  />
-));
-SheetOverlay.displayName = SheetPrimitive.Overlay.displayName;
-
-const sheetVariants = cva(
-  "fixed z-50 gap-4 bg-background p-6 shadow-lg transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500",
-  {
-    variants: {
-      side: {
-        top: "inset-x-0 top-0 border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
-        bottom:
-          "inset-x-0 bottom-0 border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
-        left: "inset-y-0 left-0 h-full w-3/4 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm",
-        right:
-          "inset-y-0 right-0 h-full w-3/4  border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm",
-      },
-    },
-    defaultVariants: {
-      side: "right",
-    },
-  },
-);
-
-interface SheetContentProps
-  extends React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content>,
-    VariantProps<typeof sheetVariants> {}
-
-const SheetContent = React.forwardRef<React.ElementRef<typeof SheetPrimitive.Content>, SheetContentProps>(
-  ({ side = "right", className, children, ...props }, ref) => (
-    <SheetPortal>
-      <SheetOverlay />
-      <SheetPrimitive.Content ref={ref} className={cn(sheetVariants({ side }), className)} {...props}>
-        {children}
-        <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity data-[state=open]:bg-secondary hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
-          <X className="h-4 w-4" />
-          <span className="sr-only">Close</span>
-        </SheetPrimitive.Close>
-      </SheetPrimitive.Content>
-    </SheetPortal>
-  ),
-);
-SheetContent.displayName = SheetPrimitive.Content.displayName;
-
-const SheetHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col space-y-2 text-center sm:text-left", className)} {...props} />
-);
-SheetHeader.displayName = "SheetHeader";
-
-const SheetFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", className)} {...props} />
-);
-SheetFooter.displayName = "SheetFooter";
-
-const SheetTitle = React.forwardRef<
-  React.ElementRef<typeof SheetPrimitive.Title>,
-  React.ComponentPropsWithoutRef<typeof SheetPrimitive.Title>
->(({ className, ...props }, ref) => (
-  <SheetPrimitive.Title ref={ref} className={cn("text-lg font-semibold text-foreground", className)} {...props} />
-));
-SheetTitle.displayName = SheetPrimitive.Title.displayName;
-
-const SheetDescription = React.forwardRef<
-  React.ElementRef<typeof SheetPrimitive.Description>,
-  React.ComponentPropsWithoutRef<typeof SheetPrimitive.Description>
->(({ className, ...props }, ref) => (
-  <SheetPrimitive.Description ref={ref} className={cn("text-sm text-muted-foreground", className)} {...props} />
-));
-SheetDescription.displayName = SheetPrimitive.Description.displayName;
-
-export {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetOverlay,
-  SheetPortal,
-  SheetTitle,
-  SheetTrigger,
-};
-
-```
-
----
-
-## frontend/src/components/ui/sidebar.tsx
-
-```tsx
-import * as React from "react";
-import { Slot } from "@radix-ui/react-slot";
-import { VariantProps, cva } from "class-variance-authority";
-import { PanelLeft } from "lucide-react";
-
-import { useIsMobile } from "@/hooks/use-mobile";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-
-const SIDEBAR_COOKIE_NAME = "sidebar:state";
-const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
-const SIDEBAR_WIDTH = "16rem";
-const SIDEBAR_WIDTH_MOBILE = "18rem";
-const SIDEBAR_WIDTH_ICON = "3rem";
-const SIDEBAR_KEYBOARD_SHORTCUT = "b";
-
-type SidebarContext = {
-  state: "expanded" | "collapsed";
-  open: boolean;
-  setOpen: (open: boolean) => void;
-  openMobile: boolean;
-  setOpenMobile: (open: boolean) => void;
-  isMobile: boolean;
-  toggleSidebar: () => void;
-};
-
-const SidebarContext = React.createContext<SidebarContext | null>(null);
-
-function useSidebar() {
-  const context = React.useContext(SidebarContext);
-  if (!context) {
-    throw new Error("useSidebar must be used within a SidebarProvider.");
-  }
-
-  return context;
-}
-
-const SidebarProvider = React.forwardRef<
-  HTMLDivElement,
-  React.ComponentProps<"div"> & {
-    defaultOpen?: boolean;
-    open?: boolean;
-    onOpenChange?: (open: boolean) => void;
-  }
->(({ defaultOpen = true, open: openProp, onOpenChange: setOpenProp, className, style, children, ...props }, ref) => {
-  const isMobile = useIsMobile();
-  const [openMobile, setOpenMobile] = React.useState(false);
-
-  // This is the internal state of the sidebar.
-  // We use openProp and setOpenProp for control from outside the component.
-  const [_open, _setOpen] = React.useState(defaultOpen);
-  const open = openProp ?? _open;
-  const setOpen = React.useCallback(
-    (value: boolean | ((value: boolean) => boolean)) => {
-      const openState = typeof value === "function" ? value(open) : value;
-      if (setOpenProp) {
-        setOpenProp(openState);
-      } else {
-        _setOpen(openState);
-      }
-
-      // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
-    },
-    [setOpenProp, open],
-  );
-
-  // Helper to toggle the sidebar.
-  const toggleSidebar = React.useCallback(() => {
-    return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open);
-  }, [isMobile, setOpen, setOpenMobile]);
-
-  // Adds a keyboard shortcut to toggle the sidebar.
-  React.useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        toggleSidebar();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleSidebar]);
-
-  // We add a state so that we can do data-state="expanded" or "collapsed".
-  // This makes it easier to style the sidebar with Tailwind classes.
-  const state = open ? "expanded" : "collapsed";
-
-  const contextValue = React.useMemo<SidebarContext>(
-    () => ({
-      state,
-      open,
-      setOpen,
-      isMobile,
-      openMobile,
-      setOpenMobile,
-      toggleSidebar,
-    }),
-    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar],
-  );
-
-  return (
-    <SidebarContext.Provider value={contextValue}>
-      <TooltipProvider delayDuration={0}>
-        <div
-          style={
-            {
-              "--sidebar-width": SIDEBAR_WIDTH,
-              "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
-              ...style,
-            } as React.CSSProperties
-          }
-          className={cn("group/sidebar-wrapper flex min-h-svh w-full has-[[data-variant=inset]]:bg-sidebar", className)}
-          ref={ref}
-          {...props}
-        >
-          {children}
-        </div>
-      </TooltipProvider>
-    </SidebarContext.Provider>
-  );
-});
-SidebarProvider.displayName = "SidebarProvider";
-
-const Sidebar = React.forwardRef<
-  HTMLDivElement,
-  React.ComponentProps<"div"> & {
-    side?: "left" | "right";
-    variant?: "sidebar" | "floating" | "inset";
-    collapsible?: "offcanvas" | "icon" | "none";
-  }
->(({ side = "left", variant = "sidebar", collapsible = "offcanvas", className, children, ...props }, ref) => {
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
-
-  if (collapsible === "none") {
-    return (
-      <div
-        className={cn("flex h-full w-[--sidebar-width] flex-col bg-sidebar text-sidebar-foreground", className)}
-        ref={ref}
-        {...props}
-      >
-        {children}
-      </div>
-    );
-  }
-
-  if (isMobile) {
-    return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
-        <SheetContent
-          data-sidebar="sidebar"
-          data-mobile="true"
-          className="w-[--sidebar-width] bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
-          style={
-            {
-              "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
-            } as React.CSSProperties
-          }
-          side={side}
-        >
-          <div className="flex h-full w-full flex-col">{children}</div>
-        </SheetContent>
-      </Sheet>
-    );
-  }
-
-  return (
-    <div
-      ref={ref}
-      className="group peer hidden text-sidebar-foreground md:block"
-      data-state={state}
-      data-collapsible={state === "collapsed" ? collapsible : ""}
-      data-variant={variant}
-      data-side={side}
-    >
-      {/* This is what handles the sidebar gap on desktop */}
-      <div
-        className={cn(
-          "relative h-svh w-[--sidebar-width] bg-transparent transition-[width] duration-200 ease-linear",
-          "group-data-[collapsible=offcanvas]:w-0",
-          "group-data-[side=right]:rotate-180",
-          variant === "floating" || variant === "inset"
-            ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4))]"
-            : "group-data-[collapsible=icon]:w-[--sidebar-width-icon]",
-        )}
-      />
-      <div
-        className={cn(
-          "fixed inset-y-0 z-10 hidden h-svh w-[--sidebar-width] transition-[left,right,width] duration-200 ease-linear md:flex",
-          side === "left"
-            ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
-            : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
-          // Adjust the padding for floating and inset variants.
-          variant === "floating" || variant === "inset"
-            ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4)_+2px)]"
-            : "group-data-[collapsible=icon]:w-[--sidebar-width-icon] group-data-[side=left]:border-r group-data-[side=right]:border-l",
-          className,
-        )}
-        {...props}
-      >
-        <div
-          data-sidebar="sidebar"
-          className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow"
-        >
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-});
-Sidebar.displayName = "Sidebar";
-
-const SidebarTrigger = React.forwardRef<React.ElementRef<typeof Button>, React.ComponentProps<typeof Button>>(
-  ({ className, onClick, ...props }, ref) => {
-    const { toggleSidebar } = useSidebar();
-
-    return (
-      <Button
-        ref={ref}
-        data-sidebar="trigger"
-        variant="ghost"
-        size="icon"
-        className={cn("h-7 w-7", className)}
-        onClick={(event) => {
-          onClick?.(event);
-          toggleSidebar();
-        }}
-        {...props}
-      >
-        <PanelLeft />
-        <span className="sr-only">Toggle Sidebar</span>
-      </Button>
-    );
-  },
-);
-SidebarTrigger.displayName = "SidebarTrigger";
-
-const SidebarRail = React.forwardRef<HTMLButtonElement, React.ComponentProps<"button">>(
-  ({ className, ...props }, ref) => {
-    const { toggleSidebar } = useSidebar();
-
-    return (
-      <button
-        ref={ref}
-        data-sidebar="rail"
-        aria-label="Toggle Sidebar"
-        tabIndex={-1}
-        onClick={toggleSidebar}
-        title="Toggle Sidebar"
-        className={cn(
-          "absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] group-data-[side=left]:-right-4 group-data-[side=right]:left-0 hover:after:bg-sidebar-border sm:flex",
-          "[[data-side=left]_&]:cursor-w-resize [[data-side=right]_&]:cursor-e-resize",
-          "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
-          "group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full group-data-[collapsible=offcanvas]:hover:bg-sidebar",
-          "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
-          "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
-          className,
-        )}
-        {...props}
-      />
-    );
-  },
-);
-SidebarRail.displayName = "SidebarRail";
-
-const SidebarInset = React.forwardRef<HTMLDivElement, React.ComponentProps<"main">>(({ className, ...props }, ref) => {
-  return (
-    <main
-      ref={ref}
-      className={cn(
-        "relative flex min-h-svh flex-1 flex-col bg-background",
-        "peer-data-[variant=inset]:min-h-[calc(100svh-theme(spacing.4))] md:peer-data-[variant=inset]:m-2 md:peer-data-[state=collapsed]:peer-data-[variant=inset]:ml-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow",
-        className,
-      )}
-      {...props}
-    />
-  );
-});
-SidebarInset.displayName = "SidebarInset";
-
-const SidebarInput = React.forwardRef<React.ElementRef<typeof Input>, React.ComponentProps<typeof Input>>(
-  ({ className, ...props }, ref) => {
-    return (
-      <Input
-        ref={ref}
-        data-sidebar="input"
-        className={cn(
-          "h-8 w-full bg-background shadow-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-          className,
-        )}
-        {...props}
-      />
-    );
-  },
-);
-SidebarInput.displayName = "SidebarInput";
-
-const SidebarHeader = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(({ className, ...props }, ref) => {
-  return <div ref={ref} data-sidebar="header" className={cn("flex flex-col gap-2 p-2", className)} {...props} />;
-});
-SidebarHeader.displayName = "SidebarHeader";
-
-const SidebarFooter = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(({ className, ...props }, ref) => {
-  return <div ref={ref} data-sidebar="footer" className={cn("flex flex-col gap-2 p-2", className)} {...props} />;
-});
-SidebarFooter.displayName = "SidebarFooter";
-
-const SidebarSeparator = React.forwardRef<React.ElementRef<typeof Separator>, React.ComponentProps<typeof Separator>>(
-  ({ className, ...props }, ref) => {
-    return (
-      <Separator
-        ref={ref}
-        data-sidebar="separator"
-        className={cn("mx-2 w-auto bg-sidebar-border", className)}
-        {...props}
-      />
-    );
-  },
-);
-SidebarSeparator.displayName = "SidebarSeparator";
-
-const SidebarContent = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(({ className, ...props }, ref) => {
-  return (
-    <div
-      ref={ref}
-      data-sidebar="content"
-      className={cn(
-        "flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
-        className,
-      )}
-      {...props}
-    />
-  );
-});
-SidebarContent.displayName = "SidebarContent";
-
-const SidebarGroup = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(({ className, ...props }, ref) => {
-  return (
-    <div
-      ref={ref}
-      data-sidebar="group"
-      className={cn("relative flex w-full min-w-0 flex-col p-2", className)}
-      {...props}
-    />
-  );
-});
-SidebarGroup.displayName = "SidebarGroup";
-
-const SidebarGroupLabel = React.forwardRef<HTMLDivElement, React.ComponentProps<"div"> & { asChild?: boolean }>(
-  ({ className, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : "div";
-
-    return (
-      <Comp
-        ref={ref}
-        data-sidebar="group-label"
-        className={cn(
-          "flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 outline-none ring-sidebar-ring transition-[margin,opa] duration-200 ease-linear focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0",
-          "group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0",
-          className,
-        )}
-        {...props}
-      />
-    );
-  },
-);
-SidebarGroupLabel.displayName = "SidebarGroupLabel";
-
-const SidebarGroupAction = React.forwardRef<HTMLButtonElement, React.ComponentProps<"button"> & { asChild?: boolean }>(
-  ({ className, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button";
-
-    return (
-      <Comp
-        ref={ref}
-        data-sidebar="group-action"
-        className={cn(
-          "absolute right-3 top-3.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-sidebar-foreground outline-none ring-sidebar-ring transition-transform hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0",
-          // Increases the hit area of the button on mobile.
-          "after:absolute after:-inset-2 after:md:hidden",
-          "group-data-[collapsible=icon]:hidden",
-          className,
-        )}
-        {...props}
-      />
-    );
-  },
-);
-SidebarGroupAction.displayName = "SidebarGroupAction";
-
-const SidebarGroupContent = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(
-  ({ className, ...props }, ref) => (
-    <div ref={ref} data-sidebar="group-content" className={cn("w-full text-sm", className)} {...props} />
-  ),
-);
-SidebarGroupContent.displayName = "SidebarGroupContent";
-
-const SidebarMenu = React.forwardRef<HTMLUListElement, React.ComponentProps<"ul">>(({ className, ...props }, ref) => (
-  <ul ref={ref} data-sidebar="menu" className={cn("flex w-full min-w-0 flex-col gap-1", className)} {...props} />
-));
-SidebarMenu.displayName = "SidebarMenu";
-
-const SidebarMenuItem = React.forwardRef<HTMLLIElement, React.ComponentProps<"li">>(({ className, ...props }, ref) => (
-  <li ref={ref} data-sidebar="menu-item" className={cn("group/menu-item relative", className)} {...props} />
-));
-SidebarMenuItem.displayName = "SidebarMenuItem";
-
-const sidebarMenuButtonVariants = cva(
-  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none ring-sidebar-ring transition-[width,height,padding] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-[[data-sidebar=menu-action]]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
-  {
-    variants: {
-      variant: {
-        default: "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-        outline:
-          "bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]",
-      },
-      size: {
-        default: "h-8 text-sm",
-        sm: "h-7 text-xs",
-        lg: "h-12 text-sm group-data-[collapsible=icon]:!p-0",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-      size: "default",
-    },
-  },
-);
-
-const SidebarMenuButton = React.forwardRef<
-  HTMLButtonElement,
-  React.ComponentProps<"button"> & {
-    asChild?: boolean;
-    isActive?: boolean;
-    tooltip?: string | React.ComponentProps<typeof TooltipContent>;
-  } & VariantProps<typeof sidebarMenuButtonVariants>
->(({ asChild = false, isActive = false, variant = "default", size = "default", tooltip, className, ...props }, ref) => {
-  const Comp = asChild ? Slot : "button";
-  const { isMobile, state } = useSidebar();
-
-  const button = (
-    <Comp
-      ref={ref}
-      data-sidebar="menu-button"
-      data-size={size}
-      data-active={isActive}
-      className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
-      {...props}
-    />
-  );
-
-  if (!tooltip) {
-    return button;
-  }
-
-  if (typeof tooltip === "string") {
-    tooltip = {
-      children: tooltip,
-    };
-  }
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent side="right" align="center" hidden={state !== "collapsed" || isMobile} {...tooltip} />
-    </Tooltip>
-  );
-});
-SidebarMenuButton.displayName = "SidebarMenuButton";
-
-const SidebarMenuAction = React.forwardRef<
-  HTMLButtonElement,
-  React.ComponentProps<"button"> & {
-    asChild?: boolean;
-    showOnHover?: boolean;
-  }
->(({ className, asChild = false, showOnHover = false, ...props }, ref) => {
-  const Comp = asChild ? Slot : "button";
-
-  return (
-    <Comp
-      ref={ref}
-      data-sidebar="menu-action"
-      className={cn(
-        "absolute right-1 top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-sidebar-foreground outline-none ring-sidebar-ring transition-transform peer-hover/menu-button:text-sidebar-accent-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0",
-        // Increases the hit area of the button on mobile.
-        "after:absolute after:-inset-2 after:md:hidden",
-        "peer-data-[size=sm]/menu-button:top-1",
-        "peer-data-[size=default]/menu-button:top-1.5",
-        "peer-data-[size=lg]/menu-button:top-2.5",
-        "group-data-[collapsible=icon]:hidden",
-        showOnHover &&
-          "group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100 peer-data-[active=true]/menu-button:text-sidebar-accent-foreground md:opacity-0",
-        className,
-      )}
-      {...props}
-    />
-  );
-});
-SidebarMenuAction.displayName = "SidebarMenuAction";
-
-const SidebarMenuBadge = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(
-  ({ className, ...props }, ref) => (
-    <div
-      ref={ref}
-      data-sidebar="menu-badge"
-      className={cn(
-        "pointer-events-none absolute right-1 flex h-5 min-w-5 select-none items-center justify-center rounded-md px-1 text-xs font-medium tabular-nums text-sidebar-foreground",
-        "peer-hover/menu-button:text-sidebar-accent-foreground peer-data-[active=true]/menu-button:text-sidebar-accent-foreground",
-        "peer-data-[size=sm]/menu-button:top-1",
-        "peer-data-[size=default]/menu-button:top-1.5",
-        "peer-data-[size=lg]/menu-button:top-2.5",
-        "group-data-[collapsible=icon]:hidden",
-        className,
-      )}
-      {...props}
-    />
-  ),
-);
-SidebarMenuBadge.displayName = "SidebarMenuBadge";
-
-const SidebarMenuSkeleton = React.forwardRef<
-  HTMLDivElement,
-  React.ComponentProps<"div"> & {
-    showIcon?: boolean;
-  }
->(({ className, showIcon = false, ...props }, ref) => {
-  // Random width between 50 to 90%.
-  const width = React.useMemo(() => {
-    return `${Math.floor(Math.random() * 40) + 50}%`;
-  }, []);
-
-  return (
-    <div
-      ref={ref}
-      data-sidebar="menu-skeleton"
-      className={cn("flex h-8 items-center gap-2 rounded-md px-2", className)}
-      {...props}
-    >
-      {showIcon && <Skeleton className="size-4 rounded-md" data-sidebar="menu-skeleton-icon" />}
-      <Skeleton
-        className="h-4 max-w-[--skeleton-width] flex-1"
-        data-sidebar="menu-skeleton-text"
-        style={
-          {
-            "--skeleton-width": width,
-          } as React.CSSProperties
-        }
-      />
-    </div>
-  );
-});
-SidebarMenuSkeleton.displayName = "SidebarMenuSkeleton";
-
-const SidebarMenuSub = React.forwardRef<HTMLUListElement, React.ComponentProps<"ul">>(
-  ({ className, ...props }, ref) => (
-    <ul
-      ref={ref}
-      data-sidebar="menu-sub"
-      className={cn(
-        "mx-3.5 flex min-w-0 translate-x-px flex-col gap-1 border-l border-sidebar-border px-2.5 py-0.5",
-        "group-data-[collapsible=icon]:hidden",
-        className,
-      )}
-      {...props}
-    />
-  ),
-);
-SidebarMenuSub.displayName = "SidebarMenuSub";
-
-const SidebarMenuSubItem = React.forwardRef<HTMLLIElement, React.ComponentProps<"li">>(({ ...props }, ref) => (
-  <li ref={ref} {...props} />
-));
-SidebarMenuSubItem.displayName = "SidebarMenuSubItem";
-
-const SidebarMenuSubButton = React.forwardRef<
-  HTMLAnchorElement,
-  React.ComponentProps<"a"> & {
-    asChild?: boolean;
-    size?: "sm" | "md";
-    isActive?: boolean;
-  }
->(({ asChild = false, size = "md", isActive, className, ...props }, ref) => {
-  const Comp = asChild ? Slot : "a";
-
-  return (
-    <Comp
-      ref={ref}
-      data-sidebar="menu-sub-button"
-      data-size={size}
-      data-active={isActive}
-      className={cn(
-        "flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 text-sidebar-foreground outline-none ring-sidebar-ring aria-disabled:pointer-events-none aria-disabled:opacity-50 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-accent-foreground",
-        "data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground",
-        size === "sm" && "text-xs",
-        size === "md" && "text-sm",
-        "group-data-[collapsible=icon]:hidden",
-        className,
-      )}
-      {...props}
-    />
-  );
-});
-SidebarMenuSubButton.displayName = "SidebarMenuSubButton";
-
-export {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupAction,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInput,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuAction,
-  SidebarMenuBadge,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSkeleton,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  SidebarProvider,
-  SidebarRail,
-  SidebarSeparator,
-  SidebarTrigger,
-  useSidebar,
-};
-
-```
-
----
-
-## frontend/src/components/ui/skeleton.tsx
-
-```tsx
-import { cn } from "@/lib/utils";
-
-function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("animate-pulse rounded-md bg-muted", className)} {...props} />;
-}
-
-export { Skeleton };
-
-```
-
----
-
-## frontend/src/components/ui/slider.tsx
-
-```tsx
-import * as React from "react";
-import * as SliderPrimitive from "@radix-ui/react-slider";
-
-import { cn } from "@/lib/utils";
-
-const Slider = React.forwardRef<
-  React.ElementRef<typeof SliderPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root>
->(({ className, ...props }, ref) => (
-  <SliderPrimitive.Root
-    ref={ref}
-    className={cn("relative flex w-full touch-none select-none items-center", className)}
-    {...props}
-  >
-    <SliderPrimitive.Track className="relative h-2 w-full grow overflow-hidden rounded-full bg-secondary">
-      <SliderPrimitive.Range className="absolute h-full bg-primary" />
-    </SliderPrimitive.Track>
-    <SliderPrimitive.Thumb className="block h-5 w-5 rounded-full border-2 border-primary bg-background ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50" />
-  </SliderPrimitive.Root>
-));
-Slider.displayName = SliderPrimitive.Root.displayName;
-
-export { Slider };
-
-```
-
----
-
-## frontend/src/components/ui/sonner.tsx
-
-```tsx
-import { useTheme } from "next-themes";
-import { Toaster as Sonner, toast } from "sonner";
-
-type ToasterProps = React.ComponentProps<typeof Sonner>;
-
-const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme();
-
-  return (
-    <Sonner
-      theme={theme as ToasterProps["theme"]}
-      className="toaster group"
-      toastOptions={{
-        classNames: {
-          toast:
-            "group toast group-[.toaster]:bg-background group-[.toaster]:text-foreground group-[.toaster]:border-border group-[.toaster]:shadow-lg",
-          description: "group-[.toast]:text-muted-foreground",
-          actionButton: "group-[.toast]:bg-primary group-[.toast]:text-primary-foreground",
-          cancelButton: "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
-        },
-      }}
-      {...props}
-    />
-  );
-};
-
-export { Toaster, toast };
-
-```
-
----
-
-## frontend/src/components/ui/switch.tsx
-
-```tsx
-import * as React from "react";
-import * as SwitchPrimitives from "@radix-ui/react-switch";
-
-import { cn } from "@/lib/utils";
-
-const Switch = React.forwardRef<
-  React.ElementRef<typeof SwitchPrimitives.Root>,
-  React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root>
->(({ className, ...props }, ref) => (
-  <SwitchPrimitives.Root
-    className={cn(
-      "peer inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors data-[state=checked]:bg-primary data-[state=unchecked]:bg-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
-      className,
-    )}
-    {...props}
-    ref={ref}
-  >
-    <SwitchPrimitives.Thumb
-      className={cn(
-        "pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0",
-      )}
-    />
-  </SwitchPrimitives.Root>
-));
-Switch.displayName = SwitchPrimitives.Root.displayName;
-
-export { Switch };
-
-```
-
----
-
-## frontend/src/components/ui/table.tsx
-
-```tsx
-import * as React from "react";
-
-import { cn } from "@/lib/utils";
-
-const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
-  ({ className, ...props }, ref) => (
-    <div className="relative w-full overflow-auto">
-      <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
-    </div>
-  ),
-);
-Table.displayName = "Table";
-
-const TableHeader = React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>(
-  ({ className, ...props }, ref) => <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props} />,
-);
-TableHeader.displayName = "TableHeader";
-
-const TableBody = React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>(
-  ({ className, ...props }, ref) => (
-    <tbody ref={ref} className={cn("[&_tr:last-child]:border-0", className)} {...props} />
-  ),
-);
-TableBody.displayName = "TableBody";
-
-const TableFooter = React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>(
-  ({ className, ...props }, ref) => (
-    <tfoot ref={ref} className={cn("border-t bg-muted/50 font-medium [&>tr]:last:border-b-0", className)} {...props} />
-  ),
-);
-TableFooter.displayName = "TableFooter";
-
-const TableRow = React.forwardRef<HTMLTableRowElement, React.HTMLAttributes<HTMLTableRowElement>>(
-  ({ className, ...props }, ref) => (
-    <tr
-      ref={ref}
-      className={cn("border-b transition-colors data-[state=selected]:bg-muted hover:bg-muted/50", className)}
-      {...props}
-    />
-  ),
-);
-TableRow.displayName = "TableRow";
-
-const TableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttributes<HTMLTableCellElement>>(
-  ({ className, ...props }, ref) => (
-    <th
-      ref={ref}
-      className={cn(
-        "h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0",
-        className,
-      )}
-      {...props}
-    />
-  ),
-);
-TableHead.displayName = "TableHead";
-
-const TableCell = React.forwardRef<HTMLTableCellElement, React.TdHTMLAttributes<HTMLTableCellElement>>(
-  ({ className, ...props }, ref) => (
-    <td ref={ref} className={cn("p-4 align-middle [&:has([role=checkbox])]:pr-0", className)} {...props} />
-  ),
-);
-TableCell.displayName = "TableCell";
-
-const TableCaption = React.forwardRef<HTMLTableCaptionElement, React.HTMLAttributes<HTMLTableCaptionElement>>(
-  ({ className, ...props }, ref) => (
-    <caption ref={ref} className={cn("mt-4 text-sm text-muted-foreground", className)} {...props} />
-  ),
-);
-TableCaption.displayName = "TableCaption";
-
-export { Table, TableHeader, TableBody, TableFooter, TableHead, TableRow, TableCell, TableCaption };
-
-```
-
----
-
-## frontend/src/components/ui/tabs.tsx
-
-```tsx
-import * as React from "react";
-import * as TabsPrimitive from "@radix-ui/react-tabs";
-
-import { cn } from "@/lib/utils";
-
-const Tabs = TabsPrimitive.Root;
-
-const TabsList = React.forwardRef<
-  React.ElementRef<typeof TabsPrimitive.List>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.List
-    ref={ref}
-    className={cn(
-      "inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground",
-      className,
-    )}
-    {...props}
-  />
-));
-TabsList.displayName = TabsPrimitive.List.displayName;
-
-const TabsTrigger = React.forwardRef<
-  React.ElementRef<typeof TabsPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Trigger>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.Trigger
-    ref={ref}
-    className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
-      className,
-    )}
-    {...props}
-  />
-));
-TabsTrigger.displayName = TabsPrimitive.Trigger.displayName;
-
-const TabsContent = React.forwardRef<
-  React.ElementRef<typeof TabsPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.Content
-    ref={ref}
-    className={cn(
-      "mt-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-      className,
-    )}
-    {...props}
-  />
-));
-TabsContent.displayName = TabsPrimitive.Content.displayName;
-
-export { Tabs, TabsList, TabsTrigger, TabsContent };
-
-```
-
----
-
-## frontend/src/components/ui/textarea.tsx
-
-```tsx
-import * as React from "react";
-
-import { cn } from "@/lib/utils";
-
-export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {}
-
-const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(({ className, ...props }, ref) => {
-  return (
-    <textarea
-      className={cn(
-        "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      )}
-      ref={ref}
-      {...props}
-    />
-  );
-});
-Textarea.displayName = "Textarea";
-
-export { Textarea };
-
-```
-
----
-
-## frontend/src/components/ui/toast.tsx
-
-```tsx
-import * as React from "react";
-import * as ToastPrimitives from "@radix-ui/react-toast";
-import { cva, type VariantProps } from "class-variance-authority";
-import { X } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-
-const ToastProvider = ToastPrimitives.Provider;
-
-const ToastViewport = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitives.Viewport>,
-  React.ComponentPropsWithoutRef<typeof ToastPrimitives.Viewport>
->(({ className, ...props }, ref) => (
-  <ToastPrimitives.Viewport
-    ref={ref}
-    className={cn(
-      "fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
-      className,
-    )}
-    {...props}
-  />
-));
-ToastViewport.displayName = ToastPrimitives.Viewport.displayName;
-
-const toastVariants = cva(
-  "group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-md border p-6 pr-8 shadow-lg transition-all data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-top-full data-[state=open]:sm:slide-in-from-bottom-full",
-  {
-    variants: {
-      variant: {
-        default: "border bg-background text-foreground",
-        destructive: "destructive group border-destructive bg-destructive text-destructive-foreground",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-    },
-  },
-);
-
-const Toast = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitives.Root>,
-  React.ComponentPropsWithoutRef<typeof ToastPrimitives.Root> & VariantProps<typeof toastVariants>
->(({ className, variant, ...props }, ref) => {
-  return <ToastPrimitives.Root ref={ref} className={cn(toastVariants({ variant }), className)} {...props} />;
-});
-Toast.displayName = ToastPrimitives.Root.displayName;
-
-const ToastAction = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitives.Action>,
-  React.ComponentPropsWithoutRef<typeof ToastPrimitives.Action>
->(({ className, ...props }, ref) => (
-  <ToastPrimitives.Action
-    ref={ref}
-    className={cn(
-      "inline-flex h-8 shrink-0 items-center justify-center rounded-md border bg-transparent px-3 text-sm font-medium ring-offset-background transition-colors group-[.destructive]:border-muted/40 hover:bg-secondary group-[.destructive]:hover:border-destructive/30 group-[.destructive]:hover:bg-destructive group-[.destructive]:hover:text-destructive-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 group-[.destructive]:focus:ring-destructive disabled:pointer-events-none disabled:opacity-50",
-      className,
-    )}
-    {...props}
-  />
-));
-ToastAction.displayName = ToastPrimitives.Action.displayName;
-
-const ToastClose = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitives.Close>,
-  React.ComponentPropsWithoutRef<typeof ToastPrimitives.Close>
->(({ className, ...props }, ref) => (
-  <ToastPrimitives.Close
-    ref={ref}
-    className={cn(
-      "absolute right-2 top-2 rounded-md p-1 text-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 group-[.destructive]:text-red-300 hover:text-foreground group-[.destructive]:hover:text-red-50 focus:opacity-100 focus:outline-none focus:ring-2 group-[.destructive]:focus:ring-red-400 group-[.destructive]:focus:ring-offset-red-600",
-      className,
-    )}
-    toast-close=""
-    {...props}
-  >
-    <X className="h-4 w-4" />
-  </ToastPrimitives.Close>
-));
-ToastClose.displayName = ToastPrimitives.Close.displayName;
-
-const ToastTitle = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitives.Title>,
-  React.ComponentPropsWithoutRef<typeof ToastPrimitives.Title>
->(({ className, ...props }, ref) => (
-  <ToastPrimitives.Title ref={ref} className={cn("text-sm font-semibold", className)} {...props} />
-));
-ToastTitle.displayName = ToastPrimitives.Title.displayName;
-
-const ToastDescription = React.forwardRef<
-  React.ElementRef<typeof ToastPrimitives.Description>,
-  React.ComponentPropsWithoutRef<typeof ToastPrimitives.Description>
->(({ className, ...props }, ref) => (
-  <ToastPrimitives.Description ref={ref} className={cn("text-sm opacity-90", className)} {...props} />
-));
-ToastDescription.displayName = ToastPrimitives.Description.displayName;
-
-type ToastProps = React.ComponentPropsWithoutRef<typeof Toast>;
-
-type ToastActionElement = React.ReactElement<typeof ToastAction>;
-
-export {
-  type ToastProps,
-  type ToastActionElement,
-  ToastProvider,
-  ToastViewport,
-  Toast,
-  ToastTitle,
-  ToastDescription,
-  ToastClose,
-  ToastAction,
-};
-
-```
-
----
-
-## frontend/src/components/ui/toaster.tsx
-
-```tsx
-import { useToast } from "@/hooks/use-toast";
-import { Toast, ToastClose, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from "@/components/ui/toast";
-
-export function Toaster() {
-  const { toasts } = useToast();
-
-  return (
-    <ToastProvider>
-      {toasts.map(function ({ id, title, description, action, ...props }) {
-        return (
-          <Toast key={id} {...props}>
-            <div className="grid gap-1">
-              {title && <ToastTitle>{title}</ToastTitle>}
-              {description && <ToastDescription>{description}</ToastDescription>}
-            </div>
-            {action}
-            <ToastClose />
-          </Toast>
-        );
-      })}
-      <ToastViewport />
-    </ToastProvider>
-  );
-}
-
-```
-
----
-
-## frontend/src/components/ui/toggle-group.tsx
-
-```tsx
-import * as React from "react";
-import * as ToggleGroupPrimitive from "@radix-ui/react-toggle-group";
-import { type VariantProps } from "class-variance-authority";
-
-import { cn } from "@/lib/utils";
-import { toggleVariants } from "@/components/ui/toggle";
-
-const ToggleGroupContext = React.createContext<VariantProps<typeof toggleVariants>>({
-  size: "default",
-  variant: "default",
-});
-
-const ToggleGroup = React.forwardRef<
-  React.ElementRef<typeof ToggleGroupPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof ToggleGroupPrimitive.Root> & VariantProps<typeof toggleVariants>
->(({ className, variant, size, children, ...props }, ref) => (
-  <ToggleGroupPrimitive.Root ref={ref} className={cn("flex items-center justify-center gap-1", className)} {...props}>
-    <ToggleGroupContext.Provider value={{ variant, size }}>{children}</ToggleGroupContext.Provider>
-  </ToggleGroupPrimitive.Root>
-));
-
-ToggleGroup.displayName = ToggleGroupPrimitive.Root.displayName;
-
-const ToggleGroupItem = React.forwardRef<
-  React.ElementRef<typeof ToggleGroupPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof ToggleGroupPrimitive.Item> & VariantProps<typeof toggleVariants>
->(({ className, children, variant, size, ...props }, ref) => {
-  const context = React.useContext(ToggleGroupContext);
-
-  return (
-    <ToggleGroupPrimitive.Item
-      ref={ref}
-      className={cn(
-        toggleVariants({
-          variant: context.variant || variant,
-          size: context.size || size,
-        }),
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </ToggleGroupPrimitive.Item>
-  );
-});
-
-ToggleGroupItem.displayName = ToggleGroupPrimitive.Item.displayName;
-
-export { ToggleGroup, ToggleGroupItem };
-
-```
-
----
-
-## frontend/src/components/ui/toggle.tsx
-
-```tsx
-import * as React from "react";
-import * as TogglePrimitive from "@radix-ui/react-toggle";
-import { cva, type VariantProps } from "class-variance-authority";
-
-import { cn } from "@/lib/utils";
-
-const toggleVariants = cva(
-  "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors hover:bg-muted hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=on]:bg-accent data-[state=on]:text-accent-foreground",
-  {
-    variants: {
-      variant: {
-        default: "bg-transparent",
-        outline: "border border-input bg-transparent hover:bg-accent hover:text-accent-foreground",
-      },
-      size: {
-        default: "h-10 px-3",
-        sm: "h-9 px-2.5",
-        lg: "h-11 px-5",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-      size: "default",
-    },
-  },
-);
-
-const Toggle = React.forwardRef<
-  React.ElementRef<typeof TogglePrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof TogglePrimitive.Root> & VariantProps<typeof toggleVariants>
->(({ className, variant, size, ...props }, ref) => (
-  <TogglePrimitive.Root ref={ref} className={cn(toggleVariants({ variant, size, className }))} {...props} />
-));
-
-Toggle.displayName = TogglePrimitive.Root.displayName;
-
-export { Toggle, toggleVariants };
-
-```
-
----
-
-## frontend/src/components/ui/tooltip.tsx
-
-```tsx
-import * as React from "react";
-import * as TooltipPrimitive from "@radix-ui/react-tooltip";
-
-import { cn } from "@/lib/utils";
-
-const TooltipProvider = TooltipPrimitive.Provider;
-
-const Tooltip = TooltipPrimitive.Root;
-
-const TooltipTrigger = TooltipPrimitive.Trigger;
-
-const TooltipContent = React.forwardRef<
-  React.ElementRef<typeof TooltipPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
->(({ className, sideOffset = 4, ...props }, ref) => (
-  <TooltipPrimitive.Content
-    ref={ref}
-    sideOffset={sideOffset}
-    className={cn(
-      "z-50 overflow-hidden rounded-md border bg-popover px-3 py-1.5 text-sm text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-      className,
-    )}
-    {...props}
-  />
-));
-TooltipContent.displayName = TooltipPrimitive.Content.displayName;
-
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider };
-
-```
-
----
-
-## frontend/src/components/ui/use-toast.ts
-
-```ts
-import { useToast, toast } from "@/hooks/use-toast";
-
-export { useToast, toast };
-
-```
+Generated at 2025-12-21T18:10:03.201Z
 
 ---
 
@@ -11244,9 +220,11 @@ export default StepProgress;
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import type { Token, User, SetupStatus } from '@/types/admin';
 import { authApi } from '@/lib/adminApi';
+import { resetApiClient } from '@/lib/api';
 
 // Storage keys
 const ACCESS_TOKEN_KEY = 'access_token';
+// Note: Refresh token is now stored in HTTP-Only cookie, not localStorage
 const TOKEN_TYPE_KEY = 'token_type';
 const USER_KEY = 'admin_user';
 
@@ -11268,6 +246,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const clearAuthStorage = useCallback(() => {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem(TOKEN_TYPE_KEY);
+    localStorage.removeItem(USER_KEY);
+    // Clear access token cookie
+    document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    // Note: HTTP-Only refresh token cookie is cleared by the logout endpoint
+    // Reset API client to clear any cached state
+    resetApiClient();
+  }, []);
+
+  // Listen for token refresh events from API interceptor
+  useEffect(() => {
+    const handleTokenRefreshed = (event: CustomEvent<{ accessToken: string }>) => {
+      const { accessToken } = event.detail;
+      
+      // Update state with new access token
+      // Note: Refresh token is handled via HTTP-Only cookie
+      setToken(accessToken);
+      localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+      document.cookie = `access_token=${accessToken}; path=/; SameSite=Lax`;
+      
+      console.log('Token refreshed successfully via interceptor');
+    };
+
+    const handleUnauthorized = () => {
+      console.warn('Received unauthorized event, clearing auth state');
+      clearAuthStorage();
+      setToken(null);
+      setUser(null);
+    };
+
+    window.addEventListener('auth:tokenRefreshed', handleTokenRefreshed as EventListener);
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+
+    return () => {
+      window.removeEventListener('auth:tokenRefreshed', handleTokenRefreshed as EventListener);
+      window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    };
+  }, [clearAuthStorage]);
 
   // Initialize auth state from storage
   useEffect(() => {
@@ -11291,16 +310,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
 
           // Verify token is still valid by fetching current user
+          // The API interceptor will automatically refresh if needed
+          // (using HTTP-Only cookie for refresh token)
           try {
             const currentUser = await authApi.me();
             setUser(currentUser);
             localStorage.setItem(USER_KEY, JSON.stringify(currentUser));
           } catch (error) {
-            // Token is invalid, clear storage
-            console.warn('Token validation failed, clearing auth state:', error);
-            clearAuthStorage();
-            setToken(null);
-            setUser(null);
+            // Token refresh also failed (handled by interceptor)
+            // Check if we still have a valid token after potential refresh
+            const currentToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+            if (!currentToken) {
+              console.warn('Token validation and refresh failed, clearing auth state:', error);
+              clearAuthStorage();
+              setToken(null);
+              setUser(null);
+            } else {
+              // Token was refreshed, update state
+              setToken(currentToken);
+              try {
+                const currentUser = await authApi.me();
+                setUser(currentUser);
+                localStorage.setItem(USER_KEY, JSON.stringify(currentUser));
+              } catch {
+                // Still failing after refresh, clear everything
+                clearAuthStorage();
+                setToken(null);
+                setUser(null);
+              }
+            }
+          }
+        } else {
+          // No access token - try to refresh using HTTP-Only cookie
+          // The cookie is sent automatically by the browser
+          try {
+            const tokenResponse = await authApi.refresh();
+            
+            // Store new access token (refresh token is in HTTP-Only cookie)
+            localStorage.setItem(ACCESS_TOKEN_KEY, tokenResponse.access_token);
+            localStorage.setItem(TOKEN_TYPE_KEY, tokenResponse.token_type);
+            setToken(tokenResponse.access_token);
+            document.cookie = `access_token=${tokenResponse.access_token}; path=/; SameSite=Lax`;
+
+            // Fetch user info
+            const currentUser = await authApi.me();
+            setUser(currentUser);
+            localStorage.setItem(USER_KEY, JSON.stringify(currentUser));
+          } catch {
+            // No valid refresh token cookie, user needs to login
+            // This is expected for new sessions
           }
         }
       } catch (error) {
@@ -11311,22 +369,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     initAuth();
-  }, []);
-
-  const clearAuthStorage = useCallback(() => {
-    localStorage.removeItem(ACCESS_TOKEN_KEY);
-    localStorage.removeItem(TOKEN_TYPE_KEY);
-    localStorage.removeItem(USER_KEY);
-    // Clear cookie
-    document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-  }, []);
+  }, [clearAuthStorage]);
 
   const login = useCallback(async (username: string, password: string) => {
     setIsLoading(true);
     try {
       const tokenResponse: Token = await authApi.login(username, password);
       
-      // Store token
+      // Store access token (refresh token is set as HTTP-Only cookie by server)
       localStorage.setItem(ACCESS_TOKEN_KEY, tokenResponse.access_token);
       localStorage.setItem(TOKEN_TYPE_KEY, tokenResponse.token_type);
       setToken(tokenResponse.access_token);
@@ -11371,10 +421,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(USER_KEY, JSON.stringify(currentUser));
     } catch (error) {
       console.error('Failed to refresh user:', error);
-      // If refresh fails, might need to re-login
-      clearAuthStorage();
-      setToken(null);
-      setUser(null);
+      // The API interceptor will handle token refresh
+      // If we get here, token refresh also failed
+      const currentToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+      if (!currentToken) {
+        clearAuthStorage();
+        setToken(null);
+        setUser(null);
+      }
     }
   }, [token, clearAuthStorage]);
 
@@ -11413,7 +467,7 @@ export function useAuth() {
   return context;
 }
 
-// Export storage key for use in API client
+// Export storage keys for use in API client
 export { ACCESS_TOKEN_KEY };
 
 ```
@@ -14442,6 +3496,21 @@ export default useAiJobs;
 ```ts
 import { useState, useEffect, useCallback, useRef } from "react";
 
+// Storage key for access token (matches AuthContext)
+const ACCESS_TOKEN_KEY = 'access_token';
+
+/**
+ * Append authentication token to URL for SSE connections.
+ * EventSource doesn't support custom headers, so we use query parameter.
+ */
+function appendTokenToUrl(url: string): string {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token) return url;
+  
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export interface AnalysisUpdate {
   articleId: number;
   eventType: "analysis_started" | "analysis_progress" | "analysis_partial" | "analysis_complete" | "discussion_complete" | "analysis_error";
@@ -14545,7 +3614,9 @@ export function useAnalysisSSE({
     const url = new URL("/api/v1/search/analysis/stream", baseUrl);
     url.searchParams.set("articleIds", articleIds.join(","));
 
-    const es = new EventSource(url.toString());
+    // Append auth token to URL for SSE authentication
+    const authenticatedUrl = appendTokenToUrl(url.toString());
+    const es = new EventSource(authenticatedUrl);
     eventSourceRef.current = es;
 
     es.onopen = () => {
@@ -15961,6 +5032,203 @@ export default useContinueWork;
 
 ---
 
+## frontend/src/hooks/useCrawlerLogs.ts
+
+```ts
+import { useCallback, useState, useMemo } from 'react';
+import { useEventSource } from './useEventSource';
+
+// ============================================
+// Crawler Log Types
+// ============================================
+
+export type CrawlerEventType =
+  | 'connected'
+  | 'agent_start'
+  | 'agent_step'
+  | 'agent_complete'
+  | 'agent_error'
+  | 'url_discovered'
+  | 'health_update'
+  | 'captcha_detected'
+  | 'captcha_solved'
+  | 'collection_start'
+  | 'collection_progress'
+  | 'collection_complete'
+  | 'collection_error'
+  | 'collection_log';
+
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
+
+export interface CrawlerEvent {
+  type: CrawlerEventType;
+  id: string;
+  timestamp: string;
+  data: {
+    source?: string;
+    task_id?: string;
+    url?: string;
+    message: string;
+    level?: LogLevel;
+    progress?: number;
+    total?: number;
+    [key: string]: unknown;
+  };
+}
+
+export interface CrawlerLogEntry {
+  id: string;
+  eventType: CrawlerEventType;
+  source: string;
+  message: string;
+  level: LogLevel;
+  timestamp: Date;
+  data?: Record<string, unknown>;
+}
+
+// ============================================
+// Crawler Logs Stream Hook
+// ============================================
+
+export interface UseCrawlerLogsOptions {
+  /** 로그 최대 보관 개수 */
+  maxLogs?: number;
+  /** 연결 활성화 여부 */
+  enabled?: boolean;
+  /** 필터링할 소스 (비어있으면 전체) */
+  filterSources?: string[];
+  /** 필터링할 로그 레벨 (비어있으면 전체) */
+  filterLevels?: LogLevel[];
+  /** 이벤트 수신 콜백 */
+  onEvent?: (event: CrawlerEvent) => void;
+}
+
+export interface UseCrawlerLogsReturn {
+  /** 로그 목록 */
+  logs: CrawlerLogEntry[];
+  /** 연결 상태 */
+  status: 'connecting' | 'connected' | 'disconnected' | 'error';
+  /** 재연결 시도 횟수 */
+  retryCount: number;
+  /** 수동 재연결 */
+  reconnect: () => void;
+  /** 로그 초기화 */
+  clearLogs: () => void;
+  /** 활성 소스 목록 */
+  activeSources: string[];
+  /** 소스별 상태 */
+  sourceStatus: Record<string, 'idle' | 'running' | 'complete' | 'error'>;
+}
+
+/**
+ * 크롤러 SSE 스트림을 구독하는 훅
+ * autonomous-crawler 서비스의 /events 엔드포인트에 연결
+ */
+export function useCrawlerLogs(
+  options: UseCrawlerLogsOptions = {}
+): UseCrawlerLogsReturn {
+  const {
+    maxLogs = 200,
+    enabled = true,
+    filterSources = [],
+    filterLevels = [],
+    onEvent,
+  } = options;
+
+  const [logs, setLogs] = useState<CrawlerLogEntry[]>([]);
+  const [activeSources, setActiveSources] = useState<string[]>([]);
+  const [sourceStatus, setSourceStatus] = useState<Record<string, 'idle' | 'running' | 'complete' | 'error'>>({});
+
+  const handleMessage = useCallback((data: string) => {
+    try {
+      const event: CrawlerEvent = JSON.parse(data);
+      
+      // 연결 이벤트는 로그에 추가하지 않음
+      if (event.type === 'connected') {
+        onEvent?.(event);
+        return;
+      }
+
+      const source = event.data?.source || event.data?.task_id || 'unknown';
+      const level = (event.data?.level as LogLevel) || 'INFO';
+
+      // 필터링 적용
+      if (filterSources.length > 0 && !filterSources.includes(source)) {
+        return;
+      }
+      if (filterLevels.length > 0 && !filterLevels.includes(level)) {
+        return;
+      }
+
+      // 소스 상태 업데이트
+      if (event.type === 'collection_start' || event.type === 'agent_start') {
+        setActiveSources(prev => {
+          if (!prev.includes(source)) return [...prev, source];
+          return prev;
+        });
+        setSourceStatus(prev => ({ ...prev, [source]: 'running' }));
+      } else if (event.type === 'collection_complete' || event.type === 'agent_complete') {
+        setSourceStatus(prev => ({ ...prev, [source]: 'complete' }));
+      } else if (event.type === 'collection_error' || event.type === 'agent_error') {
+        setSourceStatus(prev => ({ ...prev, [source]: 'error' }));
+      }
+
+      const logEntry: CrawlerLogEntry = {
+        id: event.id || `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        eventType: event.type,
+        source,
+        message: event.data?.message || '',
+        level,
+        timestamp: new Date(event.timestamp),
+        data: event.data,
+      };
+
+      setLogs((prev) => {
+        const newLogs = [logEntry, ...prev];
+        return newLogs.slice(0, maxLogs);
+      });
+
+      onEvent?.(event);
+    } catch (e) {
+      console.error('Failed to parse crawler event:', e);
+    }
+  }, [maxLogs, filterSources, filterLevels, onEvent]);
+
+  // autonomous-crawler 서비스의 SSE 엔드포인트
+  // API Gateway를 통해 라우팅됨
+  const { status, retryCount, reconnect } = useEventSource(
+    enabled ? '/api/v1/crawler/events' : null,
+    {
+      onMessage: handleMessage,
+      reconnectInterval: 5000,
+      maxRetries: 10,
+      enabled,
+    }
+  );
+
+  const clearLogs = useCallback(() => {
+    setLogs([]);
+    setActiveSources([]);
+    setSourceStatus({});
+  }, []);
+
+  return {
+    logs,
+    status,
+    retryCount,
+    reconnect,
+    clearLogs,
+    activeSources,
+    sourceStatus,
+  };
+}
+
+export default useCrawlerLogs;
+
+```
+
+---
+
 ## frontend/src/hooks/useDashboardEvents.ts
 
 ```ts
@@ -16261,6 +5529,21 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { useBackgroundTasks } from '@/contexts/BackgroundTaskContext';
 import type { DeepSearchJob, DeepSearchResult, Evidence } from '@/lib/api';
 
+// Storage key for access token (matches AuthContext)
+const ACCESS_TOKEN_KEY = 'access_token';
+
+/**
+ * Append authentication token to URL for SSE connections.
+ * EventSource doesn't support custom headers, so we use query parameter.
+ */
+function appendTokenToUrl(url: string): string {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token) return url;
+  
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 // ============================================
 // Types
 // ============================================
@@ -16462,8 +5745,10 @@ export function useDeepSearchSSE(options: UseDeepSearchSSEOptions): UseDeepSearc
     const baseUrl = resolveBaseUrl();
     const url = `${baseUrl}/api/v1/analysis/deep/${jobId}/stream`;
     
-    console.log('[DeepSearchSSE] Connecting to:', url);
-    const eventSource = new EventSource(url);
+    // Append auth token to URL for SSE authentication
+    const authenticatedUrl = appendTokenToUrl(url);
+    console.log('[DeepSearchSSE] Connecting to:', authenticatedUrl.replace(/token=[^&]+/, 'token=***'));
+    const eventSource = new EventSource(authenticatedUrl);
     eventSourceRef.current = eventSource;
 
     // Helper function to handle SSE event data
@@ -16670,6 +5955,21 @@ export default useDeepSearchSSE;
 ```ts
 import { useEffect, useRef, useCallback, useState } from 'react';
 
+// Storage key for access token (matches AuthContext)
+const ACCESS_TOKEN_KEY = 'access_token';
+
+/**
+ * Append authentication token to URL for SSE connections.
+ * EventSource doesn't support custom headers, so we use query parameter.
+ */
+function appendTokenToUrl(url: string): string {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token) return url;
+  
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export interface UseEventSourceOptions {
   /** SSE 메시지 수신 시 콜백 */
   onMessage: (data: string, event?: MessageEvent) => void;
@@ -16780,7 +6080,9 @@ export function useEventSource(
       setStatus('connecting');
     }
 
-    const eventSource = new EventSource(url);
+    // Append auth token to URL for SSE authentication
+    const authenticatedUrl = appendTokenToUrl(url);
+    const eventSource = new EventSource(authenticatedUrl);
     sourceRef.current = eventSource;
 
     eventSource.onopen = () => {
@@ -17796,8 +7098,15 @@ export function useFactCheckAnalytics() {
 
 /**
  * Generate mock analytics for demo/testing purposes
+ * WARNING: This function should only be used in development/testing environments.
+ * In production, always use real backend data.
  */
 export function generateMockAnalytics(overrides?: Partial<FactCheckAnalytics>): FactCheckAnalytics {
+  // Log warning in production environment
+  if (import.meta.env.PROD) {
+    console.warn('[generateMockAnalytics] Using mock data in production environment. This should be avoided.');
+  }
+  
   return {
     sourceAnalysis: {
       sourceName: "연합뉴스",
@@ -19639,6 +8948,21 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useNotifications, NotificationType } from '@/contexts/NotificationContext';
 import { DashboardEvent, DashboardEventType } from './useDashboardEvents';
 
+// Storage key for access token (matches AuthContext)
+const ACCESS_TOKEN_KEY = 'access_token';
+
+/**
+ * Append authentication token to URL for SSE connections.
+ * EventSource doesn't support custom headers, so we use query parameter.
+ */
+function appendTokenToUrl(url: string): string {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token) return url;
+  
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 /**
  * SSE 이벤트 타입을 NotificationType으로 매핑
  */
@@ -19791,7 +9115,9 @@ export function useAutoNotifications(options: {
   useEffect(() => {
     if (!enabled) return;
 
-    const eventSource = new EventSource('/api/v1/events/stream');
+    // Append auth token to URL for SSE authentication
+    const authenticatedUrl = appendTokenToUrl('/api/v1/events/stream');
+    const eventSource = new EventSource(authenticatedUrl);
     
     const handleMessage = (event: MessageEvent) => {
       try {
@@ -19809,6 +9135,101 @@ export function useAutoNotifications(options: {
       eventSource.close();
     };
   }, [enabled, handleDashboardEvent]);
+}
+
+/**
+ * 프로젝트 알림을 백엔드에서 가져와서 NotificationContext와 연동하는 훅
+ * 
+ * @example
+ * ``\`tsx
+ * // AppLayout.tsx에서
+ * function AppLayout() {
+ *   const { user } = useAuth();
+ *   useProjectNotifications({ userId: user?.id, enabled: !!user });
+ *   return <Outlet />;
+ * }
+ * ``\`
+ */
+export function useProjectNotifications(options: {
+  userId?: string;
+  enabled?: boolean;
+  pollInterval?: number; // ms, default 60000 (1분)
+} = {}) {
+  const { userId, enabled = true, pollInterval = 60000 } = options;
+  const { addNotification } = useNotifications();
+  const loadedNotificationIds = useRef<Set<number>>(new Set());
+
+  const loadProjectNotifications = useCallback(async () => {
+    if (!userId) return;
+
+    try {
+      // 동적 import로 순환 의존성 방지
+      const { getUnreadProjectNotifications, markProjectNotificationAsRead } = await import('@/lib/api');
+      
+      const unreadNotifications = await getUnreadProjectNotifications(userId);
+      
+      for (const notification of unreadNotifications) {
+        // 이미 로드된 알림은 건너뛰기
+        if (loadedNotificationIds.current.has(notification.id)) {
+          continue;
+        }
+        
+        loadedNotificationIds.current.add(notification.id);
+        
+        // NotificationContext에 추가
+        addNotification({
+          type: mapProjectNotificationType(notification.notificationType),
+          title: notification.title,
+          message: notification.message,
+          actionUrl: notification.actionUrl,
+          actionLabel: '상세 보기',
+          persistent: true,
+        });
+        
+        // 백엔드에서도 읽음 처리
+        try {
+          await markProjectNotificationAsRead(notification.id);
+        } catch (e) {
+          console.error('Failed to mark notification as read:', e);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load project notifications:', error);
+    }
+  }, [userId, addNotification]);
+
+  useEffect(() => {
+    if (!enabled || !userId) return;
+
+    // 초기 로드
+    loadProjectNotifications();
+
+    // 주기적 폴링
+    const interval = setInterval(loadProjectNotifications, pollInterval);
+    
+    return () => clearInterval(interval);
+  }, [enabled, userId, loadProjectNotifications, pollInterval]);
+}
+
+/**
+ * 프로젝트 알림 타입을 NotificationType으로 매핑
+ */
+function mapProjectNotificationType(notificationType: string): NotificationType {
+  const typeMap: Record<string, NotificationType> = {
+    'PROJECT_CREATED': 'success',
+    'PROJECT_UPDATED': 'info',
+    'PROJECT_DELETED': 'warning',
+    'MEMBER_ADDED': 'info',
+    'MEMBER_REMOVED': 'warning',
+    'ITEM_ADDED': 'success',
+    'ITEM_REMOVED': 'info',
+    'SEARCH_COMPLETED': 'success',
+    'REPORT_READY': 'success',
+    'ANALYSIS_COMPLETED': 'success',
+    'ERROR': 'error',
+  };
+  
+  return typeMap[notificationType] || 'info';
 }
 
 export default useNotificationBridge;
@@ -24006,6 +13427,15 @@ export const authApi = {
     return response.data;
   },
   
+  refresh: async (): Promise<Token> => {
+    const client = await getApiClient();
+    // Browser automatically sends HTTP-Only refresh_token cookie
+    const response = await client.post<Token>('/api/v1/admin/auth/refresh', {}, {
+      withCredentials: true, // Ensure cookies are sent
+    });
+    return response.data;
+  },
+  
   logout: async (): Promise<void> => {
     const client = await getApiClient();
     await client.post('/api/v1/admin/auth/logout');
@@ -25018,6 +14448,7 @@ export const summarizeData = (data: CollectedDataDTO, maxLength: number = 100): 
  */
 
 import type { DashboardEvent, DashboardStats } from '@/types/api';
+import { appendTokenToUrl } from '@/lib/api';
 
 // ============================================
 // SSE Stream URLs
@@ -25059,7 +14490,8 @@ export const getDashboardStatsStreamUrl = (): string => {
  */
 export const openDashboardEventsStream = (): EventSource => {
   const url = getDashboardEventsStreamUrl();
-  return new EventSource(url);
+  // Append auth token for SSE authentication
+  return new EventSource(appendTokenToUrl(url));
 };
 
 /**
@@ -25068,7 +14500,8 @@ export const openDashboardEventsStream = (): EventSource => {
  */
 export const openDashboardStatsStream = (): EventSource => {
   const url = getDashboardStatsStreamUrl();
-  return new EventSource(url);
+  // Append auth token for SSE authentication
+  return new EventSource(appendTokenToUrl(url));
 };
 
 // ============================================
@@ -25966,7 +15399,7 @@ export const groupAddonsByCategory = (addons: MlAddon[]): Record<AddonCategory, 
 ## frontend/src/lib/api.ts
 
 ```ts
-import axios from 'axios';
+import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import type {
   AnalysisResponse,
   ArticlesResponse,
@@ -25976,8 +15409,26 @@ import type {
 } from '@/types/api';
 import { getSessionId, getDeviceId } from './anonymous-session';
 
-// Storage key for access token (shared with AuthContext)
+// Storage keys for tokens (shared with AuthContext)
 const ACCESS_TOKEN_KEY = 'access_token';
+// Note: Refresh token is now stored in HTTP-Only cookie, not localStorage
+
+// Token refresh state management
+let isRefreshing = false;
+let refreshSubscribers: ((token: string) => void)[] = [];
+
+const subscribeTokenRefresh = (callback: (token: string) => void) => {
+  refreshSubscribers.push(callback);
+};
+
+const onTokenRefreshed = (token: string) => {
+  refreshSubscribers.forEach((callback) => callback(token));
+  refreshSubscribers = [];
+};
+
+const onRefreshError = () => {
+  refreshSubscribers = [];
+};
 
 let apiInstance: ReturnType<typeof axios.create> | null = null;
 
@@ -26045,6 +15496,82 @@ const getAccessToken = (): string | null => {
   return null;
 };
 
+/**
+ * Save access token to localStorage and cookie
+ * Note: Refresh token is handled via HTTP-Only cookie by the server
+ */
+const saveTokens = (accessToken: string): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+    // Also set access token as cookie for SSE/EventSource requests
+    document.cookie = `access_token=${accessToken}; path=/; SameSite=Lax`;
+  }
+};
+
+/**
+ * Clear all auth tokens from storage
+ * Note: HTTP-Only refresh token cookie is cleared by the logout endpoint
+ */
+const clearTokens = (): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem('token_type');
+    localStorage.removeItem('admin_user');
+    document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  }
+};
+
+/**
+ * Refresh access token using HTTP-Only cookie
+ * The refresh token is stored in an HTTP-Only cookie and sent automatically
+ * Returns new access token or null if refresh fails
+ */
+const refreshAccessToken = async (): Promise<string | null> => {
+  try {
+    // Use fetch directly to avoid interceptor loops
+    // Browser will automatically send the HTTP-Only refresh_token cookie
+    const baseURL = resolveInitialBaseUrl();
+    const response = await fetch(`${baseURL}/api/v1/admin/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include', // Important: include cookies in the request
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    // Server sets new refresh token as HTTP-Only cookie automatically
+    return data.access_token;
+  } catch (error) {
+    console.error('Token refresh failed:', error);
+    return null;
+  }
+};
+
+/**
+ * Append authentication token to URL for SSE connections.
+ * EventSource doesn't support custom headers, so we use query parameter.
+ */
+export const appendTokenToUrl = (url: string): string => {
+  const token = getAccessToken();
+  if (!token) return url;
+  
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+};
+
+/**
+ * Create an authenticated EventSource for SSE connections.
+ * Appends the JWT token as a query parameter since EventSource doesn't support headers.
+ */
+export const createAuthenticatedEventSource = (url: string): EventSource => {
+  return new EventSource(appendTokenToUrl(url));
+};
+
 export const getApiClient = async () => {
   if (apiInstance) {
     return apiInstance;
@@ -26081,20 +15608,90 @@ export const getApiClient = async () => {
     }
   );
 
-  // Response interceptor to handle 401 errors
+  // Response interceptor to handle 401 errors with automatic token refresh
   apiInstance.interceptors.response.use(
     (response) => response,
-    (error) => {
-      if (error.response?.status === 401) {
-        // Token might be expired, clear storage
-        // The AuthContext will handle re-authentication
-        console.warn('Received 401 Unauthorized, token might be expired');
+    async (error: AxiosError) => {
+      const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+      
+      // Check if error is 401 and we haven't already tried to refresh
+      if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
+        // Skip token refresh for auth endpoints to avoid infinite loops
+        const isAuthEndpoint = originalRequest.url?.includes('/auth/refresh') || 
+                               originalRequest.url?.includes('/auth/token') ||
+                               originalRequest.url?.includes('/auth/login');
         
-        // Optionally trigger a custom event for auth context to handle
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+        if (isAuthEndpoint) {
+          return Promise.reject(error);
+        }
+
+        // If already refreshing, wait for the refresh to complete
+        if (isRefreshing) {
+          return new Promise((resolve, reject) => {
+            subscribeTokenRefresh((newToken: string) => {
+              originalRequest.headers.Authorization = `Bearer ${newToken}`;
+              resolve(apiInstance!.request(originalRequest));
+            });
+            // Add timeout to avoid hanging indefinitely
+            setTimeout(() => reject(error), 10000);
+          });
+        }
+
+        // Start refreshing
+        originalRequest._retry = true;
+        isRefreshing = true;
+
+        try {
+          // refreshAccessToken uses HTTP-Only cookie automatically
+          const newAccessToken = await refreshAccessToken();
+          
+          if (newAccessToken) {
+            // Save new access token (refresh token is in HTTP-Only cookie)
+            saveTokens(newAccessToken);
+            
+            // Update the failed request with new token
+            originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+            
+            // Notify all subscribers
+            onTokenRefreshed(newAccessToken);
+            
+            // Dispatch event for AuthContext to update its state
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('auth:tokenRefreshed', {
+                detail: {
+                  accessToken: newAccessToken,
+                }
+              }));
+            }
+            
+            isRefreshing = false;
+            
+            // Retry the original request
+            return apiInstance!.request(originalRequest);
+          } else {
+            // Refresh failed, clear tokens and notify
+            onRefreshError();
+            clearTokens();
+            isRefreshing = false;
+            
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+            }
+            return Promise.reject(error);
+          }
+        } catch (refreshError) {
+          // Refresh threw an error
+          onRefreshError();
+          clearTokens();
+          isRefreshing = false;
+          
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+          }
+          return Promise.reject(error);
         }
       }
+      
       return Promise.reject(error);
     }
   );
@@ -26142,7 +15739,7 @@ export const openLiveAnalysisStream = async (
   const url = new URL('/api/v1/analysis/live', baseURL);
   url.searchParams.set('query', query);
   url.searchParams.set('window', window);
-  return new EventSource(url.toString());
+  return createAuthenticatedEventSource(url.toString());
 };
 
 export const getArticles = async (query: string, limit: number = 50): Promise<ArticlesResponse> => {
@@ -26261,6 +15858,8 @@ export interface DeepSearchJob {
   completedAt?: string;
 }
 
+export type SourceCategory = 'news' | 'community' | 'blog' | 'official' | 'academic';
+
 export interface Evidence {
   id: number;
   url: string;
@@ -26268,6 +15867,7 @@ export interface Evidence {
   stance: 'pro' | 'con' | 'neutral';
   snippet: string;
   source?: string;
+  sourceCategory?: SourceCategory;
 }
 
 export interface StanceDistribution {
@@ -26452,7 +16052,7 @@ export const getDeepSearchStreamUrl = async (jobId: string): Promise<string> => 
  */
 export const openDeepSearchStream = async (jobId: string): Promise<EventSource> => {
   const url = await getDeepSearchStreamUrl(jobId);
-  return new EventSource(url);
+  return createAuthenticatedEventSource(url);
 };
 
 
@@ -26813,7 +16413,7 @@ export const openUnifiedSearchStream = async (
   if (priorityUrls && priorityUrls.length > 0) {
     url.searchParams.set('priorityUrls', priorityUrls.join(','));
   }
-  return new EventSource(url.toString());
+  return createAuthenticatedEventSource(url.toString());
 };
 
 /**
@@ -26949,7 +16549,7 @@ export const getUnifiedSearchJobStreamUrl = async (jobId: string): Promise<strin
  */
 export const openUnifiedSearchJobStream = async (jobId: string): Promise<EventSource> => {
   const url = await getUnifiedSearchJobStreamUrl(jobId);
-  return new EventSource(url);
+  return createAuthenticatedEventSource(url);
 };
 
 // ============================================
@@ -27539,7 +17139,7 @@ export const openSearchHistoryStream = async (): Promise<EventSource> => {
   const baseURL = await fetchConfiguredBaseUrl(initialBase);
   const effectiveBaseURL = baseURL || (typeof globalThis.window !== 'undefined' ? globalThis.window.location.origin : '');
   const url = `${effectiveBaseURL}/api/v1/search-history/stream`;
-  return new EventSource(url);
+  return createAuthenticatedEventSource(url);
 };
 
 
@@ -27897,38 +17497,53 @@ export const getStaticModels = (provider: LLMProviderType): ProviderModel[] => {
     openai: [
       { id: 'gpt-4o', name: 'GPT-4o (추천)' },
       { id: 'gpt-4o-mini', name: 'GPT-4o Mini (빠름)' },
+      { id: 'gpt-4.1', name: 'GPT-4.1' },
+      { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
       { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
       { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo (저렴)' },
+      { id: 'o1', name: 'o1 (추론)' },
       { id: 'o1-preview', name: 'o1-preview (추론)' },
       { id: 'o1-mini', name: 'o1-mini (추론, 빠름)' },
+      { id: 'o3-mini', name: 'o3-mini (최신 추론)' },
     ],
     anthropic: [
+      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4 (최신)' },
       { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (추천)' },
       { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (빠름)' },
       { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus (강력)' },
     ],
     google: [
-      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (추천)' },
-      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (빠름)' },
-      { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (실험)' },
+      { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 2.5 Flash (최신)' },
+      { id: 'gemini-2.5-pro-preview-05-06', name: 'Gemini 2.5 Pro (최신)' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
+      { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite (빠름)' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
     ],
     openrouter: [
       { id: 'openai/gpt-4o', name: 'GPT-4o (OpenAI)' },
+      { id: 'openai/gpt-4.1', name: 'GPT-4.1 (OpenAI)' },
+      { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4 (Anthropic)' },
       { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
+      { id: 'google/gemini-2.5-flash-preview', name: 'Gemini 2.5 Flash (Google)' },
+      { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash (Google)' },
       { id: 'google/gemini-pro-1.5', name: 'Gemini 1.5 Pro' },
+      { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B' },
       { id: 'meta-llama/llama-3.1-405b-instruct', name: 'Llama 3.1 405B' },
-      { id: 'meta-llama/llama-3.1-70b-instruct', name: 'Llama 3.1 70B' },
-      { id: 'mistralai/mixtral-8x22b-instruct', name: 'Mixtral 8x22B' },
+      { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1 (추론)' },
       { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' },
       { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B' },
     ],
     ollama: [
-      { id: 'llama3.1', name: 'Llama 3.1 (추천)' },
+      { id: 'llama3.3', name: 'Llama 3.3 (최신)' },
+      { id: 'llama3.2', name: 'Llama 3.2' },
+      { id: 'llama3.1', name: 'Llama 3.1' },
       { id: 'llama3.1:70b', name: 'Llama 3.1 70B' },
       { id: 'mistral', name: 'Mistral' },
       { id: 'mixtral', name: 'Mixtral' },
       { id: 'codellama', name: 'Code Llama' },
       { id: 'qwen2.5', name: 'Qwen 2.5' },
+      { id: 'deepseek-r1', name: 'DeepSeek R1' },
       { id: 'gemma2', name: 'Gemma 2' },
     ],
     azure: [
@@ -27996,7 +17611,8 @@ export const subscribeToAnalysisUpdates = (
   const params = articleIds.length > 0 ? `?articleIds=${articleIds.join(',')}` : '';
   const url = `${baseUrl}/api/v1/search/analysis/stream${params}`;
   
-  const eventSource = new EventSource(url, { withCredentials: true });
+  // Use authenticated EventSource for SSE with token in query param
+  const eventSource = createAuthenticatedEventSource(url);
   
   eventSource.onmessage = (event) => {
     try {
@@ -28913,7 +18529,7 @@ export const connectTrainingStream = (
   }) => void,
   onError?: (error: Error) => void
 ): EventSource => {
-  const eventSource = new EventSource(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/stream`);
+  const eventSource = createAuthenticatedEventSource(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/stream`);
 
   eventSource.onmessage = (event) => {
     try {
@@ -29155,7 +18771,7 @@ export const getSearchJobStreamUrl = async (jobId: string): Promise<string> => {
  */
 export const openSearchJobStream = async (jobId: string): Promise<EventSource> => {
   const url = await getSearchJobStreamUrl(jobId);
-  return new EventSource(url);
+  return createAuthenticatedEventSource(url);
 };
 
 /**
@@ -29173,7 +18789,7 @@ export const getAllJobsStreamUrl = async (userId: string = 'anonymous'): Promise
  */
 export const openAllJobsStream = async (userId: string = 'anonymous'): Promise<EventSource> => {
   const url = await getAllJobsStreamUrl(userId);
-  return new EventSource(url);
+  return createAuthenticatedEventSource(url);
 };
 
 /**
@@ -29876,7 +19492,7 @@ import type {
  */
 export const getLlmProviderTypes = async (): Promise<LlmProviderTypeInfo[]> => {
   const client = await getApiClient();
-  const response = await client.get<LlmProviderTypeInfo[]>('/api/v1/llm-providers/types');
+  const response = await client.get<LlmProviderTypeInfo[]>('/api/v1/admin/llm-providers/types');
   return response.data;
 };
 
@@ -29887,7 +19503,7 @@ export const getLlmProviderTypes = async (): Promise<LlmProviderTypeInfo[]> => {
  */
 export const getGlobalLlmSettings = async (): Promise<LlmProviderSettings[]> => {
   const client = await getApiClient();
-  const response = await client.get<LlmProviderSettings[]>('/api/v1/admin/llm-providers');
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/admin/llm-providers/global');
   return response.data;
 };
 
@@ -29897,7 +19513,7 @@ export const getGlobalLlmSettings = async (): Promise<LlmProviderSettings[]> => 
 export const getGlobalLlmSetting = async (providerType: LlmProviderTypeEnum): Promise<LlmProviderSettings | null> => {
   const client = await getApiClient();
   try {
-    const response = await client.get<LlmProviderSettings>(`/api/v1/admin/llm-providers/${providerType}`);
+    const response = await client.get<LlmProviderSettings>(`/api/v1/admin/llm-providers/global/${providerType}`);
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -29912,7 +19528,7 @@ export const getGlobalLlmSetting = async (providerType: LlmProviderTypeEnum): Pr
  */
 export const saveGlobalLlmSetting = async (request: LlmProviderSettingsRequest): Promise<LlmProviderSettings> => {
   const client = await getApiClient();
-  const response = await client.put<LlmProviderSettings>('/api/v1/admin/llm-providers', request);
+  const response = await client.put<LlmProviderSettings>(`/api/v1/admin/llm-providers/global/${request.providerType}`, request);
   return response.data;
 };
 
@@ -29921,24 +19537,32 @@ export const saveGlobalLlmSetting = async (request: LlmProviderSettingsRequest):
  */
 export const deleteGlobalLlmSetting = async (providerType: LlmProviderTypeEnum): Promise<void> => {
   const client = await getApiClient();
-  await client.delete(`/api/v1/admin/llm-providers/${providerType}`);
+  await client.delete(`/api/v1/admin/llm-providers/global/${providerType}`);
 };
 
 /**
  * 전역 설정 연결 테스트
  */
-export const testGlobalLlmConnection = async (id: number): Promise<LlmTestResult> => {
+export const testGlobalLlmConnection = async (providerType: LlmProviderTypeEnum): Promise<LlmTestResult> => {
   const client = await getApiClient();
-  const response = await client.post<LlmTestResult>(`/api/v1/admin/llm-providers/${id}/test`);
+  const response = await client.post<LlmTestResult>('/api/v1/admin/llm-providers/test', null, {
+    params: { providerType }
+  });
   return response.data;
 };
 
 /**
  * 전역 설정 활성화/비활성화
+ * NOTE: Backend 엔드포인트가 없어 saveGlobalLlmSetting을 통해 처리
  */
-export const toggleGlobalLlmSetting = async (id: number, enabled: boolean): Promise<void> => {
+export const toggleGlobalLlmSetting = async (providerType: LlmProviderTypeEnum, enabled: boolean): Promise<void> => {
   const client = await getApiClient();
-  await client.post(`/api/v1/admin/llm-providers/${id}/toggle`, null, { params: { enabled } });
+  // enabled 상태만 변경하는 최소한의 요청
+  await client.put(`/api/v1/admin/llm-providers/global/${providerType}`, { 
+    providerType, 
+    enabled,
+    defaultModel: '' // 기존 값 유지
+  });
 };
 
 // ========== 사용자별 설정 API ==========
@@ -29948,9 +19572,9 @@ export const toggleGlobalLlmSetting = async (id: number, enabled: boolean): Prom
  */
 export const getEffectiveLlmSettings = async (userId?: string): Promise<LlmProviderSettings[]> => {
   const client = await getApiClient();
-  const headers: Record<string, string> = {};
-  if (userId) headers['X-User-Id'] = userId;
-  const response = await client.get<LlmProviderSettings[]>('/api/v1/llm-providers/effective', { headers });
+  const params: Record<string, string> = {};
+  if (userId) params.user_id = userId;
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/admin/llm-providers/effective', { params });
   return response.data;
 };
 
@@ -29959,9 +19583,9 @@ export const getEffectiveLlmSettings = async (userId?: string): Promise<LlmProvi
  */
 export const getEnabledLlmProviders = async (userId?: string): Promise<LlmProviderSettings[]> => {
   const client = await getApiClient();
-  const headers: Record<string, string> = {};
-  if (userId) headers['X-User-Id'] = userId;
-  const response = await client.get<LlmProviderSettings[]>('/api/v1/llm-providers/enabled', { headers });
+  const params: Record<string, string> = {};
+  if (userId) params.user_id = userId;
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/admin/llm-providers/enabled', { params });
   return response.data;
 };
 
@@ -30387,12 +20011,13 @@ const AdminSources = () => {
   const toggleActiveMutation = useMutation({
     mutationFn: ({ id, active }: { id: number; active: boolean }) => setSourceActive(id, active),
     onMutate: async ({ id, active }) => {
-      // 낙관적 업데이트
-      await queryClient.cancelQueries({ queryKey: ['sources'] });
+      // 낙관적 업데이트 - 현재 페이지의 쿼리 키 사용
+      const queryKey = ['sources', currentPage, pageSize];
+      await queryClient.cancelQueries({ queryKey });
       
-      const previousData = queryClient.getQueryData(['sources']);
+      const previousData = queryClient.getQueryData(queryKey);
       
-      queryClient.setQueryData(['sources'], (old: typeof sourcesPage) => {
+      queryClient.setQueryData(queryKey, (old: typeof sourcesPage) => {
         if (!old) return old;
         return {
           ...old,
@@ -30402,12 +20027,12 @@ const AdminSources = () => {
         };
       });
       
-      return { previousData };
+      return { previousData, queryKey };
     },
     onError: (error, variables, context) => {
       // 실패 시 롤백
-      if (context?.previousData) {
-        queryClient.setQueryData(['sources'], context.previousData);
+      if (context?.previousData && context?.queryKey) {
+        queryClient.setQueryData(context.queryKey, context.previousData);
       }
       toast({
         title: "상태 변경 실패",
@@ -30415,17 +20040,21 @@ const AdminSources = () => {
         variant: "destructive",
       });
     },
-    onSuccess: (updated) => {
+    onSuccess: (updated, variables, context) => {
       // 성공 시 서버 데이터로 업데이트
-      queryClient.setQueryData(['sources'], (old: typeof sourcesPage) => {
-        if (!old) return old;
-        return {
-          ...old,
-          content: old.content.map((s: DataSource) => 
-            s.id === updated.id ? updated : s
-          ),
-        };
-      });
+      if (context?.queryKey) {
+        queryClient.setQueryData(context.queryKey, (old: typeof sourcesPage) => {
+          if (!old) return old;
+          return {
+            ...old,
+            content: old.content.map((s: DataSource) => 
+              s.id === updated.id ? updated : s
+            ),
+          };
+        });
+      }
+      // 다른 페이지 캐시도 무효화
+      queryClient.invalidateQueries({ queryKey: ['sources'] });
     },
   });
 
@@ -31745,6 +21374,9 @@ import {
   X,
   Copy,
   BarChart3,
+  StopCircle,
+  AlertTriangle,
+  TrendingUp,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31790,11 +21422,16 @@ import {
   requestManualIntervention,
   cancelBrowserJob,
   getBrowserWSUrl,
+  getBrowserUseStats,
+  getActiveBrowserJobs,
+  cancelAllBrowserJobs,
   type BrowserJobStatus,
   type BrowserJobStatusResponse,
   type BrowserWSMessage,
   type HumanAction,
   type InterventionType,
+  type BrowserUseStats,
+  type BrowserJobSummary,
 } from "@/lib/api";
 
 const STATUS_CONFIG: Record<BrowserJobStatus, { label: string; icon: typeof Clock; color: string }> = {
@@ -32188,6 +21825,46 @@ const BrowserAgent = () => {
   });
 
   const isHealthy = health?.status === "healthy";
+
+  // Browser stats query
+  const [showStats, setShowStats] = useState(false);
+  const { data: browserStats, refetch: refetchStats, isLoading: statsLoading } = useQuery({
+    queryKey: ["browserUse", "stats"],
+    queryFn: getBrowserUseStats,
+    enabled: showStats,
+    staleTime: 10_000,
+    refetchInterval: showStats ? 15_000 : false,
+  });
+
+  // Active jobs query
+  const { data: activeJobs, refetch: refetchActiveJobs } = useQuery({
+    queryKey: ["browserUse", "activeJobs"],
+    queryFn: getActiveBrowserJobs,
+    enabled: showStats,
+    staleTime: 5_000,
+    refetchInterval: showStats ? 10_000 : false,
+  });
+
+  // Cancel all jobs mutation
+  const cancelAllMutation = useMutation({
+    mutationFn: cancelAllBrowserJobs,
+    onSuccess: (result) => {
+      toast({
+        title: "Jobs Cancelled",
+        description: `${result.cancelled} jobs cancelled${result.errors.length > 0 ? `, ${result.errors.length} errors` : ''}`,
+      });
+      refetchStats();
+      refetchActiveJobs();
+      queryClient.invalidateQueries({ queryKey: ["browserUse"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Cancel Jobs",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 
   // Job status polling
   const { data: currentJob } = useQuery({
@@ -32650,6 +22327,16 @@ const BrowserAgent = () => {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {/* Stats Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowStats(!showStats)}
+                className="gap-1"
+              >
+                <TrendingUp className="h-4 w-4" />
+                통계
+              </Button>
               {/* History Button */}
               <Button
                 variant="outline"
@@ -32690,6 +22377,221 @@ const BrowserAgent = () => {
             </div>
           )}
         </header>
+
+        {/* Stats Dashboard Panel */}
+        {showStats && (
+          <Card className="mb-6">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5" />
+                  Browser Agent 통계
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      refetchStats();
+                      refetchActiveJobs();
+                    }}
+                    disabled={statsLoading}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${statsLoading ? 'animate-spin' : ''}`} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowStats(false)}
+                    className="h-8 w-8 p-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {statsLoading && !browserStats ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : browserStats ? (
+                <div className="space-y-6">
+                  {/* Stats Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className="text-center p-4 bg-muted/50 rounded-lg">
+                      <p className="text-3xl font-bold">{browserStats.totalJobs}</p>
+                      <p className="text-xs text-muted-foreground">전체 작업</p>
+                    </div>
+                    <div className="text-center p-4 bg-blue-500/10 rounded-lg border border-blue-500/20">
+                      <p className="text-3xl font-bold text-blue-600">{browserStats.activeJobs}</p>
+                      <p className="text-xs text-muted-foreground">실행 중</p>
+                    </div>
+                    <div className="text-center p-4 bg-orange-500/10 rounded-lg border border-orange-500/20">
+                      <p className="text-3xl font-bold text-orange-600">{browserStats.waitingIntervention}</p>
+                      <p className="text-xs text-muted-foreground">대기 중</p>
+                    </div>
+                    <div className="text-center p-4 bg-green-500/10 rounded-lg border border-green-500/20">
+                      <p className="text-3xl font-bold text-green-600">{browserStats.completedJobs}</p>
+                      <p className="text-xs text-muted-foreground">완료</p>
+                    </div>
+                    <div className="text-center p-4 bg-red-500/10 rounded-lg border border-red-500/20">
+                      <p className="text-3xl font-bold text-red-600">{browserStats.failedJobs}</p>
+                      <p className="text-xs text-muted-foreground">실패/취소</p>
+                    </div>
+                  </div>
+
+                  {/* Active Jobs List */}
+                  {activeJobs && activeJobs.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-medium flex items-center gap-2">
+                          <Activity className="h-4 w-4" />
+                          활성 작업 ({activeJobs.length}개)
+                        </h4>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => {
+                            if (confirm(`${activeJobs.length}개의 모든 활성 작업을 취소하시겠습니까?`)) {
+                              cancelAllMutation.mutate();
+                            }
+                          }}
+                          disabled={cancelAllMutation.isPending}
+                          className="gap-1"
+                        >
+                          {cancelAllMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <StopCircle className="h-4 w-4" />
+                          )}
+                          모두 취소
+                        </Button>
+                      </div>
+                      <ScrollArea className="max-h-[200px]">
+                        <div className="space-y-2">
+                          {activeJobs.map((job) => (
+                            <div
+                              key={job.job_id}
+                              className="flex items-center justify-between p-3 rounded-lg border bg-card"
+                            >
+                              <div className="flex-1 min-w-0 mr-4">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Badge className={STATUS_CONFIG[job.status]?.color || 'bg-gray-500'}>
+                                    {STATUS_CONFIG[job.status]?.label || job.status}
+                                  </Badge>
+                                  {job.intervention_requested && (
+                                    <Badge variant="outline" className="text-orange-600 border-orange-300">
+                                      <AlertTriangle className="h-3 w-3 mr-1" />
+                                      개입 필요
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-xs text-muted-foreground truncate">
+                                  ID: {job.job_id}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  진행: {Math.round(job.progress * 100)}%
+                                  {job.started_at && ` · 시작: ${new Date(job.started_at).toLocaleTimeString('ko-KR')}`}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setCurrentJobId(job.job_id);
+                                    setShowStats(false);
+                                  }}
+                                  className="h-8 w-8 p-0"
+                                  title="작업 보기"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={async () => {
+                                    try {
+                                      await cancelBrowserJob(job.job_id);
+                                      toast({ title: "취소됨", description: `작업 ${job.job_id.slice(0, 8)}... 취소됨` });
+                                      refetchActiveJobs();
+                                      refetchStats();
+                                    } catch (e) {
+                                      toast({
+                                        title: "취소 실패",
+                                        description: e instanceof Error ? e.message : "Unknown error",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                  title="취소"
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  )}
+
+                  {/* Recent Jobs */}
+                  {browserStats.recentJobs.length > 0 && (
+                    <Collapsible>
+                      <CollapsibleTrigger asChild>
+                        <Button variant="ghost" size="sm" className="w-full justify-between">
+                          <span className="flex items-center gap-2">
+                            <History className="h-4 w-4" />
+                            최근 작업 ({browserStats.recentJobs.length}개)
+                          </span>
+                          <ChevronDown className="h-4 w-4" />
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <ScrollArea className="max-h-[250px] mt-2">
+                          <div className="space-y-2">
+                            {browserStats.recentJobs.map((job) => (
+                              <div
+                                key={job.job_id}
+                                className="flex items-center justify-between p-2 rounded border text-sm"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <Badge className={`${STATUS_CONFIG[job.status]?.color || 'bg-gray-500'} text-xs`}>
+                                    {STATUS_CONFIG[job.status]?.label || job.status}
+                                  </Badge>
+                                  <span className="text-xs text-muted-foreground truncate max-w-[200px]">
+                                    {job.job_id}
+                                  </span>
+                                </div>
+                                <span className="text-xs text-muted-foreground">
+                                  {Math.round(job.progress * 100)}%
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
+
+                  {/* No active jobs message */}
+                  {(!activeJobs || activeJobs.length === 0) && (
+                    <div className="text-center py-4 text-muted-foreground text-sm">
+                      현재 활성화된 작업이 없습니다.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  통계를 불러올 수 없습니다.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* History Panel */}
         {showHistory && storageLoaded && (
@@ -34170,6 +24072,11 @@ import {
   ArrowDownRight,
   History,
   ChevronRight,
+  Newspaper,
+  Users,
+  FileText,
+  Shield,
+  GraduationCap,
 } from "lucide-react";
 import { ExportButton } from "@/components/ExportButton";
 import { ReportExportButton } from "@/components/ReportExportButton";
@@ -34228,9 +24135,17 @@ const STATUS_CONFIG = {
 } as const;
 
 const STANCE_CONFIG = {
-  pro: { label: "찬성", icon: ThumbsUp, color: "text-teal-600", bgColor: "bg-teal-100 dark:bg-teal-900/30" },
-  con: { label: "반대", icon: ThumbsDown, color: "text-coral-600", bgColor: "bg-coral-100 dark:bg-coral-900/30" },
+  pro: { label: "긍정", icon: ThumbsUp, color: "text-teal-600", bgColor: "bg-teal-100 dark:bg-teal-900/30" },
+  con: { label: "부정", icon: ThumbsDown, color: "text-coral-600", bgColor: "bg-coral-100 dark:bg-coral-900/30" },
   neutral: { label: "중립", icon: Minus, color: "text-gray-600", bgColor: "bg-gray-100 dark:bg-gray-800" },
+} as const;
+
+const SOURCE_CATEGORY_CONFIG = {
+  news: { label: "뉴스", icon: Newspaper, color: "text-blue-600", bgColor: "bg-blue-100 dark:bg-blue-900/30" },
+  community: { label: "커뮤니티", icon: Users, color: "text-orange-600", bgColor: "bg-orange-100 dark:bg-orange-900/30" },
+  blog: { label: "블로그", icon: FileText, color: "text-purple-600", bgColor: "bg-purple-100 dark:bg-purple-900/30" },
+  official: { label: "공식", icon: Shield, color: "text-green-600", bgColor: "bg-green-100 dark:bg-green-900/30" },
+  academic: { label: "학술", icon: GraduationCap, color: "text-indigo-600", bgColor: "bg-indigo-100 dark:bg-indigo-900/30" },
 } as const;
 
 interface EvidenceCardProps {
@@ -34248,11 +24163,17 @@ const EvidenceCard = ({ evidence, onDrilldown, drilldownEnabled = true }: Eviden
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <Badge variant="outline" className={`${stanceInfo.color} flex items-center gap-1`}>
                 <StanceIcon className="h-3 w-3" />
                 {stanceInfo.label}
               </Badge>
+              {evidence.sourceCategory && SOURCE_CATEGORY_CONFIG[evidence.sourceCategory] && (
+                <Badge variant="secondary" className={`${SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].color} flex items-center gap-1`}>
+                  {(() => { const Icon = SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].icon; return <Icon className="h-3 w-3" />; })()}
+                  {SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].label}
+                </Badge>
+              )}
               {evidence.source && (
                 <span className="text-xs text-muted-foreground truncate">{evidence.source}</span>
               )}
@@ -34308,8 +24229,8 @@ const StanceChart = ({ distribution }: StanceChartProps) => {
   return (
     <Card className="glass">
       <CardHeader className="pb-2">
-        <CardTitle className="text-lg">입장 분포</CardTitle>
-        <CardDescription>수집된 증거의 입장 분석 결과</CardDescription>
+        <CardTitle className="text-lg">관점 분석</CardTitle>
+        <CardDescription>수집된 자료의 관점 분포</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex gap-1 h-8 rounded-lg overflow-hidden">
@@ -35208,47 +25129,47 @@ const DeepSearch = () => {
             {/* List View (Original) */}
             {viewMode === "list" && (
               <>
-                {/* Summary */}
+                {/* 분석 개요 */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <Card className="glass">
                     <CardContent className="pt-6">
                       <div className="text-center">
                         <p className="text-3xl font-bold">{result.evidence.length}</p>
-                        <p className="text-sm text-muted-foreground">수집된 증거</p>
+                        <p className="text-sm text-muted-foreground">총 수집 자료</p>
                       </div>
                     </CardContent>
                   </Card>
                   <Card className="glass">
                     <CardContent className="pt-6">
                       <div className="text-center">
-                        <p className="text-3xl font-bold text-teal-600">
-                          {result.stanceDistribution.proRatio.toFixed(0)}%
+                        <p className="text-3xl font-bold text-green-600">
+                          {new Set(result.evidence.map(e => e.source).filter(Boolean)).size}
                         </p>
-                        <p className="text-sm text-muted-foreground">찬성 비율</p>
+                        <p className="text-sm text-muted-foreground">참조 출처</p>
                       </div>
                     </CardContent>
                   </Card>
                   <Card className="glass">
                     <CardContent className="pt-6">
                       <div className="text-center">
-                        <p className="text-3xl font-bold text-coral-600">
-                          {result.stanceDistribution.conRatio.toFixed(0)}%
+                        <p className="text-3xl font-bold text-blue-600">
+                          {result.evidence.filter(e => e.title).length}
                         </p>
-                        <p className="text-sm text-muted-foreground">반대 비율</p>
+                        <p className="text-sm text-muted-foreground">기사/문서</p>
                       </div>
                     </CardContent>
                   </Card>
                 </div>
 
-                {/* Stance Distribution */}
+                {/* 관점 분석 (선택적) */}
                 <StanceChart distribution={result.stanceDistribution} />
 
-                {/* Evidence List */}
+                {/* 수집된 자료 목록 */}
                 <Card>
                   <CardHeader>
-                    <CardTitle>수집된 증거</CardTitle>
+                    <CardTitle>수집된 자료</CardTitle>
                     <CardDescription>
-                      '{result.topic}'에 대해 수집된 다양한 입장의 증거입니다.
+                      '{result.topic}'에 대해 수집된 관련 자료입니다.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -35258,13 +25179,13 @@ const DeepSearch = () => {
                           전체 ({result.evidence.length})
                         </TabsTrigger>
                         <TabsTrigger value="pro" className="text-teal-600">
-                          찬성 ({result.stanceDistribution.pro})
+                          긍정 ({result.stanceDistribution.pro})
                         </TabsTrigger>
                         <TabsTrigger value="neutral">
                           중립 ({result.stanceDistribution.neutral})
                         </TabsTrigger>
                         <TabsTrigger value="con" className="text-coral-600">
-                          반대 ({result.stanceDistribution.con})
+                          부정 ({result.stanceDistribution.con})
                         </TabsTrigger>
                       </TabsList>
                       <TabsContent value={activeStance} className="space-y-4">
@@ -35279,7 +25200,7 @@ const DeepSearch = () => {
                           ))
                         ) : (
                           <div className="text-center py-8 text-muted-foreground">
-                            해당 입장의 증거가 없습니다.
+                            해당 관점의 자료가 없습니다.
                           </div>
                         )}
                       </TabsContent>
@@ -35304,9 +25225,9 @@ const DeepSearch = () => {
             <div className="inline-block p-4 rounded-full bg-accent/10 mb-4">
               <Search className="h-12 w-12 text-accent" />
             </div>
-            <h2 className="text-xl font-semibold mb-2">주제를 입력하세요</h2>
+            <h2 className="text-xl font-semibold mb-2">심층 보고서 생성</h2>
             <p className="text-muted-foreground max-w-md mx-auto mb-4">
-              분석하고 싶은 주제를 입력하면 AI가 웹에서 다양한 입장의 증거를 수집하고 분류합니다.
+              분석하고 싶은 주제를 입력하면 AI가 웹에서 관련 자료를 수집하고 심층 분석 보고서를 생성합니다.
             </p>
             <p className="text-sm text-muted-foreground">
               분석 중에도 다른 페이지를 탐색할 수 있으며, 상단의 작업 인디케이터에서 진행 상황을 확인할 수 있습니다.
@@ -35353,13 +25274,15 @@ import { useEffect, useState } from "react";
 import { LiveNewsTicker } from "@/components/dashboard/LiveNewsTicker";
 import { TrendChart } from "@/components/dashboard/TrendChart";
 import { Button } from "@/components/ui/button";
-import { RefreshCcw, Calendar, LayoutDashboard, Database, Brain, AlertTriangle, Activity, Wifi, WifiOff } from "lucide-react";
+import { RefreshCcw, Calendar, LayoutDashboard, Database, Brain, AlertTriangle, Activity, Wifi, WifiOff, Terminal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { LiveCounter } from "@/components/admin/LiveCounter";
 import { LiveStream } from "@/components/admin/LiveStream";
+import { CrawlerLogsViewer } from "@/components/admin/CrawlerLogsViewer";
 import { useLiveDashboard } from "@/hooks/useDashboardEvents";
 import { getCollectionStats, type CollectionStatsDTO } from "@/lib/api/collection";
 import { cn } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function LiveDashboard() {
   const today = new Date().toLocaleDateString('ko-KR', { 
@@ -35517,15 +25440,43 @@ export default function LiveDashboard() {
 
         {/* Right Col (Live Activity Stream) - span 2 */}
         <div className="lg:col-span-2 h-[500px]">
-          <LiveStream
-            logs={activityLogs}
-            status={eventsStatus}
-            maxVisible={15}
-            title="실시간 활동"
-            onClear={clearLogs}
-            className="h-full"
-          />
+          <Tabs defaultValue="activity" className="h-full flex flex-col">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="activity" className="text-xs">
+                <Activity className="h-3 w-3 mr-1" />
+                실시간 활동
+              </TabsTrigger>
+              <TabsTrigger value="crawler" className="text-xs">
+                <Terminal className="h-3 w-3 mr-1" />
+                수집 로그
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="activity" className="flex-1 mt-2">
+              <LiveStream
+                logs={activityLogs}
+                status={eventsStatus}
+                maxVisible={15}
+                title="실시간 활동"
+                onClear={clearLogs}
+                className="h-full"
+              />
+            </TabsContent>
+            <TabsContent value="crawler" className="flex-1 mt-2">
+              <CrawlerLogsViewer
+                maxVisible={50}
+                className="h-full"
+              />
+            </TabsContent>
+          </Tabs>
         </div>
+      </div>
+
+      {/* Full Width Crawler Logs Section */}
+      <div className="h-[400px]">
+        <CrawlerLogsViewer
+          maxVisible={100}
+          className="h-full"
+        />
       </div>
     </div>
   );
@@ -37477,6 +27428,9 @@ import {
   StopCircle,
   Activity,
   Radio,
+  Cloud,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -37527,6 +27481,9 @@ import {
   connectTrainingStream,
   startTrainingWithHuggingFaceDataset,
   runInference,
+  startExternalTraining,
+  uploadExternalModel,
+  completeExternalTraining,
   KOREAN_DATASETS,
   DEFAULT_BASE_MODELS,
   type MLTrainerHealth,
@@ -37536,6 +27493,8 @@ import {
   type MLModelType,
   type TrainingJobState,
   type InferenceResponse,
+  type ExternalTrainingRequest,
+  type ExternalTrainingResponse,
 } from '@/lib/api';
 
 // =============================================================================
@@ -38106,6 +28065,17 @@ const MLTraining = () => {
   const [liveUpdates, setLiveUpdates] = useState<Record<string, SSEEvent>>({});
   const [sseConnected, setSseConnected] = useState<Record<string, boolean>>({});
   
+  // External Training State
+  const [externalTrainingOpen, setExternalTrainingOpen] = useState(false);
+  const [externalResponse, setExternalResponse] = useState<ExternalTrainingResponse | null>(null);
+  const [externalModelName, setExternalModelName] = useState('');
+  const [externalModelType, setExternalModelType] = useState<MLModelType>('sentiment');
+  const [externalMaxEpochs, setExternalMaxEpochs] = useState(3);
+  const [externalStarting, setExternalStarting] = useState(false);
+  const [externalUploadFile, setExternalUploadFile] = useState<File | null>(null);
+  const [externalUploading, setExternalUploading] = useState(false);
+  const [copiedEndpoint, setCopiedEndpoint] = useState<string | null>(null);
+  
   // SSE event sources ref
   const eventSourcesRef = useRef<Record<string, EventSource>>({});
 
@@ -38308,6 +28278,109 @@ const MLTraining = () => {
     }
   };
 
+  // External Training Handlers
+  const handleStartExternalTraining = async () => {
+    if (!externalModelName.trim()) {
+      toast({
+        title: "모델 이름 필요",
+        description: "모델 이름을 입력해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setExternalStarting(true);
+    try {
+      const request: ExternalTrainingRequest = {
+        model_name: externalModelName.trim(),
+        model_type: externalModelType,
+        max_epochs: externalMaxEpochs,
+      };
+      const response = await startExternalTraining(request);
+      setExternalResponse(response);
+      toast({
+        title: "외부 학습 준비 완료",
+        description: `Job ID: ${response.job_id} - Colab/Jupyter에서 학습을 진행하세요.`,
+      });
+      fetchData();
+    } catch (e) {
+      toast({
+        title: "외부 학습 시작 실패",
+        description: e instanceof Error ? e.message : "알 수 없는 오류",
+        variant: "destructive",
+      });
+    } finally {
+      setExternalStarting(false);
+    }
+  };
+
+  const handleUploadExternalModel = async () => {
+    if (!externalResponse || !externalUploadFile) {
+      toast({
+        title: "파일 필요",
+        description: "업로드할 모델 파일을 선택해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setExternalUploading(true);
+    try {
+      await uploadExternalModel(
+        externalResponse.job_id,
+        externalResponse.upload_token,
+        externalUploadFile
+      );
+      toast({
+        title: "모델 업로드 완료",
+        description: "학습 완료 처리를 진행합니다...",
+      });
+
+      // Complete the training
+      await completeExternalTraining(
+        externalResponse.job_id,
+        externalResponse.upload_token
+      );
+      toast({
+        title: "외부 학습 완료",
+        description: "모델이 성공적으로 등록되었습니다.",
+      });
+
+      // Reset state
+      setExternalResponse(null);
+      setExternalUploadFile(null);
+      setExternalModelName('');
+      setExternalTrainingOpen(false);
+      fetchData();
+    } catch (e) {
+      toast({
+        title: "업로드 실패",
+        description: e instanceof Error ? e.message : "알 수 없는 오류",
+        variant: "destructive",
+      });
+    } finally {
+      setExternalUploading(false);
+    }
+  };
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedEndpoint(label);
+      setTimeout(() => setCopiedEndpoint(null), 2000);
+      toast({
+        title: "복사됨",
+        description: `${label}이(가) 클립보드에 복사되었습니다.`,
+      });
+    } catch (e) {
+      toast({
+        title: "복사 실패",
+        description: "클립보드에 복사할 수 없습니다.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const runningJobs = mergedJobs.filter((j) => j.state === 'RUNNING' || j.state === 'INITIALIZING' || j.state === 'PENDING');
   const completedJobs = mergedJobs.filter((j) => j.state === 'COMPLETED');
   const failedJobs = mergedJobs.filter((j) => j.state === 'FAILED' || j.state === 'CANCELLED');
@@ -38421,6 +28494,10 @@ const MLTraining = () => {
             <TabsTrigger value="datasets" className="gap-2">
               <Database className="h-4 w-4" />
               데이터셋
+            </TabsTrigger>
+            <TabsTrigger value="external" className="gap-2">
+              <Cloud className="h-4 w-4" />
+              외부 학습
             </TabsTrigger>
           </TabsList>
 
@@ -38605,6 +28682,230 @@ const MLTraining = () => {
                 </Card>
               ))}
             </div>
+          </TabsContent>
+
+          {/* External Training Tab */}
+          <TabsContent value="external" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Cloud className="h-5 w-5" />
+                  외부 환경에서 학습하기
+                </CardTitle>
+                <CardDescription>
+                  Google Colab이나 Jupyter Notebook에서 직접 모델을 학습하고, 완료된 모델을 업로드하세요.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Step 1: Start External Training */}
+                {!externalResponse ? (
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">1</span>
+                      외부 학습 시작
+                    </h3>
+                    
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="external-model-name">모델 이름 *</Label>
+                        <Input
+                          id="external-model-name"
+                          placeholder="예: colab-sentiment-model"
+                          value={externalModelName}
+                          onChange={(e) => setExternalModelName(e.target.value)}
+                        />
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label>모델 타입</Label>
+                        <Select value={externalModelType} onValueChange={(v) => setExternalModelType(v as MLModelType)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(MODEL_TYPE_LABELS).map(([value, label]) => (
+                              <SelectItem key={value} value={value}>
+                                {label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label>최대 에폭 수</Label>
+                      <Input
+                        type="number"
+                        value={externalMaxEpochs}
+                        onChange={(e) => setExternalMaxEpochs(parseInt(e.target.value) || 3)}
+                        min={1}
+                        max={100}
+                        className="w-32"
+                      />
+                    </div>
+                    
+                    <Button
+                      onClick={handleStartExternalTraining}
+                      disabled={externalStarting || !externalModelName.trim()}
+                    >
+                      {externalStarting ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4 mr-2" />
+                      )}
+                      외부 학습 시작
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Step 2: Copy API Endpoints */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold flex items-center gap-2">
+                        <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">2</span>
+                        API 엔드포인트 복사
+                      </h3>
+                      
+                      <Alert>
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertTitle>Job ID: {externalResponse.job_id}</AlertTitle>
+                        <AlertDescription>
+                          아래 엔드포인트를 Colab/Jupyter에서 사용하세요. Upload Token은 안전하게 보관하세요.
+                        </AlertDescription>
+                      </Alert>
+                      
+                      <div className="grid gap-3">
+                        <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                          <div>
+                            <p className="text-sm font-medium">Upload Token</p>
+                            <p className="text-xs text-muted-foreground font-mono truncate max-w-[300px]">
+                              {externalResponse.upload_token}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyToClipboard(externalResponse.upload_token, 'Upload Token')}
+                          >
+                            {copiedEndpoint === 'Upload Token' ? (
+                              <Check className="h-4 w-4 text-green-500" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                        
+                        {Object.entries(externalResponse.api_endpoints).map(([key, value]) => (
+                          <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                            <div>
+                              <p className="text-sm font-medium capitalize">{key} Endpoint</p>
+                              <p className="text-xs text-muted-foreground font-mono">{value}</p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => copyToClipboard(value, `${key} Endpoint`)}
+                            >
+                              {copiedEndpoint === `${key} Endpoint` ? (
+                                <Check className="h-4 w-4 text-green-500" />
+                              ) : (
+                                <Copy className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Step 3: Upload Completed Model */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold flex items-center gap-2">
+                        <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">3</span>
+                        학습 완료 후 모델 업로드
+                      </h3>
+                      
+                      <div className="space-y-2">
+                        <Label htmlFor="model-file">모델 파일 (.pt, .bin, .safetensors 등)</Label>
+                        <Input
+                          id="model-file"
+                          type="file"
+                          accept=".pt,.bin,.safetensors,.ckpt,.h5,.pth"
+                          onChange={(e) => setExternalUploadFile(e.target.files?.[0] || null)}
+                        />
+                        {externalUploadFile && (
+                          <p className="text-sm text-muted-foreground">
+                            선택됨: {externalUploadFile.name} ({(externalUploadFile.size / 1024 / 1024).toFixed(2)} MB)
+                          </p>
+                        )}
+                      </div>
+                      
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={handleUploadExternalModel}
+                          disabled={externalUploading || !externalUploadFile}
+                        >
+                          {externalUploading ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <Upload className="h-4 w-4 mr-2" />
+                          )}
+                          모델 업로드 및 완료
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setExternalResponse(null);
+                            setExternalUploadFile(null);
+                          }}
+                        >
+                          취소
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <Separator />
+
+                {/* Instructions */}
+                <Collapsible>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" className="w-full justify-between">
+                      <span className="flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        Colab/Jupyter 사용 가이드
+                      </span>
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-4">
+                    <div className="rounded-lg bg-muted p-4 text-sm space-y-3">
+                      <p><strong>1. 외부 학습 시작:</strong> 위에서 모델 이름과 타입을 입력하고 시작하세요.</p>
+                      <p><strong>2. API 정보 복사:</strong> 생성된 Job ID, Upload Token, API 엔드포인트를 복사하세요.</p>
+                      <p><strong>3. Colab에서 학습:</strong> 제공된 API를 사용하여 진행 상황을 업데이트할 수 있습니다.</p>
+                      <pre className="bg-background p-2 rounded text-xs overflow-x-auto">
+{`# 진행 상황 업데이트 예시
+import requests
+
+requests.post(
+    "{progress_endpoint}",
+    json={
+        "upload_token": "{token}",
+        "progress": 50,
+        "epoch": 2,
+        "total_epochs": 4,
+        "loss": 0.25
+    }
+)`}
+                      </pre>
+                      <p><strong>4. 모델 업로드:</strong> 학습이 완료되면 여기서 모델 파일을 업로드하세요.</p>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
 
@@ -43824,38 +34125,53 @@ const LLM_MODELS: Record<LLMProviderType, { value: string; label: string }[]> = 
   openai: [
     { value: 'gpt-4o', label: 'GPT-4o (추천)' },
     { value: 'gpt-4o-mini', label: 'GPT-4o Mini (빠름)' },
+    { value: 'gpt-4.1', label: 'GPT-4.1' },
+    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
     { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
     { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo (저렴)' },
+    { value: 'o1', label: 'o1 (추론)' },
     { value: 'o1-preview', label: 'o1-preview (추론)' },
     { value: 'o1-mini', label: 'o1-mini (추론, 빠름)' },
+    { value: 'o3-mini', label: 'o3-mini (최신 추론)' },
   ],
   anthropic: [
+    { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4 (최신)' },
     { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (추천)' },
     { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (빠름)' },
     { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus (강력)' },
   ],
   google: [
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (추천)' },
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (빠름)' },
-    { value: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash (실험)' },
+    { value: 'gemini-2.5-flash-preview-05-20', label: 'Gemini 2.5 Flash (최신)' },
+    { value: 'gemini-2.5-pro-preview-05-06', label: 'Gemini 2.5 Pro (최신)' },
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+    { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite (빠름)' },
+    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
   ],
   openrouter: [
     { value: 'openai/gpt-4o', label: 'GPT-4o (OpenAI)' },
+    { value: 'openai/gpt-4.1', label: 'GPT-4.1 (OpenAI)' },
+    { value: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (Anthropic)' },
     { value: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
+    { value: 'google/gemini-2.5-flash-preview', label: 'Gemini 2.5 Flash (Google)' },
+    { value: 'google/gemini-2.0-flash-001', label: 'Gemini 2.0 Flash (Google)' },
     { value: 'google/gemini-pro-1.5', label: 'Gemini 1.5 Pro' },
+    { value: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
     { value: 'meta-llama/llama-3.1-405b-instruct', label: 'Llama 3.1 405B' },
-    { value: 'meta-llama/llama-3.1-70b-instruct', label: 'Llama 3.1 70B' },
-    { value: 'mistralai/mixtral-8x22b-instruct', label: 'Mixtral 8x22B' },
+    { value: 'deepseek/deepseek-r1', label: 'DeepSeek R1 (추론)' },
     { value: 'deepseek/deepseek-chat', label: 'DeepSeek Chat' },
     { value: 'qwen/qwen-2.5-72b-instruct', label: 'Qwen 2.5 72B' },
   ],
   ollama: [
-    { value: 'llama3.1', label: 'Llama 3.1 (추천)' },
+    { value: 'llama3.3', label: 'Llama 3.3 (최신)' },
+    { value: 'llama3.2', label: 'Llama 3.2' },
+    { value: 'llama3.1', label: 'Llama 3.1' },
     { value: 'llama3.1:70b', label: 'Llama 3.1 70B' },
     { value: 'mistral', label: 'Mistral' },
     { value: 'mixtral', label: 'Mixtral' },
     { value: 'codellama', label: 'Code Llama' },
     { value: 'qwen2.5', label: 'Qwen 2.5' },
+    { value: 'deepseek-r1', label: 'DeepSeek R1' },
     { value: 'gemma2', label: 'Gemma 2' },
   ],
   azure: [
@@ -43933,10 +34249,20 @@ const Settings = () => {
     azure: 'static',
     custom: 'static',
   });
+  const [modelLoadError, setModelLoadError] = useState<Record<LLMProviderType, string | null>>({
+    openai: null,
+    anthropic: null,
+    google: null,
+    openrouter: null,
+    ollama: null,
+    azure: null,
+    custom: null,
+  });
 
   // Fetch models for a provider
-  const loadModelsForProvider = useCallback(async (provider: LLMProviderType) => {
+  const loadModelsForProvider = useCallback(async (provider: LLMProviderType, showToast = false) => {
     setIsLoadingModels(prev => ({ ...prev, [provider]: true }));
+    setModelLoadError(prev => ({ ...prev, [provider]: null }));
     try {
       // Get API key and base URL from current settings
       let apiKey: string | undefined;
@@ -43945,6 +34271,12 @@ const Settings = () => {
       switch (provider) {
         case 'openai':
           apiKey = aiSettings.openaiApiKey || undefined;
+          break;
+        case 'anthropic':
+          apiKey = aiSettings.anthropicApiKey || undefined;
+          break;
+        case 'google':
+          apiKey = aiSettings.googleApiKey || undefined;
           break;
         case 'openrouter':
           apiKey = aiSettings.openrouterApiKey || undefined;
@@ -43965,20 +34297,31 @@ const Settings = () => {
       if (models.length > 0) {
         setDynamicModels(prev => ({ ...prev, [provider]: models }));
         setModelSource(prev => ({ ...prev, [provider]: response.source || 'api' }));
+        if (showToast && response.source === 'api') {
+          toast({
+            title: '모델 목록 로드 완료',
+            description: `${models.length}개의 ${provider} 모델을 API에서 가져왔습니다.`,
+          });
+        }
       } else {
         // Fallback to static
         setDynamicModels(prev => ({ ...prev, [provider]: getStaticModels(provider as ApiLLMProviderType) }));
         setModelSource(prev => ({ ...prev, [provider]: 'static' }));
+        if (response.error) {
+          setModelLoadError(prev => ({ ...prev, [provider]: response.error || null }));
+        }
       }
     } catch (e) {
       console.error(`Failed to load models for ${provider}:`, e);
+      const errorMessage = e instanceof Error ? e.message : '알 수 없는 오류';
+      setModelLoadError(prev => ({ ...prev, [provider]: errorMessage }));
       // Fallback to static models
       setDynamicModels(prev => ({ ...prev, [provider]: getStaticModels(provider as ApiLLMProviderType) }));
       setModelSource(prev => ({ ...prev, [provider]: 'static' }));
     } finally {
       setIsLoadingModels(prev => ({ ...prev, [provider]: false }));
     }
-  }, [aiSettings.openaiApiKey, aiSettings.openrouterApiKey, aiSettings.ollamaBaseUrl, aiSettings.customBaseUrl, aiSettings.customApiKey]);
+  }, [aiSettings.openaiApiKey, aiSettings.anthropicApiKey, aiSettings.googleApiKey, aiSettings.openrouterApiKey, aiSettings.ollamaBaseUrl, aiSettings.customBaseUrl, aiSettings.customApiKey, toast]);
 
   // Load models when provider changes or on mount
   useEffect(() => {
@@ -43987,6 +34330,73 @@ const Settings = () => {
       loadModelsForProvider(aiSettings.llmProvider);
     }
   }, [activeTab, aiSettings.llmProvider, loadModelsForProvider]);
+
+  // Auto-refresh models when API key changes (with debounce)
+  useEffect(() => {
+    if (activeTab !== 'ai-settings') return;
+    
+    const timeoutId = setTimeout(() => {
+      // Only refresh if the API key looks valid (has some length)
+      if (aiSettings.openaiApiKey && aiSettings.openaiApiKey.length > 10) {
+        loadModelsForProvider('openai');
+      }
+    }, 1000); // 1 second debounce
+    
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiSettings.openaiApiKey, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'ai-settings') return;
+    
+    const timeoutId = setTimeout(() => {
+      if (aiSettings.googleApiKey && aiSettings.googleApiKey.length > 10) {
+        loadModelsForProvider('google');
+      }
+    }, 1000);
+    
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiSettings.googleApiKey, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'ai-settings') return;
+    
+    const timeoutId = setTimeout(() => {
+      if (aiSettings.openrouterApiKey && aiSettings.openrouterApiKey.length > 10) {
+        loadModelsForProvider('openrouter');
+      }
+    }, 1000);
+    
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiSettings.openrouterApiKey, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'ai-settings') return;
+    
+    const timeoutId = setTimeout(() => {
+      if (aiSettings.ollamaBaseUrl && aiSettings.ollamaBaseUrl.length > 5) {
+        loadModelsForProvider('ollama');
+      }
+    }, 1000);
+    
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiSettings.ollamaBaseUrl, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'ai-settings') return;
+    
+    const timeoutId = setTimeout(() => {
+      if (aiSettings.customBaseUrl && aiSettings.customBaseUrl.length > 5) {
+        loadModelsForProvider('custom');
+      }
+    }, 1000);
+    
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiSettings.customBaseUrl, activeTab]);
 
   // Get models for display (dynamic if available, otherwise static fallback from LLM_MODELS)
   const getModelsForProvider = (provider: LLMProviderType): { value: string; label: string }[] => {
@@ -44394,7 +34804,7 @@ const Settings = () => {
                           variant="ghost"
                           size="icon"
                           className="h-5 w-5"
-                          onClick={() => loadModelsForProvider('openai')}
+                          onClick={() => loadModelsForProvider('openai', true)}
                           disabled={isLoadingModels.openai}
                         >
                           <RefreshCw className={`h-3 w-3 ${isLoadingModels.openai ? 'animate-spin' : ''}`} />
@@ -44415,6 +34825,9 @@ const Settings = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                      {modelLoadError.openai && (
+                        <p className="text-xs text-destructive mt-1">{modelLoadError.openai}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -44513,6 +34926,16 @@ const Settings = () => {
                         {modelSource.google === 'api' && (
                           <Badge variant="outline" className="text-xs">API</Badge>
                         )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5"
+                          onClick={() => loadModelsForProvider('google', true)}
+                          disabled={isLoadingModels.google}
+                        >
+                          <RefreshCw className={`h-3 w-3 ${isLoadingModels.google ? 'animate-spin' : ''}`} />
+                        </Button>
                       </Label>
                       <Select
                         value={aiSettings.googleModel}
@@ -44529,6 +34952,9 @@ const Settings = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                      {modelLoadError.google && (
+                        <p className="text-xs text-destructive mt-1">{modelLoadError.google}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -44578,7 +35004,7 @@ const Settings = () => {
                           variant="ghost"
                           size="icon"
                           className="h-5 w-5"
-                          onClick={() => loadModelsForProvider('openrouter')}
+                          onClick={() => loadModelsForProvider('openrouter', true)}
                           disabled={isLoadingModels.openrouter}
                         >
                           <RefreshCw className={`h-3 w-3 ${isLoadingModels.openrouter ? 'animate-spin' : ''}`} />
@@ -44599,6 +35025,9 @@ const Settings = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                      {modelLoadError.openrouter && (
+                        <p className="text-xs text-destructive mt-1">{modelLoadError.openrouter}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -44634,7 +35063,7 @@ const Settings = () => {
                           variant="ghost"
                           size="icon"
                           className="h-5 w-5"
-                          onClick={() => loadModelsForProvider('ollama')}
+                          onClick={() => loadModelsForProvider('ollama', true)}
                           disabled={isLoadingModels.ollama}
                         >
                           <RefreshCw className={`h-3 w-3 ${isLoadingModels.ollama ? 'animate-spin' : ''}`} />
@@ -44655,6 +35084,9 @@ const Settings = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                      {modelLoadError.ollama && (
+                        <p className="text-xs text-destructive mt-1">{modelLoadError.ollama}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -45132,7 +35564,7 @@ export default Settings;
  * 각 탭에서 결과를 카드로 표시하고, 선택한 결과들을 "검색 템플릿"으로 저장 가능
  */
 
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, createElement } from "react";
 import { useLocation, useSearchParams, useNavigate } from "react-router-dom";
 import {
   Search,
@@ -45170,6 +35602,11 @@ import {
   Eye,
   ChevronsUpDown,
   Check,
+  Newspaper,
+  Users,
+  GraduationCap,
+  History,
+  RefreshCw,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -45226,6 +35663,7 @@ import {
   startDeepSearch,
   getDeepSearchStatus,
   getDeepSearchResult,
+  listDeepSearchJobs,
   createSearchTemplate,
   getAllTemplatesByUser,
   deleteSearchTemplate,
@@ -45311,8 +35749,8 @@ const MODE_CONFIG = {
     borderColor: "border-blue-500",
   },
   deep: {
-    label: "Deep Search",
-    description: "AI 기반 심층 증거 수집",
+    label: "심층 보고서",
+    description: "AI 기반 심층 분석 보고서 생성",
     icon: Brain,
     color: "text-purple-600",
     bgColor: "bg-purple-50 dark:bg-purple-900/20",
@@ -45343,9 +35781,17 @@ const SOURCE_CONFIG = {
 } as const;
 
 const STANCE_CONFIG = {
-  pro: { label: "찬성", icon: ThumbsUp, color: "text-teal-600", bgColor: "bg-teal-100 dark:bg-teal-900/30" },
-  con: { label: "반대", icon: ThumbsDown, color: "text-red-600", bgColor: "bg-red-100 dark:bg-red-900/30" },
+  pro: { label: "긍정", icon: ThumbsUp, color: "text-teal-600", bgColor: "bg-teal-100 dark:bg-teal-900/30" },
+  con: { label: "부정", icon: ThumbsDown, color: "text-red-600", bgColor: "bg-red-100 dark:bg-red-900/30" },
   neutral: { label: "중립", icon: Minus, color: "text-gray-600", bgColor: "bg-gray-100 dark:bg-gray-800" },
+} as const;
+
+const SOURCE_CATEGORY_CONFIG = {
+  news: { label: "뉴스", icon: Newspaper, color: "text-blue-600", bgColor: "bg-blue-100 dark:bg-blue-900/30" },
+  community: { label: "커뮤니티", icon: Users, color: "text-orange-600", bgColor: "bg-orange-100 dark:bg-orange-900/30" },
+  blog: { label: "블로그", icon: FileText, color: "text-purple-600", bgColor: "bg-purple-100 dark:bg-purple-900/30" },
+  official: { label: "공식", icon: Shield, color: "text-green-600", bgColor: "bg-green-100 dark:bg-green-900/30" },
+  academic: { label: "학술", icon: GraduationCap, color: "text-indigo-600", bgColor: "bg-indigo-100 dark:bg-indigo-900/30" },
 } as const;
 
 const VERIFICATION_CONFIG = {
@@ -45707,6 +36153,9 @@ export default function SmartSearch() {
   const [deepLoading, setDeepLoading] = useState(false);
   const [deepError, setDeepError] = useState<string | null>(null);
   const [deepProgress, setDeepProgress] = useState(0);
+  const [showDeepHistory, setShowDeepHistory] = useState(false);
+  const [deepHistoryLoading, setDeepHistoryLoading] = useState(false);
+  const [deepHistoryJobs, setDeepHistoryJobs] = useState<DeepSearchJob[]>([]);
 
   // Get selected project object
   const selectedProject = useMemo(() => {
@@ -45770,7 +36219,7 @@ export default function SmartSearch() {
     };
 
     loadFromApi();
-  }, [searchParams, getTask, deepResults]);
+  }, [searchParams, getTask]); // Removed deepResults from deps to prevent re-fetching
 
   // Additional State
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
@@ -45877,11 +36326,18 @@ export default function SmartSearch() {
 
   // Sync SSE result to deepResults state (fallback if onComplete doesn't fire)
   useEffect(() => {
-    if (sseResult && !deepResults) {
-      console.log('[SmartSearch] Syncing sseResult to deepResults:', sseResult);
-      setDeepResults(sseResult);
-      setDeepLoading(false);
-      setDeepProgress(100);
+    if (sseResult) {
+      // Only sync if we don't have evidence yet or sseResult has more evidence
+      const hasNoEvidence = !deepResults || !deepResults.evidence || deepResults.evidence.length === 0;
+      const sseHasMoreEvidence = sseResult.evidence && 
+        (!deepResults?.evidence || sseResult.evidence.length > deepResults.evidence.length);
+      
+      if (hasNoEvidence || sseHasMoreEvidence) {
+        console.log('[SmartSearch] Syncing sseResult to deepResults:', sseResult);
+        setDeepResults(sseResult);
+        setDeepLoading(false);
+        setDeepProgress(100);
+      }
     }
   }, [sseResult, deepResults]);
 
@@ -46423,6 +36879,59 @@ export default function SmartSearch() {
       setDeepLoading(false);
     }
   }, [query]);
+
+  // Load Deep Search History
+  const loadDeepSearchHistory = useCallback(async () => {
+    setDeepHistoryLoading(true);
+    try {
+      const response = await listDeepSearchJobs(0, 20);
+      setDeepHistoryJobs(response.content || []);
+    } catch (e) {
+      console.error('Failed to load deep search history:', e);
+      toast({
+        title: "기록 로드 실패",
+        description: e instanceof Error ? e.message : "Deep Search 기록을 불러오는데 실패했습니다.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeepHistoryLoading(false);
+    }
+  }, [toast]);
+
+  // Load history when panel is opened
+  useEffect(() => {
+    if (showDeepHistory) {
+      loadDeepSearchHistory();
+    }
+  }, [showDeepHistory, loadDeepSearchHistory]);
+
+  // Load a previous deep search result
+  const loadDeepSearchFromHistory = useCallback(async (job: DeepSearchJob) => {
+    if (job.status !== 'COMPLETED') {
+      toast({
+        title: "불러올 수 없음",
+        description: "완료되지 않은 검색입니다.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setDeepLoading(true);
+    setDeepError(null);
+    setDeepJobId(job.jobId);
+    setQuery(job.topic);
+    setShowDeepHistory(false);
+
+    try {
+      const result = await getDeepSearchResult(job.jobId);
+      setDeepResults(result);
+      setDeepProgress(100);
+    } catch (e) {
+      setDeepError(e instanceof Error ? e.message : "결과를 불러오는데 실패했습니다.");
+    } finally {
+      setDeepLoading(false);
+    }
+  }, [toast]);
 
   // Fact Check - Now handled by embedded FactCheckChatbot component
   // Old functions removed: runFactCheck, addClaim, removeClaim, updateClaim
@@ -46979,15 +37488,28 @@ export default function SmartSearch() {
           </ScrollArea>
         </TabsContent>
 
-        {/* Deep Search Tab */}
+        {/* Deep Search Tab - 심층 보고서 */}
         <TabsContent value="deep" className="space-y-4">
+          {/* History toggle and info bar */}
           <Card className={`${MODE_CONFIG.deep.bgColor} border-none`}>
             <CardContent className="py-3">
               <div className="flex items-center gap-2 text-sm">
                 <Brain className={`h-4 w-4 ${MODE_CONFIG.deep.color}`} />
-                <span className="text-muted-foreground">AI가 심층적으로 증거를 수집하고 분석합니다.</span>
+                <span className="text-muted-foreground">AI가 주제에 대한 심층 분석 보고서를 생성합니다.</span>
+                
+                {/* History toggle button */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowDeepHistory(!showDeepHistory)}
+                  className="ml-auto gap-1"
+                >
+                  <History className="h-4 w-4" />
+                  기록
+                </Button>
+                
                 {deepLoading && (
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                     <Progress value={deepProgress} className="w-24 h-2" />
                     <span className="text-xs">{deepProgress}%</span>
                   </div>
@@ -46995,7 +37517,7 @@ export default function SmartSearch() {
                 
                 {/* Export buttons for Deep Search */}
                 {deepResults && !deepLoading && deepJobId && (
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                     <UnifiedExportMenu
                       jobId={deepJobId}
                       query={query || deepResults.topic}
@@ -47009,7 +37531,7 @@ export default function SmartSearch() {
                         source: e.source || 'web',
                         stance: e.stance,
                       }))}
-                      exportOptions={{ filename: `NewsInsight_DeepSearch_${query || deepResults.topic}`, title: query || deepResults.topic }}
+                      exportOptions={{ filename: `NewsInsight_심층보고서_${query || deepResults.topic}`, title: query || deepResults.topic }}
                       size="sm"
                       variant="outline"
                     />
@@ -47019,6 +37541,109 @@ export default function SmartSearch() {
             </CardContent>
           </Card>
 
+          {/* Deep Search History Panel */}
+          {showDeepHistory && (
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <History className="h-4 w-4" />
+                    Deep Search 기록
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={loadDeepSearchHistory}
+                      disabled={deepHistoryLoading}
+                    >
+                      <RefreshCw className={`h-4 w-4 ${deepHistoryLoading ? 'animate-spin' : ''}`} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowDeepHistory(false)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {deepHistoryLoading && deepHistoryJobs.length === 0 ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : deepHistoryJobs.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    아직 Deep Search 기록이 없습니다.
+                  </div>
+                ) : (
+                  <ScrollArea className="max-h-[300px]">
+                    <div className="space-y-2">
+                      {deepHistoryJobs.map((job) => {
+                        const statusConfig: Record<string, { label: string; color: string }> = {
+                          COMPLETED: { label: "완료", color: "bg-green-500" },
+                          IN_PROGRESS: { label: "진행 중", color: "bg-blue-500" },
+                          PENDING: { label: "대기", color: "bg-yellow-500" },
+                          FAILED: { label: "실패", color: "bg-red-500" },
+                          CANCELLED: { label: "취소", color: "bg-gray-500" },
+                          TIMEOUT: { label: "시간 초과", color: "bg-orange-500" },
+                        };
+                        const status = statusConfig[job.status] || { label: job.status, color: "bg-gray-500" };
+                        
+                        return (
+                          <div
+                            key={job.jobId}
+                            className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
+                              job.status === 'COMPLETED' ? 'hover:bg-muted/50 cursor-pointer' : 'opacity-60'
+                            }`}
+                            onClick={() => job.status === 'COMPLETED' && loadDeepSearchFromHistory(job)}
+                          >
+                            <div className="flex-1 min-w-0 mr-4">
+                              <div className="flex items-center gap-2 mb-1">
+                                <Badge className={`${status.color} text-white text-xs`}>
+                                  {status.label}
+                                </Badge>
+                                {job.evidenceCount !== undefined && job.evidenceCount > 0 && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {job.evidenceCount}개 증거
+                                  </Badge>
+                                )}
+                              </div>
+                              <h4 className="font-medium text-sm truncate">{job.topic}</h4>
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(job.createdAt).toLocaleString('ko-KR')}
+                                {job.completedAt && ` · 완료: ${new Date(job.completedAt).toLocaleTimeString('ko-KR')}`}
+                              </p>
+                              {job.errorMessage && (
+                                <p className="text-xs text-destructive mt-1 truncate">
+                                  {job.errorMessage}
+                                </p>
+                              )}
+                            </div>
+                            {job.status === 'COMPLETED' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  loadDeepSearchFromHistory(job);
+                                }}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {deepError && (
             <div className="p-4 rounded-lg bg-destructive/10 text-destructive flex items-center gap-2">
               <AlertCircle className="h-4 w-4" />
@@ -47026,96 +37651,199 @@ export default function SmartSearch() {
             </div>
           )}
 
-          {deepResults?.stanceDistribution && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">입장 분포</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {/* Note: Backend returns ratios as decimals (0.0-1.0), multiply by 100 for percentage */}
-                {(() => {
-                  const proPercent = deepResults.stanceDistribution.proRatio <= 1 
-                    ? deepResults.stanceDistribution.proRatio * 100 
-                    : deepResults.stanceDistribution.proRatio;
-                  const conPercent = deepResults.stanceDistribution.conRatio <= 1 
-                    ? deepResults.stanceDistribution.conRatio * 100 
-                    : deepResults.stanceDistribution.conRatio;
-                  const neutralPercent = deepResults.stanceDistribution.neutralRatio <= 1 
-                    ? deepResults.stanceDistribution.neutralRatio * 100 
-                    : deepResults.stanceDistribution.neutralRatio;
-                  
-                  return (
-                    <>
-                      <div className="flex gap-1 h-6 rounded overflow-hidden mb-2">
-                        {proPercent > 0 && (
-                          <div className="bg-teal-500 text-white text-xs flex items-center justify-center" style={{ width: `${proPercent}%` }}>
-                            {proPercent >= 15 && `${Math.round(proPercent)}%`}
-                          </div>
-                        )}
-                        {neutralPercent > 0 && (
-                          <div className="bg-gray-400 text-white text-xs flex items-center justify-center" style={{ width: `${neutralPercent}%` }}>
-                            {neutralPercent >= 15 && `${Math.round(neutralPercent)}%`}
-                          </div>
-                        )}
-                        {conPercent > 0 && (
-                          <div className="bg-red-500 text-white text-xs flex items-center justify-center" style={{ width: `${conPercent}%` }}>
-                            {conPercent >= 15 && `${Math.round(conPercent)}%`}
-                          </div>
-                        )}
+          {/* 심층 보고서 결과 */}
+          {deepResults && (
+            <ScrollArea className="h-[500px]">
+              <div className="space-y-4 pr-4">
+                {/* 핵심 요약 */}
+                <Card className="border-l-4 border-l-purple-500">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-5 w-5 text-purple-600" />
+                      <CardTitle className="text-lg">핵심 요약</CardTitle>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      <strong>'{deepResults.topic}'</strong>에 대해 {deepResults.evidence?.length || 0}개의 출처를 분석했습니다.
+                      {deepResults.evidence && deepResults.evidence.length > 0 && (
+                        <> 다양한 관점의 자료를 수집하여 주제에 대한 종합적인 이해를 제공합니다.</>
+                      )}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                {/* 분석 개요 */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Database className="h-4 w-4" />
+                      분석 개요
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div className="p-3 rounded-lg bg-muted/50">
+                        <p className="text-2xl font-bold text-primary">{deepResults.evidence?.length || 0}</p>
+                        <p className="text-xs text-muted-foreground">총 수집 자료</p>
                       </div>
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span className="text-teal-600">찬성 {deepResults.stanceDistribution.pro}</span>
-                        <span>중립 {deepResults.stanceDistribution.neutral}</span>
-                        <span className="text-red-600">반대 {deepResults.stanceDistribution.con}</span>
+                      <div className="p-3 rounded-lg bg-muted/50">
+                        <p className="text-2xl font-bold text-green-600">
+                          {new Set(deepResults.evidence?.map(e => e.source).filter(Boolean)).size || 0}
+                        </p>
+                        <p className="text-xs text-muted-foreground">참조 출처</p>
                       </div>
-                    </>
-                  );
-                })()}
-              </CardContent>
-            </Card>
+                      <div className="p-3 rounded-lg bg-muted/50">
+                        <p className="text-2xl font-bold text-blue-600">
+                          {deepResults.evidence?.filter(e => e.title).length || 0}
+                        </p>
+                        <p className="text-xs text-muted-foreground">기사/문서</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* 주요 발견사항 */}
+                {deepResults.evidence && deepResults.evidence.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        주요 발견사항
+                      </CardTitle>
+                      <CardDescription>수집된 자료에서 추출한 핵심 정보</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {deepResults.evidence.slice(0, 5).map((evidence, index) => (
+                        <div 
+                          key={evidence.id} 
+                          className="p-3 rounded-lg bg-muted/30 border-l-2 border-l-purple-400 hover:bg-muted/50 transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <span className="text-xs font-medium text-purple-600">#{index + 1}</span>
+                                {evidence.sourceCategory && SOURCE_CATEGORY_CONFIG[evidence.sourceCategory] && (
+                                  <Badge variant="secondary" className={`text-xs ${SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].color}`}>
+                                    {createElement(SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].icon, { className: "h-3 w-3 mr-1" })}
+                                    {SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].label}
+                                  </Badge>
+                                )}
+                                {evidence.source && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {evidence.source}
+                                  </Badge>
+                                )}
+                              </div>
+                              {evidence.title && (
+                                <h4 className="font-medium text-sm mb-1 line-clamp-1">{evidence.title}</h4>
+                              )}
+                              <p className="text-sm text-muted-foreground line-clamp-2">{evidence.snippet}</p>
+                            </div>
+                            <div className="flex gap-1">
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      onClick={() => {
+                                        setDetailItem({ type: "evidence", data: evidence });
+                                        setDetailDialogOpen(true);
+                                      }}
+                                      className="p-1.5 rounded hover:bg-muted"
+                                    >
+                                      <Eye className="h-4 w-4 text-muted-foreground" />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>상세 보기</TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                              {evidence.url && (
+                                <a
+                                  href={evidence.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1.5 rounded hover:bg-muted"
+                                >
+                                  <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {deepResults.evidence.length > 5 && (
+                        <p className="text-xs text-muted-foreground text-center pt-2">
+                          외 {deepResults.evidence.length - 5}개의 자료가 더 있습니다. PDF 보고서로 내보내기하여 전체 내용을 확인하세요.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* 출처 목록 */}
+                {deepResults.evidence && deepResults.evidence.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Globe className="h-4 w-4" />
+                        참조 출처
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {Array.from(new Set(deepResults.evidence.map(e => e.source).filter(Boolean))).slice(0, 8).map((source, index) => (
+                          <div key={index} className="flex items-center gap-2 text-sm">
+                            <CheckCircle2 className="h-3 w-3 text-green-500" />
+                            <span className="text-muted-foreground">{source}</span>
+                            <Badge variant="secondary" className="text-xs ml-auto">
+                              {deepResults.evidence?.filter(e => e.source === source).length}건
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* 결론 */}
+                <Card className="border-l-4 border-l-green-500">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      결론
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      '{deepResults.topic}'에 대한 심층 분석 결과, {deepResults.evidence?.length || 0}개의 관련 자료를 수집했습니다.
+                      {deepResults.evidence && deepResults.evidence.length > 0 ? (
+                        <> 수집된 자료들은 다양한 출처에서 제공되었으며, 주제에 대한 폭넓은 관점을 제공합니다. 
+                        보다 자세한 내용은 PDF 보고서로 내보내기하여 확인하실 수 있습니다.</>
+                      ) : (
+                        <> 추가적인 검색어나 다른 관점에서의 분석을 시도해보시기 바랍니다.</>
+                      )}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </ScrollArea>
           )}
 
-          <ScrollArea className="h-[400px]">
-            <div className="space-y-3 pr-4">
-              {deepResults?.evidence?.map((evidence) => (
-                <EvidenceCard
-                  key={evidence.id}
-                  evidence={evidence}
-                  isSelected={isSelected(`evidence_${evidence.id}`)}
-                  onSelect={() =>
-                    toggleSelection({
-                      id: `evidence_${evidence.id}`,
-                      type: "evidence",
-                      title: evidence.title || evidence.snippet.slice(0, 50),
-                      url: evidence.url,
-                      snippet: evidence.snippet,
-                      stance: STANCE_CONFIG[evidence.stance]?.label,
-                    })
-                  }
-                  onViewDetail={() => {
-                    setDetailItem({ type: "evidence", data: evidence });
-                    setDetailDialogOpen(true);
-                  }}
-                  hasProject={!!selectedProjectId}
-                  onAddToProject={() => handleAddEvidenceToProject(evidence)}
-                />
-              ))}
-              {!deepLoading && !deepJobId && !deepResults && !deepError && (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
-                  <p>검색어를 입력하고 Deep Search를 시작해보세요.</p>
-                  <p className="text-xs mt-1">AI가 심층 분석을 수행하며 2-5분 정도 소요됩니다.</p>
-                </div>
-              )}
-              {!deepLoading && deepResults && deepResults.evidence?.length === 0 && (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
-                  <p>검색 결과가 없습니다.</p>
-                  <p className="text-xs mt-1">다른 검색어로 다시 시도해보세요.</p>
-                </div>
-              )}
+          {/* 초기 상태 */}
+          {!deepLoading && !deepJobId && !deepResults && !deepError && (
+            <div className="text-center py-12 text-muted-foreground">
+              <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <p>검색어를 입력하고 심층 보고서를 생성해보세요.</p>
+              <p className="text-xs mt-1">AI가 주제에 대한 심층 분석을 수행하며 2-5분 정도 소요됩니다.</p>
             </div>
-          </ScrollArea>
+          )}
+          {!deepLoading && deepResults && deepResults.evidence?.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <p>분석 결과가 없습니다.</p>
+              <p className="text-xs mt-1">다른 검색어로 다시 시도해보세요.</p>
+            </div>
+          )}
         </TabsContent>
 
         {/* Fact Check Tab - Using Embedded Chatbot */}
@@ -49320,8 +40048,10 @@ import {
   XCircle,
   AlertTriangle,
   Terminal,
+  ShieldAlert,
 } from 'lucide-react';
 import { environmentsApi } from '@/lib/adminApi';
+import { useAuth } from '@/contexts/AuthContext';
 import type { Environment, EnvironmentStatus, ContainerInfo } from '@/types/admin';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -49339,12 +40069,10 @@ export default function AdminEnvironments() {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [actionOutput, setActionOutput] = useState<string>('');
   
-  // TODO: Add Auth Context check for role-based access if needed
-  // const { user } = useAuth();
-  // const isOperator = user?.role === 'operator' || user?.role === 'admin';
-  // const isAdmin = user?.role === 'admin';
-  const isOperator = true; // Temporary bypass
-  const isAdmin = true; // Temporary bypass
+  // Role-based access control
+  const { user } = useAuth();
+  const isOperator = user?.role === 'operator' || user?.role === 'admin';
+  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     loadEnvironments();
@@ -49462,6 +40190,21 @@ export default function AdminEnvironments() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  // 권한이 없는 경우 접근 불가 UI
+  if (!isOperator) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <ShieldAlert className="w-16 h-16 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">접근 권한이 없습니다</h2>
+        <p className="text-muted-foreground text-center">
+          환경 관리 기능은 Operator 또는 Admin 권한이 필요합니다.
+          <br />
+          현재 역할: {user?.role || '없음'}
+        </p>
       </div>
     );
   }
@@ -49652,6 +40395,708 @@ export default function AdminEnvironments() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+```
+
+---
+
+## frontend/src/pages/admin/AdminLlmProviders.tsx
+
+```tsx
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Bot,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Zap,
+  Save,
+  Eye,
+  EyeOff,
+  Trash2,
+  RefreshCw,
+  Shield,
+  Plus,
+  ShieldAlert,
+  Power,
+  PowerOff,
+} from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Separator } from '@/components/ui/separator';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  getGlobalLlmSettings,
+  saveGlobalLlmSetting,
+  deleteGlobalLlmSetting,
+  testGlobalLlmConnection,
+  toggleGlobalLlmSetting,
+  getLlmProviderTypes,
+  testNewLlmConnection,
+} from '@/lib/api';
+import type {
+  LlmProviderType,
+  LlmProviderSettings,
+  LlmProviderSettingsRequest,
+  LlmProviderTypeInfo,
+  LlmTestResult,
+} from '@/types/api';
+
+const DEFAULT_MODELS: Record<LlmProviderType, string[]> = {
+  // OpenAI - 2025년 12월 최신 (GPT-5 시리즈 출시)
+  OPENAI: [
+    'gpt-5', 'gpt-5-mini', 'gpt-5-nano',           // Frontier 모델
+    'gpt-4.1', 'gpt-4.1-mini',                      // 고급 모델
+    'o3', 'o3-mini', 'o3-pro', 'o4-mini',          // 추론 모델
+    'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo',        // 기존 모델
+  ],
+  // Anthropic Claude - 2025년 12월 최신 (Claude 4 시리즈)
+  ANTHROPIC: [
+    'claude-sonnet-4-20250514',                    // 추천, 성능-가격 최적
+    'claude-opus-4-20250514',                      // 가장 강력
+    'claude-haiku-4-20250514',                     // 경량, 빠른 응답
+    'claude-3-5-sonnet-20241022',                  // 이전 버전 호환
+    'claude-3-5-haiku-20241022',
+  ],
+  // Google Gemini - 2025년 12월 최신 (Gemini 3 시리즈)
+  GOOGLE: [
+    'gemini-3-pro-preview',                        // 최고 지능, 멀티모달
+    'gemini-3-flash-preview',                      // Pro 수준, Flash 속도
+    'gemini-2.5-pro',                              // 씽킹 모델, 복잡 추론
+    'gemini-2.5-flash',                            // 최고 가격-성능비
+    'gemini-2.5-flash-lite',                       // 비용 최적화
+    'gemini-2.0-flash',                            // 워크홀스
+  ],
+  // OpenRouter - 다양한 공급자 모델 통합 (무료 모델 포함)
+  OPENROUTER: [
+    // 무료 모델 (Free)
+    'google/gemini-2.0-flash-exp:free',
+    'google/gemini-exp-1206:free',
+    'meta-llama/llama-3.2-3b-instruct:free',
+    'meta-llama/llama-3.1-8b-instruct:free',
+    'microsoft/phi-3-mini-128k-instruct:free',
+    'mistralai/mistral-7b-instruct:free',
+    'openchat/openchat-7b:free',
+    'huggingfaceh4/zephyr-7b-beta:free',
+    'qwen/qwen-2-7b-instruct:free',
+    'nousresearch/hermes-3-llama-3.1-405b:free',
+    // 유료 모델
+    'openai/gpt-5', 'openai/gpt-4o',
+    'anthropic/claude-sonnet-4', 'anthropic/claude-3.5-haiku',
+    'google/gemini-2.5-pro', 'google/gemini-3-pro',
+    'meta-llama/llama-3.1-405b-instruct',
+    'mistralai/mistral-large-2411',
+    'qwen/qwen-max',
+    'deepseek/deepseek-r1',
+  ],
+  // Ollama - 로컬 실행 모델
+  OLLAMA: [
+    'llama3.2',                                    // Meta Llama 3.2
+    'mistral',                                     // Mistral AI
+    'neural-chat',                                 // Intel
+    'deepseek-r1',                                 // DeepSeek R1
+    'smollm2',                                     // 경량 모델
+    'mixtral', 'codellama',
+  ],
+  // Azure OpenAI - 배포된 모델만 사용 가능
+  AZURE_OPENAI: [
+    'gpt-5', 'gpt-4o', 'gpt-4-turbo', 'gpt-35-turbo',
+  ],
+  // Together AI - DeepSeek 및 오픈소스 모델
+  TOGETHER_AI: [
+    'deepseek-ai/DeepSeek-R1-Distill-Llama-70B',  // 추론 능력 70B
+    'deepseek-ai/DeepSeek-V3',                    // DeepSeek V3
+    'meta-llama/Llama-3.1-405B-Instruct-Turbo',
+    'mistralai/Mixtral-8x22B-Instruct-v0.1',
+  ],
+  CUSTOM: ['default'],
+};
+
+/**
+ * 관리자 전용 글로벌 LLM Provider 설정 페이지
+ */
+export default function AdminLlmProviders() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+
+  // State
+  const [providerTypes, setProviderTypes] = useState<LlmProviderTypeInfo[]>([]);
+  const [settings, setSettings] = useState<LlmProviderSettings[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showApiKeys, setShowApiKeys] = useState<Record<string, boolean>>({});
+  const [testResults, setTestResults] = useState<Record<string, LlmTestResult>>({});
+  const [testingProvider, setTestingProvider] = useState<string | null>(null);
+
+  // Edit dialog state
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<LlmProviderType | null>(null);
+  const [isNewProvider, setIsNewProvider] = useState(false);
+  const [editForm, setEditForm] = useState<LlmProviderSettingsRequest>({
+    providerType: 'OPENAI',
+    apiKey: '',
+    defaultModel: '',
+    baseUrl: '',
+    enabled: true,
+  });
+
+  // Role check
+  const isAdmin = user?.role === 'admin';
+
+  // Load data
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const [types, globalSettings] = await Promise.all([
+        getLlmProviderTypes(),
+        getGlobalLlmSettings(),
+      ]);
+      setProviderTypes(types);
+      setSettings(globalSettings);
+    } catch (error) {
+      console.error('Failed to load LLM settings:', error);
+      toast({
+        title: '데이터 로드 실패',
+        description: 'LLM 설정을 불러오는데 실패했습니다.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Open edit dialog
+  const openEditDialog = (providerType: LlmProviderType | null) => {
+    if (providerType) {
+      const existing = settings.find(s => s.providerType === providerType);
+      if (existing) {
+        setEditForm({
+          providerType: existing.providerType,
+          apiKey: existing.apiKeyMasked || '',
+          defaultModel: existing.defaultModel || '',
+          baseUrl: existing.baseUrl || '',
+          enabled: existing.enabled,
+        });
+        setIsNewProvider(false);
+      }
+      setEditingProvider(providerType);
+    } else {
+      // New provider
+      setEditForm({
+        providerType: 'OPENAI',
+        apiKey: '',
+        defaultModel: '',
+        baseUrl: '',
+        enabled: true,
+      });
+      setIsNewProvider(true);
+      setEditingProvider(null);
+    }
+    setEditDialogOpen(true);
+  };
+
+  // Save provider settings
+  const handleSave = async () => {
+    if (!editForm.apiKey?.trim()) {
+      toast({
+        title: 'API 키 필요',
+        description: 'API 키를 입력해주세요.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await saveGlobalLlmSetting(editForm);
+      toast({
+        title: '저장 완료',
+        description: `${editForm.providerType} 설정이 저장되었습니다.`,
+      });
+      setEditDialogOpen(false);
+      loadData();
+    } catch (error) {
+      console.error('Failed to save LLM setting:', error);
+      toast({
+        title: '저장 실패',
+        description: '설정을 저장하는데 실패했습니다.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Delete provider
+  const handleDelete = async (providerType: LlmProviderType) => {
+    if (!confirm(`${providerType} 설정을 삭제하시겠습니까?`)) return;
+
+    try {
+      await deleteGlobalLlmSetting(providerType);
+      toast({
+        title: '삭제 완료',
+        description: `${providerType} 설정이 삭제되었습니다.`,
+      });
+      loadData();
+    } catch (error) {
+      console.error('Failed to delete LLM setting:', error);
+      toast({
+        title: '삭제 실패',
+        description: '설정을 삭제하는데 실패했습니다.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  // Toggle enabled
+  const handleToggle = async (setting: LlmProviderSettings) => {
+    try {
+      await toggleGlobalLlmSetting(setting.providerType, !setting.enabled);
+      toast({
+        title: setting.enabled ? '비활성화됨' : '활성화됨',
+        description: `${setting.providerType}이(가) ${setting.enabled ? '비활성화' : '활성화'}되었습니다.`,
+      });
+      loadData();
+    } catch (error) {
+      console.error('Failed to toggle LLM setting:', error);
+      toast({
+        title: '변경 실패',
+        description: '설정을 변경하는데 실패했습니다.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  // Test connection
+  const handleTestConnection = async (setting: LlmProviderSettings) => {
+    setTestingProvider(setting.providerType);
+    setTestResults(prev => ({ ...prev, [setting.providerType]: undefined as any }));
+
+    try {
+      const result = await testGlobalLlmConnection(setting.providerType);
+      setTestResults(prev => ({ ...prev, [setting.providerType]: result }));
+    } catch (error) {
+      console.error('Failed to test connection:', error);
+      setTestResults(prev => ({
+        ...prev,
+        [setting.providerType]: {
+          success: false,
+          providerType: setting.providerType,
+          message: '연결 테스트 실패',
+          error: error instanceof Error ? error.message : '알 수 없는 오류',
+        },
+      }));
+    } finally {
+      setTestingProvider(null);
+    }
+  };
+
+  // Test new connection before save
+  const handleTestNewConnection = async () => {
+    if (!editForm.apiKey?.trim()) {
+      toast({
+        title: 'API 키 필요',
+        description: 'API 키를 입력해주세요.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setTestingProvider('new');
+    try {
+      const result = await testNewLlmConnection(editForm);
+      if (result.success) {
+        toast({
+          title: '연결 성공',
+          description: result.message || '연결 테스트에 성공했습니다.',
+        });
+      } else {
+        toast({
+          title: '연결 실패',
+          description: result.error || result.message || '연결 테스트에 실패했습니다.',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      console.error('Failed to test new connection:', error);
+      toast({
+        title: '테스트 실패',
+        description: '연결 테스트 중 오류가 발생했습니다.',
+        variant: 'destructive',
+      });
+    } finally {
+      setTestingProvider(null);
+    }
+  };
+
+  // Toggle API key visibility
+  const toggleApiKeyVisibility = (providerType: string) => {
+    setShowApiKeys(prev => ({ ...prev, [providerType]: !prev[providerType] }));
+  };
+
+  // Mask API key
+  const maskApiKey = (key: string | undefined): string => {
+    if (!key) return '(설정되지 않음)';
+    if (key.length <= 8) return '••••••••';
+    return key.slice(0, 4) + '••••••••' + key.slice(-4);
+  };
+
+  // Access denied for non-admins
+  if (!isAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <ShieldAlert className="w-16 h-16 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">접근 권한이 없습니다</h2>
+        <p className="text-muted-foreground text-center">
+          글로벌 LLM 설정은 관리자만 접근할 수 있습니다.
+        </p>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  const configuredProviders = settings.map(s => s.providerType);
+  const availableNewProviders = providerTypes.filter(
+    t => !configuredProviders.includes(t.value)
+  );
+
+  return (
+    <div className="space-y-6 container mx-auto p-4">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">LLM Provider 설정</h1>
+          <p className="text-muted-foreground mt-1">
+            시스템 전체에서 사용되는 LLM 공급자 설정을 관리합니다.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={loadData}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            새로고침
+          </Button>
+          {availableNewProviders.length > 0 && (
+            <Button onClick={() => openEditDialog(null)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Provider 추가
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <Alert>
+        <Shield className="w-4 h-4" />
+        <AlertDescription>
+          여기서 설정한 LLM Provider는 시스템 전체 기본값으로 사용됩니다.
+          개별 사용자는 자신의 설정으로 이를 덮어쓸 수 있습니다.
+        </AlertDescription>
+      </Alert>
+
+      {/* Provider List */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Bot className="w-5 h-5" />
+            설정된 Provider
+          </CardTitle>
+          <CardDescription>
+            {settings.length}개의 LLM Provider가 설정되어 있습니다.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {settings.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Bot className="w-12 h-12 mx-auto mb-4 opacity-20" />
+              <p>설정된 LLM Provider가 없습니다.</p>
+              <p className="text-sm mt-1">위의 "Provider 추가" 버튼을 클릭하여 추가하세요.</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Provider</TableHead>
+                  <TableHead>모델</TableHead>
+                  <TableHead>API 키</TableHead>
+                  <TableHead>상태</TableHead>
+                  <TableHead className="text-right">작업</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {settings.map((setting) => {
+                  const typeInfo = providerTypes.find(t => t.value === setting.providerType);
+                  const testResult = testResults[setting.providerType];
+                  
+                  return (
+                    <TableRow key={setting.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{typeInfo?.displayName || setting.providerType}</span>
+                          {setting.enabled ? (
+                            <Badge variant="default" className="bg-green-500">활성</Badge>
+                          ) : (
+                            <Badge variant="secondary">비활성</Badge>
+                          )}
+                        </div>
+                        {typeInfo?.description && (
+                          <p className="text-xs text-muted-foreground mt-1">{typeInfo.description}</p>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <code className="text-sm bg-muted px-1 py-0.5 rounded">
+                          {setting.defaultModel || '(기본값)'}
+                        </code>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <code className="text-sm">
+                            {showApiKeys[setting.providerType]
+                              ? setting.apiKeyMasked
+                              : maskApiKey(setting.apiKeyMasked)}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => toggleApiKeyVisibility(setting.providerType)}
+                          >
+                            {showApiKeys[setting.providerType] ? (
+                              <EyeOff className="h-3 w-3" />
+                            ) : (
+                              <Eye className="h-3 w-3" />
+                            )}
+                          </Button>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {testResult ? (
+                          testResult.success ? (
+                            <div className="flex items-center gap-1 text-green-600">
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span className="text-sm">연결됨</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 text-red-600">
+                              <XCircle className="w-4 h-4" />
+                              <span className="text-sm" title={testResult.error}>실패</span>
+                            </div>
+                          )
+                        ) : (
+                          <span className="text-muted-foreground text-sm">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleTestConnection(setting)}
+                            disabled={testingProvider === setting.providerType}
+                          >
+                            {testingProvider === setting.providerType ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Zap className="w-4 h-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleToggle(setting)}
+                          >
+                            {setting.enabled ? (
+                              <PowerOff className="w-4 h-4" />
+                            ) : (
+                              <Power className="w-4 h-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditDialog(setting.providerType)}
+                          >
+                            <Save className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-600 hover:text-red-700"
+                            onClick={() => handleDelete(setting.providerType)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Edit Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>
+              {isNewProvider ? 'LLM Provider 추가' : `${editingProvider} 설정 편집`}
+            </DialogTitle>
+            <DialogDescription>
+              API 키와 기본 모델을 설정하세요. 테스트 버튼으로 연결을 확인할 수 있습니다.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Provider Type (only for new) */}
+            {isNewProvider && (
+              <div className="space-y-2">
+                <Label>Provider 타입</Label>
+                <Select
+                  value={editForm.providerType}
+                  onValueChange={(value: LlmProviderType) =>
+                    setEditForm(prev => ({
+                      ...prev,
+                      providerType: value,
+                      defaultModel: DEFAULT_MODELS[value]?.[0] || '',
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableNewProviders.map((type) => (
+                      <SelectItem key={type.value} value={type.value}>
+                        {type.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* API Key */}
+            <div className="space-y-2">
+              <Label>API 키</Label>
+              <Input
+                type="password"
+                value={editForm.apiKey}
+                onChange={(e) => setEditForm(prev => ({ ...prev, apiKey: e.target.value }))}
+                placeholder="sk-..."
+              />
+            </div>
+
+            {/* Default Model */}
+            <div className="space-y-2">
+              <Label>기본 모델</Label>
+              <Select
+                value={editForm.defaultModel}
+                onValueChange={(value) => setEditForm(prev => ({ ...prev, defaultModel: value }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="모델 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  {DEFAULT_MODELS[editForm.providerType]?.map((model) => (
+                    <SelectItem key={model} value={model}>
+                      {model}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Base URL (for OLLAMA, CUSTOM, AZURE) */}
+            {['OLLAMA', 'CUSTOM', 'AZURE_OPENAI'].includes(editForm.providerType) && (
+              <div className="space-y-2">
+                <Label>Base URL</Label>
+                <Input
+                  value={editForm.baseUrl || ''}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, baseUrl: e.target.value }))}
+                  placeholder="http://localhost:11434"
+                />
+              </div>
+            )}
+
+            {/* Enabled */}
+            <div className="flex items-center justify-between">
+              <Label>활성화</Label>
+              <Switch
+                checked={editForm.enabled}
+                onCheckedChange={(checked) => setEditForm(prev => ({ ...prev, enabled: checked }))}
+              />
+            </div>
+          </div>
+
+          <Separator />
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={handleTestNewConnection}
+              disabled={testingProvider === 'new'}
+            >
+              {testingProvider === 'new' ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Zap className="w-4 h-4 mr-2" />
+              )}
+              연결 테스트
+            </Button>
+            <Button onClick={handleSave} disabled={isSaving}>
+              {isSaving ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Save className="w-4 h-4 mr-2" />
+              )}
+              저장
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -51368,6 +42813,7 @@ export interface Token {
   access_token: string;
   token_type: string;
   expires_in: number;
+  // refresh_token is now sent via HTTP-Only cookie, not in response body
 }
 
 export interface HealthCheck {
@@ -51934,6 +43380,7 @@ export type LlmProviderType =
   | 'OPENROUTER'
   | 'OLLAMA'
   | 'AZURE_OPENAI'
+  | 'TOGETHER_AI'
   | 'CUSTOM';
 
 /**
@@ -51942,7 +43389,9 @@ export type LlmProviderType =
 export interface LlmProviderTypeInfo {
   value: LlmProviderType;
   displayName: string;
-  defaultBaseUrl: string;
+  description: string;
+  requiresApiKey: boolean;
+  defaultBaseUrl?: string;
 }
 
 /**
@@ -52680,7 +44129,6 @@ import random
 import time
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any, Tuple
-from urllib.parse import urlparse
 from contextlib import contextmanager
 from base64 import b64encode, b64decode
 
@@ -52690,12 +44138,24 @@ from mcp.server import FastMCP
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 
+# Shared modules
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.db import get_postgres_conn, check_db_connection, DB_BACKEND
+from shared.health import create_health_response
+
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-# 포트 설정 (환경변수에서 읽음)
-PORT = int(os.environ.get("PORT", "5010"))
+# 포트 설정 (shared ports 모듈에서 가져오거나 환경변수)
+try:
+    from shared.ports import MCP_PORTS
+
+    PORT = MCP_PORTS.get("aiagent_mcp", 5010)
+except ImportError:
+    PORT = int(os.environ.get("PORT", "5010"))
 
 server = FastMCP(
     "ai-agent-mcp",
@@ -52704,22 +44164,18 @@ server = FastMCP(
 )
 
 
-# Health check endpoint
+# Health check endpoint (using shared module)
 @server.custom_route("/health", methods=["GET"])
 async def health_endpoint(request: Request) -> JSONResponse:
+    db_status = check_db_connection()
     return JSONResponse(
-        {
-            "status": "healthy",
-            "server": "ai-agent-mcp",
-            "version": "1.0.0",
-        }
+        create_health_response(
+            server_name="ai-agent-mcp", version="1.0.0", extra_info=db_status
+        )
     )
 
 
-# DB 백엔드
-DB_BACKEND = os.environ.get("DB_BACKEND", "postgres")
-POSTGRES_DSN = os.environ.get("DATABASE_URL")
-MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/newsinsight")
+# DB 설정은 shared.db에서 가져옴 (get_postgres_conn)
 
 # 암호화 키 (API key 암호화용)
 ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "newsinsight-default-key-change-me")
@@ -52764,23 +44220,9 @@ def decrypt_api_key(encrypted_key: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# 3. DB 연결 헬퍼
+# 3. DB 연결 헬퍼 (shared.db 모듈 사용)
 # ─────────────────────────────────────────────
-
-_pg_conn = None
-
-
-def get_postgres_conn():
-    """PostgreSQL 연결을 반환합니다."""
-    global _pg_conn
-    import psycopg2
-
-    if _pg_conn is None or _pg_conn.closed != 0:
-        if not POSTGRES_DSN:
-            raise RuntimeError("DATABASE_URL이 설정되어 있지 않습니다.")
-        _pg_conn = psycopg2.connect(POSTGRES_DSN)
-        _pg_conn.autocommit = True
-    return _pg_conn
+# get_postgres_conn()은 shared.db에서 import됨
 
 
 # ─────────────────────────────────────────────
@@ -53909,19 +45351,29 @@ import os
 import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
-from urllib.parse import urlparse
 
 import requests
 from mcp.server import FastMCP
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 
+# Shared modules
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.db import get_postgres_conn, get_mongo_db, DB_BACKEND, check_db_connection
+from shared.health import create_health_response
+from shared.aidove import AIDOVE_WEBHOOK_URL, call_aidove
+
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-# 포트 설정 (환경변수에서 읽음)
-PORT = int(os.environ.get("PORT", "5001"))
+# 포트 설정 (shared ports 모듈에서 가져오거나 환경변수)
+try:
+    from shared.ports import MCP_PORTS
+    PORT = MCP_PORTS.get("bias_mcp", 5001)
+except ImportError:
+    PORT = int(os.environ.get("PORT", "5001"))
 
 server = FastMCP(
     "bias-analysis-mcp",
@@ -53930,31 +45382,21 @@ server = FastMCP(
 )
 
 
-# Health check endpoint
+# Health check endpoint (using shared module)
 @server.custom_route("/health", methods=["GET"])
 async def health_endpoint(request: Request) -> JSONResponse:
+    db_status = check_db_connection()
     return JSONResponse(
-        {
-            "status": "healthy",
-            "server": "bias-analysis-mcp",
-            "version": "1.0.0",
-        }
+        create_health_response(
+            server_name="bias-analysis-mcp",
+            version="1.0.0",
+            extra_info=db_status
+        )
     )
 
 
-# DB 백엔드 선택: "postgres" 또는 "mongo"
-DB_BACKEND = os.environ.get("DB_BACKEND", "postgres")
-
-# PostgreSQL 접속 정보
-POSTGRES_DSN = os.environ.get("DATABASE_URL")
-
-# MongoDB 접속 정보
-MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/newsinsight")
-
-# AiDove Webhook URL
-AIDOVE_WEBHOOK_URL = os.environ.get(
-    "AIDOVE_WEBHOOK_URL", "https://workflow.nodove.com/webhook/aidove"
-)
+# DB 설정은 shared.db에서 가져옴 (DB_BACKEND, get_postgres_conn, get_mongo_db)
+# AiDove 설정은 shared.aidove에서 가져옴 (AIDOVE_WEBHOOK_URL, call_aidove)
 
 
 # ─────────────────────────────────────────────
@@ -54015,42 +45457,9 @@ def get_bias_label(score: float) -> str:
 
 
 # ─────────────────────────────────────────────
-# 3. DB 연결 헬퍼
+# 3. DB 연결 헬퍼 (shared.db 모듈 사용)
 # ─────────────────────────────────────────────
-
-_pg_conn = None
-_mongo_client = None
-_mongo_db = None
-
-
-def get_postgres_conn():
-    """PostgreSQL 연결을 반환합니다."""
-    global _pg_conn
-    import psycopg2
-
-    if _pg_conn is None or _pg_conn.closed != 0:
-        if not POSTGRES_DSN:
-            raise RuntimeError("DATABASE_URL이 설정되어 있지 않습니다.")
-        _pg_conn = psycopg2.connect(POSTGRES_DSN)
-        _pg_conn.autocommit = True
-    return _pg_conn
-
-
-def get_mongo_db():
-    """MongoDB 데이터베이스 객체를 반환합니다."""
-    global _mongo_client, _mongo_db
-    from pymongo import MongoClient
-
-    if _mongo_db is None:
-        if not MONGODB_URI:
-            raise RuntimeError("MONGODB_URI가 설정되어 있지 않습니다.")
-
-        _mongo_client = MongoClient(MONGODB_URI)
-        parsed = urlparse(MONGODB_URI)
-        db_name = parsed.path.lstrip("/").split("?")[0] or "newsinsight"
-        _mongo_db = _mongo_client[db_name]
-
-    return _mongo_db
+# get_postgres_conn(), get_mongo_db()는 shared.db에서 import됨
 
 
 # ─────────────────────────────────────────────
@@ -54617,19 +46026,29 @@ import os
 import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
-from urllib.parse import urlparse
 
 import requests
 from mcp.server import FastMCP
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 
+# Shared modules
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.db import get_postgres_conn, get_mongo_db, DB_BACKEND, check_db_connection
+from shared.health import create_health_response
+from shared.aidove import AIDOVE_WEBHOOK_URL, call_aidove
+
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-# 포트 설정 (환경변수에서 읽음)
-PORT = int(os.environ.get("PORT", "5002"))
+# 포트 설정 (shared ports 모듈에서 가져오거나 환경변수)
+try:
+    from shared.ports import MCP_PORTS
+    PORT = MCP_PORTS.get("factcheck_mcp", 5002)
+except ImportError:
+    PORT = int(os.environ.get("PORT", "5002"))
 
 server = FastMCP(
     "factcheck-mcp",
@@ -54638,31 +46057,20 @@ server = FastMCP(
 )
 
 
-# Health check endpoint
+# Health check endpoint (using shared module)
 @server.custom_route("/health", methods=["GET"])
 async def health_endpoint(request: Request) -> JSONResponse:
+    db_status = check_db_connection()
     return JSONResponse(
-        {
-            "status": "healthy",
-            "server": "factcheck-mcp",
-            "version": "1.0.0",
-        }
+        create_health_response(
+            server_name="factcheck-mcp",
+            version="1.0.0",
+            extra_info=db_status
+        )
     )
 
-
-# DB 백엔드 선택: "postgres" 또는 "mongo"
-DB_BACKEND = os.environ.get("DB_BACKEND", "postgres")
-
-# PostgreSQL 접속 정보
-POSTGRES_DSN = os.environ.get("DATABASE_URL")
-
-# MongoDB 접속 정보
-MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/newsinsight")
-
-# AiDove Webhook URL
-AIDOVE_WEBHOOK_URL = os.environ.get(
-    "AIDOVE_WEBHOOK_URL", "https://workflow.nodove.com/webhook/aidove"
-)
+# DB 설정은 shared.db에서 가져옴 (DB_BACKEND, get_postgres_conn, get_mongo_db)
+# AiDove 설정은 shared.aidove에서 가져옴 (AIDOVE_WEBHOOK_URL, call_aidove)
 
 
 # ─────────────────────────────────────────────
@@ -54761,42 +46169,9 @@ UNVERIFIED_INDICATORS = [
 
 
 # ─────────────────────────────────────────────
-# 3. DB 연결 헬퍼
+# 3. DB 연결 헬퍼 (shared.db 모듈 사용)
 # ─────────────────────────────────────────────
-
-_pg_conn = None
-_mongo_client = None
-_mongo_db = None
-
-
-def get_postgres_conn():
-    """PostgreSQL 연결을 반환합니다."""
-    global _pg_conn
-    import psycopg2
-
-    if _pg_conn is None or _pg_conn.closed != 0:
-        if not POSTGRES_DSN:
-            raise RuntimeError("DATABASE_URL이 설정되어 있지 않습니다.")
-        _pg_conn = psycopg2.connect(POSTGRES_DSN)
-        _pg_conn.autocommit = True
-    return _pg_conn
-
-
-def get_mongo_db():
-    """MongoDB 데이터베이스 객체를 반환합니다."""
-    global _mongo_client, _mongo_db
-    from pymongo import MongoClient
-
-    if _mongo_db is None:
-        if not MONGODB_URI:
-            raise RuntimeError("MONGODB_URI가 설정되어 있지 않습니다.")
-
-        _mongo_client = MongoClient(MONGODB_URI)
-        parsed = urlparse(MONGODB_URI)
-        db_name = parsed.path.lstrip("/").split("?")[0] or "newsinsight"
-        _mongo_db = _mongo_client[db_name]
-
-    return _mongo_db
+# get_postgres_conn(), get_mongo_db()는 shared.db에서 import됨
 
 
 # ─────────────────────────────────────────────
@@ -58288,19 +49663,29 @@ import os
 import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
-from urllib.parse import urlparse
 
 import requests
 from mcp.server import FastMCP
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 
+# Shared modules
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.db import get_postgres_conn, get_mongo_db, DB_BACKEND, check_db_connection
+from shared.health import create_health_response
+from shared.aidove import AIDOVE_WEBHOOK_URL, call_aidove
+
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-# 포트 설정 (환경변수에서 읽음)
-PORT = int(os.environ.get("PORT", "5000"))
+# 포트 설정 (shared ports 모듈에서 가져오거나 환경변수)
+try:
+    from shared.ports import MCP_PORTS
+    PORT = MCP_PORTS.get("newsinsight_mcp", 5000)
+except ImportError:
+    PORT = int(os.environ.get("PORT", "5000"))
 
 server = FastMCP(
     "news-insight-mcp",
@@ -58309,31 +49694,20 @@ server = FastMCP(
 )
 
 
-# Health check endpoint
+# Health check endpoint (using shared module)
 @server.custom_route("/health", methods=["GET"])
 async def health_endpoint(request: Request) -> JSONResponse:
+    db_status = check_db_connection()
     return JSONResponse(
-        {
-            "status": "healthy",
-            "server": "news-insight-mcp",
-            "version": "2.0.0",
-        }
+        create_health_response(
+            server_name="news-insight-mcp",
+            version="2.0.0",
+            extra_info=db_status
+        )
     )
 
-
-# DB 백엔드 선택: "postgres" 또는 "mongo"
-DB_BACKEND = os.environ.get("DB_BACKEND", "postgres")
-
-# PostgreSQL 접속 정보 (표준: DATABASE_URL)
-POSTGRES_DSN = os.environ.get("DATABASE_URL")
-
-# MongoDB 접속 정보 (표준: MONGODB_URI - URI에 DB명 포함)
-MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/newsinsight")
-
-# AiDove Webhook URL
-AIDOVE_WEBHOOK_URL = os.environ.get(
-    "AIDOVE_WEBHOOK_URL", "https://workflow.nodove.com/webhook/aidove"
-)
+# DB 설정은 shared.db에서 가져옴 (DB_BACKEND, get_postgres_conn, get_mongo_db)
+# AiDove 설정은 shared.aidove에서 가져옴 (AIDOVE_WEBHOOK_URL, call_aidove)
 
 
 # ─────────────────────────────────────────────
@@ -58369,44 +49743,9 @@ DEFAULT_SOURCE_WEIGHT = 0.8
 
 
 # ─────────────────────────────────────────────
-# 3. DB 연결 헬퍼 (Postgres / Mongo)
+# 3. DB 연결 헬퍼 (shared.db 모듈 사용)
 # ─────────────────────────────────────────────
-
-_pg_conn = None
-_mongo_client = None
-_mongo_db = None
-
-
-def get_postgres_conn():
-    """PostgreSQL 연결을 반환합니다."""
-    global _pg_conn
-    import psycopg2
-
-    if _pg_conn is None or _pg_conn.closed != 0:
-        if not POSTGRES_DSN:
-            raise RuntimeError("DATABASE_URL (Postgres DSN)이 설정되어 있지 않습니다.")
-        _pg_conn = psycopg2.connect(POSTGRES_DSN)
-        _pg_conn.autocommit = True  # 읽기 전용이므로 autocommit
-    return _pg_conn
-
-
-def get_mongo_db():
-    """MongoDB 데이터베이스 객체를 반환합니다."""
-    global _mongo_client, _mongo_db
-    from pymongo import MongoClient
-
-    if _mongo_db is None:
-        if not MONGODB_URI:
-            raise RuntimeError("MONGODB_URI가 설정되어 있지 않습니다.")
-
-        _mongo_client = MongoClient(MONGODB_URI)
-
-        # URI에서 DB명 추출 (예: mongodb://...../newsinsight?...)
-        parsed = urlparse(MONGODB_URI)
-        db_name = parsed.path.lstrip("/").split("?")[0] or "newsinsight"
-        _mongo_db = _mongo_client[db_name]
-
-    return _mongo_db
+# get_postgres_conn(), get_mongo_db()는 shared.db에서 import됨
 
 
 # ─────────────────────────────────────────────
@@ -59377,7 +50716,7 @@ Roboflow MCP Server - Computer Vision 이미지 분석
 Roboflow API와 연동하여 다양한 CV 모델을 활용합니다.
 
 Version: 1.0.0
-Port: 5010
+Port: 5008 (changed from 5010 to avoid conflict with aiagent_mcp)
 """
 
 import os
@@ -59403,7 +50742,7 @@ from starlette.requests import Request
 # ─────────────────────────────────────────────
 
 # 포트 설정 (환경변수에서 읽음)
-PORT = int(os.environ.get("PORT", "5010"))
+PORT = int(os.environ.get("PORT", "5008"))
 
 server = FastMCP(
     "roboflow-cv-mcp",
@@ -60255,7 +51594,6 @@ import os
 import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
-from urllib.parse import urlparse
 from collections import Counter
 
 import requests
@@ -60263,11 +51601,23 @@ from mcp.server import FastMCP
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 
+# Shared modules
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.db import get_postgres_conn, get_mongo_db, DB_BACKEND, check_db_connection
+from shared.health import create_health_response
+from shared.aidove import AIDOVE_WEBHOOK_URL, call_aidove
+
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-PORT = int(os.environ.get("PORT", "5004"))
+# 포트 설정 (shared ports 모듈에서 가져오거나 환경변수)
+try:
+    from shared.ports import MCP_PORTS
+    PORT = MCP_PORTS.get("sentiment_mcp", 5004)
+except ImportError:
+    PORT = int(os.environ.get("PORT", "5004"))
 
 server = FastMCP(
     "sentiment-analysis-mcp",
@@ -60278,32 +51628,21 @@ server = FastMCP(
 
 @server.custom_route("/health", methods=["GET"])
 async def health_endpoint(request: Request) -> JSONResponse:
+    db_status = check_db_connection()
     return JSONResponse(
-        {
-            "status": "healthy",
-            "server": "sentiment-analysis-mcp",
-            "version": "1.0.0",
-        }
+        create_health_response(
+            server_name="sentiment-analysis-mcp",
+            version="1.0.0",
+            extra_info=db_status
+        )
     )
 
+# DB 설정은 shared.db에서 가져옴 (DB_BACKEND, get_postgres_conn, get_mongo_db)
+# AiDove 설정은 shared.aidove에서 가져옴 (AIDOVE_WEBHOOK_URL, call_aidove)
 
-# DB 백엔드 선택
-DB_BACKEND = os.environ.get("DB_BACKEND", "postgres")
-
-# PostgreSQL 접속 정보
-POSTGRES_DSN = os.environ.get("DATABASE_URL")
-
-# MongoDB 접속 정보
-MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/newsinsight")
-
-# Sentiment Addon URL
+# Sentiment Addon URL (서비스별 설정)
 SENTIMENT_ADDON_URL = os.environ.get(
     "SENTIMENT_ADDON_URL", "http://sentiment-addon:8002"
-)
-
-# AiDove Webhook URL
-AIDOVE_WEBHOOK_URL = os.environ.get(
-    "AIDOVE_WEBHOOK_URL", "https://workflow.nodove.com/webhook/aidove"
 )
 
 
@@ -60351,42 +51690,9 @@ STOPWORDS = {
 
 
 # ─────────────────────────────────────────────
-# 3. DB 연결 헬퍼
+# 3. DB 연결 헬퍼 (shared.db 모듈 사용)
 # ─────────────────────────────────────────────
-
-_pg_conn = None
-_mongo_client = None
-_mongo_db = None
-
-
-def get_postgres_conn():
-    """PostgreSQL 연결을 반환합니다."""
-    global _pg_conn
-    import psycopg2
-
-    if _pg_conn is None or _pg_conn.closed != 0:
-        if not POSTGRES_DSN:
-            raise RuntimeError("DATABASE_URL이 설정되어 있지 않습니다.")
-        _pg_conn = psycopg2.connect(POSTGRES_DSN)
-        _pg_conn.autocommit = True
-    return _pg_conn
-
-
-def get_mongo_db():
-    """MongoDB 데이터베이스 객체를 반환합니다."""
-    global _mongo_client, _mongo_db
-    from pymongo import MongoClient
-
-    if _mongo_db is None:
-        if not MONGODB_URI:
-            raise RuntimeError("MONGODB_URI가 설정되어 있지 않습니다.")
-
-        _mongo_client = MongoClient(MONGODB_URI)
-        parsed = urlparse(MONGODB_URI)
-        db_name = parsed.path.lstrip("/").split("?")[0] or "newsinsight"
-        _mongo_db = _mongo_client[db_name]
-
-    return _mongo_db
+# get_postgres_conn(), get_mongo_db()는 shared.db에서 import됨
 
 
 # ─────────────────────────────────────────────
@@ -61010,6 +52316,687 @@ if __name__ == "__main__":
 
 ---
 
+## mcp/shared/__init__.py
+
+```py
+"""
+NewsInsight MCP Shared Module
+
+공통 기능을 제공하는 공유 모듈:
+- DB 연결 (PostgreSQL, MongoDB)
+- Health check 엔드포인트
+- AiDove 호출 헬퍼
+- 공통 유틸리티
+"""
+
+from .db import (
+    get_postgres_conn,
+    get_mongo_db,
+    DB_BACKEND,
+    POSTGRES_DSN,
+    MONGODB_URI,
+)
+from .health import create_health_endpoint, HealthCheckHandler
+from .aidove import call_aidove, AIDOVE_WEBHOOK_URL
+from .utils import parse_json
+
+__all__ = [
+    # DB
+    "get_postgres_conn",
+    "get_mongo_db",
+    "DB_BACKEND",
+    "POSTGRES_DSN",
+    "MONGODB_URI",
+    # Health
+    "create_health_endpoint",
+    "HealthCheckHandler",
+    # AiDove
+    "call_aidove",
+    "AIDOVE_WEBHOOK_URL",
+    # Utils
+    "parse_json",
+]
+
+```
+
+---
+
+## mcp/shared/aidove.py
+
+```py
+"""
+NewsInsight MCP Shared - AiDove Integration Module
+
+AiDove API 호출을 위한 공유 모듈입니다.
+"""
+
+import os
+from typing import Optional
+
+import requests
+
+# AiDove Webhook URL
+AIDOVE_WEBHOOK_URL = os.environ.get(
+    "AIDOVE_WEBHOOK_URL", "https://workflow.nodove.com/webhook/aidove"
+)
+
+# 기본 타임아웃 (초)
+AIDOVE_TIMEOUT = int(os.environ.get("AIDOVE_TIMEOUT", "60"))
+
+
+def call_aidove(
+    prompt: str,
+    session_id: Optional[str] = None,
+    timeout: int = AIDOVE_TIMEOUT,
+) -> str:
+    """
+    AiDove API를 호출하여 자연어 리포트를 생성합니다.
+    
+    Args:
+        prompt: LLM에 전달할 프롬프트
+        session_id: 세션 ID (대화 컨텍스트 유지용)
+        timeout: 요청 타임아웃 (초)
+        
+    Returns:
+        str: AiDove 응답 텍스트
+    """
+    payload = {"chatInput": prompt}
+    if session_id:
+        payload["sessionId"] = session_id
+
+    try:
+        resp = requests.post(AIDOVE_WEBHOOK_URL, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("reply", data.get("output", "리포트 생성에 실패했습니다."))
+    except requests.Timeout:
+        return f"AiDove 호출 타임아웃 ({timeout}초)"
+    except requests.RequestException as e:
+        return f"AiDove 호출 실패: {str(e)}"
+
+
+async def call_aidove_async(
+    prompt: str,
+    session_id: Optional[str] = None,
+    timeout: int = AIDOVE_TIMEOUT,
+) -> str:
+    """
+    AiDove API를 비동기로 호출합니다.
+    
+    Args:
+        prompt: LLM에 전달할 프롬프트
+        session_id: 세션 ID (대화 컨텍스트 유지용)
+        timeout: 요청 타임아웃 (초)
+        
+    Returns:
+        str: AiDove 응답 텍스트
+    """
+    import httpx
+    
+    payload = {"chatInput": prompt}
+    if session_id:
+        payload["sessionId"] = session_id
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(AIDOVE_WEBHOOK_URL, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("reply", data.get("output", "리포트 생성에 실패했습니다."))
+    except httpx.TimeoutException:
+        return f"AiDove 호출 타임아웃 ({timeout}초)"
+    except httpx.HTTPError as e:
+        return f"AiDove 호출 실패: {str(e)}"
+
+```
+
+---
+
+## mcp/shared/db.py
+
+```py
+"""
+NewsInsight MCP Shared - Database Connection Module
+
+PostgreSQL과 MongoDB 연결을 관리하는 공유 모듈입니다.
+모든 MCP 서버에서 동일한 DB 연결 로직을 사용합니다.
+"""
+
+import os
+from typing import Optional, Any
+from urllib.parse import urlparse
+
+# DB 백엔드 선택: "postgres" 또는 "mongo"
+DB_BACKEND = os.environ.get("DB_BACKEND", "postgres")
+
+# PostgreSQL 접속 정보 (표준: DATABASE_URL)
+POSTGRES_DSN = os.environ.get("DATABASE_URL")
+
+# MongoDB 접속 정보 (표준: MONGODB_URI - URI에 DB명 포함)
+MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/newsinsight")
+
+# Connection pool
+_pg_conn = None
+_mongo_client = None
+_mongo_db = None
+
+
+def get_postgres_conn():
+    """
+    PostgreSQL 연결을 반환합니다.
+    
+    싱글톤 패턴으로 연결을 재사용합니다.
+    연결이 끊어진 경우 자동으로 재연결합니다.
+    
+    Returns:
+        psycopg2 connection object
+        
+    Raises:
+        RuntimeError: DATABASE_URL이 설정되지 않은 경우
+    """
+    global _pg_conn
+    import psycopg2
+
+    if _pg_conn is None or _pg_conn.closed != 0:
+        if not POSTGRES_DSN:
+            raise RuntimeError("DATABASE_URL (Postgres DSN)이 설정되어 있지 않습니다.")
+        _pg_conn = psycopg2.connect(POSTGRES_DSN)
+        _pg_conn.autocommit = True  # 읽기 전용이므로 autocommit
+    return _pg_conn
+
+
+def get_mongo_db():
+    """
+    MongoDB 데이터베이스 객체를 반환합니다.
+    
+    싱글톤 패턴으로 연결을 재사용합니다.
+    URI에서 데이터베이스 이름을 자동으로 추출합니다.
+    
+    Returns:
+        pymongo Database object
+        
+    Raises:
+        RuntimeError: MONGODB_URI가 설정되지 않은 경우
+    """
+    global _mongo_client, _mongo_db
+    from pymongo import MongoClient
+
+    if _mongo_db is None:
+        if not MONGODB_URI:
+            raise RuntimeError("MONGODB_URI가 설정되어 있지 않습니다.")
+
+        _mongo_client = MongoClient(MONGODB_URI)
+
+        # URI에서 DB명 추출 (예: mongodb://...../newsinsight?...)
+        parsed = urlparse(MONGODB_URI)
+        db_name = parsed.path.lstrip("/").split("?")[0] or "newsinsight"
+        _mongo_db = _mongo_client[db_name]
+
+    return _mongo_db
+
+
+def check_db_connection() -> dict:
+    """
+    DB 연결 상태를 확인합니다.
+    
+    Returns:
+        dict: DB 연결 상태 정보
+    """
+    status = {"db_backend": DB_BACKEND}
+    
+    try:
+        if DB_BACKEND == "postgres":
+            conn = get_postgres_conn()
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            status["postgres"] = "connected"
+        elif DB_BACKEND == "mongo":
+            db = get_mongo_db()
+            db.command("ping")
+            status["mongo"] = "connected"
+    except Exception as e:
+        status["db_error"] = str(e)
+        status["status"] = "degraded"
+    
+    return status
+
+
+def close_connections():
+    """
+    모든 DB 연결을 닫습니다.
+    서버 종료 시 호출합니다.
+    """
+    global _pg_conn, _mongo_client, _mongo_db
+    
+    if _pg_conn is not None:
+        try:
+            _pg_conn.close()
+        except:
+            pass
+        _pg_conn = None
+    
+    if _mongo_client is not None:
+        try:
+            _mongo_client.close()
+        except:
+            pass
+        _mongo_client = None
+        _mongo_db = None
+
+```
+
+---
+
+## mcp/shared/health.py
+
+```py
+"""
+NewsInsight MCP Shared - Health Check Module
+
+Health check 엔드포인트와 핸들러를 제공하는 공유 모듈입니다.
+"""
+
+import json
+from datetime import datetime
+from typing import Callable
+from http.server import BaseHTTPRequestHandler
+
+from starlette.responses import JSONResponse
+from starlette.requests import Request
+
+
+def create_health_endpoint(server_name: str, version: str = "1.0.0"):
+    """
+    Health check 엔드포인트 핸들러를 생성합니다.
+
+    Args:
+        server_name: 서버 이름 (예: "news-insight-mcp")
+        version: 서버 버전
+
+    Returns:
+        async function: Starlette 라우트 핸들러
+
+    Usage:
+        @server.custom_route("/health", methods=["GET"])
+        async def health_endpoint(request: Request) -> JSONResponse:
+            return await create_health_endpoint("my-server", "1.0.0")(request)
+    """
+
+    async def health_handler(request: Request) -> JSONResponse:
+        return JSONResponse(
+            {
+                "status": "healthy",
+                "server": server_name,
+                "version": version,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        )
+
+    return health_handler
+
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """
+    간단한 HTTP 헬스체크 엔드포인트 핸들러.
+
+    별도의 HTTP 서버로 헬스체크를 제공할 때 사용합니다.
+
+    Usage:
+        handler = HealthCheckHandler.create_handler("my-server", "1.0.0")
+        httpd = HTTPServer(("0.0.0.0", 8080), handler)
+        httpd.serve_forever()
+    """
+
+    server_name = "mcp-server"
+    server_version = "1.0.0"
+
+    @classmethod
+    def create_handler(cls, server_name: str, version: str = "1.0.0"):
+        """
+        커스텀 서버 정보로 핸들러 클래스를 생성합니다.
+        """
+
+        class CustomHandler(cls):
+            pass
+
+        CustomHandler.server_name = server_name
+        CustomHandler.server_version = version
+        return CustomHandler
+
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            response = {
+                "status": "healthy",
+                "server": self.server_name,
+                "version": self.server_version,
+            }
+            self.wfile.write(json.dumps(response).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        # 로깅 비활성화
+        pass
+
+
+def create_health_response(
+    server_name: str,
+    version: str = "1.0.0",
+    extra_info: dict = None,
+) -> dict:
+    """
+    Health check 응답 딕셔너리를 생성합니다.
+
+    Args:
+        server_name: 서버 이름 (예: "news-insight-mcp")
+        version: 서버 버전
+        extra_info: 추가 상태 정보 (예: DB 연결 상태)
+
+    Returns:
+        dict: Health check 응답 딕셔너리
+
+    Usage:
+        return JSONResponse(create_health_response("my-server", "1.0.0", db_status))
+    """
+    response = {
+        "status": "healthy",
+        "server": server_name,
+        "version": version,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+    if extra_info:
+        response.update(extra_info)
+        # Check for error conditions
+        if extra_info.get("db_error"):
+            response["status"] = "degraded"
+
+    return response
+
+
+def get_health_status(
+    server_name: str,
+    version: str,
+    db_status: dict = None,
+    extra_status: dict = None,
+) -> dict:
+    """
+    종합 헬스 상태를 반환합니다.
+
+    Args:
+        server_name: 서버 이름
+        version: 서버 버전
+        db_status: DB 연결 상태 (선택)
+        extra_status: 추가 상태 정보 (선택)
+
+    Returns:
+        dict: 종합 헬스 상태
+    """
+    status = {
+        "server": server_name,
+        "version": version,
+        "status": "running",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+    if db_status:
+        status.update(db_status)
+        if db_status.get("db_error"):
+            status["status"] = "degraded"
+
+    if extra_status:
+        status.update(extra_status)
+
+    return status
+
+```
+
+---
+
+## mcp/shared/ports.py
+
+```py
+"""
+NewsInsight MCP Shared - Port Configuration
+
+모든 MCP 서버의 포트 할당을 중앙 관리합니다.
+포트 충돌을 방지하고 일관된 포트 번호를 유지합니다.
+
+Port Range: 5000-5020
+"""
+
+# MCP 서버 포트 할당
+MCP_PORTS = {
+    "newsinsight_mcp": 5000,  # 감정 분석 및 여론 온도
+    "bias_mcp": 5001,  # 편향성 분석
+    "factcheck_mcp": 5002,  # 팩트체크
+    "topic_mcp": 5003,  # 토픽 추출
+    "sentiment_mcp": 5004,  # 감정 분석 (외부 addon)
+    "aiagent_mcp": 5010,  # AI Agent LLM 라우팅
+    "huggingface_mcp": 5011,  # HuggingFace 모델
+    "kaggle_mcp": 5012,  # Kaggle 데이터셋
+    "mltraining_mcp": 5013,  # ML 학습
+    "roboflow_mcp": 5014,  # Computer Vision
+}
+
+# 예약된 포트 (다른 서비스용)
+RESERVED_PORTS = {
+    5005: "reserved",
+    5006: "reserved",
+    5007: "reserved",
+    5008: "reserved",
+    5009: "reserved",
+    5015: "reserved",
+}
+
+
+def get_port(server_name: str, default: int = 5000) -> int:
+    """
+    서버 이름으로 할당된 포트를 반환합니다.
+
+    환경변수 PORT가 설정되어 있으면 환경변수 값을 우선합니다.
+
+    Args:
+        server_name: 서버 이름 (예: "newsinsight_mcp")
+        default: 기본 포트 번호
+
+    Returns:
+        int: 포트 번호
+    """
+    import os
+
+    # 환경변수 우선
+    env_port = os.environ.get("PORT")
+    if env_port:
+        try:
+            return int(env_port)
+        except ValueError:
+            pass
+
+    return MCP_PORTS.get(server_name, default)
+
+
+def validate_ports() -> dict:
+    """
+    포트 할당의 유효성을 검증합니다.
+
+    Returns:
+        dict: 검증 결과 (conflicts, warnings)
+    """
+    result = {
+        "valid": True,
+        "conflicts": [],
+        "warnings": [],
+    }
+
+    # 포트 중복 확인
+    port_to_servers = {}
+    for server, port in MCP_PORTS.items():
+        if port in port_to_servers:
+            result["valid"] = False
+            result["conflicts"].append(
+                {
+                    "port": port,
+                    "servers": [port_to_servers[port], server],
+                }
+            )
+        else:
+            port_to_servers[port] = server
+
+    # 예약된 포트 사용 확인
+    for server, port in MCP_PORTS.items():
+        if port in RESERVED_PORTS:
+            result["warnings"].append(
+                {
+                    "port": port,
+                    "server": server,
+                    "reason": f"Using reserved port: {RESERVED_PORTS[port]}",
+                }
+            )
+
+    return result
+
+
+if __name__ == "__main__":
+    # 포트 할당 출력
+    print("MCP Server Port Assignments:")
+    print("-" * 40)
+    for server, port in sorted(MCP_PORTS.items(), key=lambda x: x[1]):
+        print(f"  {server}: {port}")
+
+    print("\nValidation:")
+    validation = validate_ports()
+    if validation["valid"]:
+        print("  ✓ All ports are valid")
+    else:
+        for conflict in validation["conflicts"]:
+            print(f"  ✗ Port conflict: {conflict}")
+
+```
+
+---
+
+## mcp/shared/utils.py
+
+```py
+"""
+NewsInsight MCP Shared - Utility Functions
+
+공통 유틸리티 함수를 제공하는 모듈입니다.
+"""
+
+import json
+from typing import Any, TypeVar, Union
+
+T = TypeVar('T')
+
+
+def parse_json(val: Any, default: T = None) -> Union[T, Any]:
+    """
+    JSON 문자열 또는 값을 파싱합니다.
+    
+    DB에서 조회한 JSONB 필드를 안전하게 파싱합니다.
+    이미 파싱된 dict/list는 그대로 반환합니다.
+    
+    Args:
+        val: 파싱할 값 (str, dict, list, None)
+        default: 파싱 실패 시 반환할 기본값
+        
+    Returns:
+        파싱된 값 또는 기본값
+        
+    Examples:
+        >>> parse_json('{"key": "value"}', {})
+        {'key': 'value'}
+        >>> parse_json(None, [])
+        []
+        >>> parse_json({'already': 'parsed'}, {})
+        {'already': 'parsed'}
+    """
+    if val is None:
+        return default
+    if isinstance(val, (dict, list)):
+        return val
+    if isinstance(val, str):
+        try:
+            return json.loads(val)
+        except (json.JSONDecodeError, ValueError):
+            return default
+    return default
+
+
+def parse_json_list(val: Any) -> list:
+    """JSON을 리스트로 파싱합니다."""
+    return parse_json(val, [])
+
+
+def parse_json_dict(val: Any) -> dict:
+    """JSON을 딕셔너리로 파싱합니다."""
+    return parse_json(val, {})
+
+
+def truncate_text(text: str, max_length: int = 500, suffix: str = "...") -> str:
+    """
+    텍스트를 지정된 길이로 자릅니다.
+    
+    Args:
+        text: 자를 텍스트
+        max_length: 최대 길이
+        suffix: 잘린 경우 추가할 접미사
+        
+    Returns:
+        잘린 텍스트
+    """
+    if not text or len(text) <= max_length:
+        return text or ""
+    return text[:max_length - len(suffix)] + suffix
+
+
+def safe_float(val: Any, default: float = 0.0) -> float:
+    """
+    값을 안전하게 float로 변환합니다.
+    
+    Args:
+        val: 변환할 값
+        default: 변환 실패 시 기본값
+        
+    Returns:
+        float 값
+    """
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_int(val: Any, default: int = 0) -> int:
+    """
+    값을 안전하게 int로 변환합니다.
+    
+    Args:
+        val: 변환할 값
+        default: 변환 실패 시 기본값
+        
+    Returns:
+        int 값
+    """
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+```
+
+---
+
 ## mcp/topic_mcp/server.py
 
 ```py
@@ -61027,7 +53014,6 @@ import os
 import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
-from urllib.parse import urlparse
 from collections import Counter
 
 import requests
@@ -61035,12 +53021,23 @@ from mcp.server import FastMCP
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 
+# Shared modules
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.db import get_postgres_conn, get_mongo_db, DB_BACKEND, check_db_connection
+from shared.health import create_health_response
+from shared.aidove import AIDOVE_WEBHOOK_URL, call_aidove
+
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-# 포트 설정 (환경변수에서 읽음)
-PORT = int(os.environ.get("PORT", "5003"))
+# 포트 설정 (shared ports 모듈에서 가져오거나 환경변수)
+try:
+    from shared.ports import MCP_PORTS
+    PORT = MCP_PORTS.get("topic_mcp", 5003)
+except ImportError:
+    PORT = int(os.environ.get("PORT", "5003"))
 
 server = FastMCP(
     "topic-analysis-mcp",
@@ -61049,31 +53046,20 @@ server = FastMCP(
 )
 
 
-# Health check endpoint
+# Health check endpoint (using shared module)
 @server.custom_route("/health", methods=["GET"])
 async def health_endpoint(request: Request) -> JSONResponse:
+    db_status = check_db_connection()
     return JSONResponse(
-        {
-            "status": "healthy",
-            "server": "topic-analysis-mcp",
-            "version": "1.0.0",
-        }
+        create_health_response(
+            server_name="topic-analysis-mcp",
+            version="1.0.0",
+            extra_info=db_status
+        )
     )
 
-
-# DB 백엔드 선택: "postgres" 또는 "mongo"
-DB_BACKEND = os.environ.get("DB_BACKEND", "postgres")
-
-# PostgreSQL 접속 정보
-POSTGRES_DSN = os.environ.get("DATABASE_URL")
-
-# MongoDB 접속 정보
-MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/newsinsight")
-
-# AiDove Webhook URL
-AIDOVE_WEBHOOK_URL = os.environ.get(
-    "AIDOVE_WEBHOOK_URL", "https://workflow.nodove.com/webhook/aidove"
-)
+# DB 설정은 shared.db에서 가져옴 (DB_BACKEND, get_postgres_conn, get_mongo_db)
+# AiDove 설정은 shared.aidove에서 가져옴 (AIDOVE_WEBHOOK_URL, call_aidove)
 
 
 # ─────────────────────────────────────────────
@@ -61204,42 +53190,9 @@ STOPWORDS = {
 
 
 # ─────────────────────────────────────────────
-# 3. DB 연결 헬퍼
+# 3. DB 연결 헬퍼 (shared.db 모듈 사용)
 # ─────────────────────────────────────────────
-
-_pg_conn = None
-_mongo_client = None
-_mongo_db = None
-
-
-def get_postgres_conn():
-    """PostgreSQL 연결을 반환합니다."""
-    global _pg_conn
-    import psycopg2
-
-    if _pg_conn is None or _pg_conn.closed != 0:
-        if not POSTGRES_DSN:
-            raise RuntimeError("DATABASE_URL이 설정되어 있지 않습니다.")
-        _pg_conn = psycopg2.connect(POSTGRES_DSN)
-        _pg_conn.autocommit = True
-    return _pg_conn
-
-
-def get_mongo_db():
-    """MongoDB 데이터베이스 객체를 반환합니다."""
-    global _mongo_client, _mongo_db
-    from pymongo import MongoClient
-
-    if _mongo_db is None:
-        if not MONGODB_URI:
-            raise RuntimeError("MONGODB_URI가 설정되어 있지 않습니다.")
-
-        _mongo_client = MongoClient(MONGODB_URI)
-        parsed = urlparse(MONGODB_URI)
-        db_name = parsed.path.lstrip("/").split("?")[0] or "newsinsight"
-        _mongo_db = _mongo_client[db_name]
-
-    return _mongo_db
+# get_postgres_conn(), get_mongo_db()는 shared.db에서 import됨
 
 
 # ─────────────────────────────────────────────

@@ -144,7 +144,7 @@ services:
 
   ip-rotation:
     build:
-      context: ../../backend/browser-use/ip-rotation
+      context: ../../backend/services/ip-rotation
       dockerfile: Dockerfile
     image: newsinsight/ip-rotation:local
     container_name: newsinsight-ip-rotation
@@ -221,7 +221,7 @@ services:
 
   browser-use-api:
     build:
-      context: ../../backend/browser-use
+      context: ../../backend/services/browser-use-api
       dockerfile: Dockerfile.api
     image: newsinsight/browser-use-api:local
     container_name: newsinsight-browser-use-api
@@ -295,7 +295,7 @@ services:
   bot-detector:
     build:
       context: ../../
-      dockerfile: backend/browser-use/bot-detector/Dockerfile
+      dockerfile: backend/services/bot-detector/Dockerfile
     image: newsinsight/bot-detector:local
     container_name: newsinsight-bot-detector
     restart: unless-stopped

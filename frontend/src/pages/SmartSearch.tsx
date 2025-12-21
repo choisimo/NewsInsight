@@ -10,7 +10,7 @@
  * 각 탭에서 결과를 카드로 표시하고, 선택한 결과들을 "검색 템플릿"으로 저장 가능
  */
 
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, createElement } from "react";
 import { useLocation, useSearchParams, useNavigate } from "react-router-dom";
 import {
   Search,
@@ -48,6 +48,11 @@ import {
   Eye,
   ChevronsUpDown,
   Check,
+  Newspaper,
+  Users,
+  GraduationCap,
+  History,
+  RefreshCw,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -104,6 +109,7 @@ import {
   startDeepSearch,
   getDeepSearchStatus,
   getDeepSearchResult,
+  listDeepSearchJobs,
   createSearchTemplate,
   getAllTemplatesByUser,
   deleteSearchTemplate,
@@ -189,8 +195,8 @@ const MODE_CONFIG = {
     borderColor: "border-blue-500",
   },
   deep: {
-    label: "Deep Search",
-    description: "AI 기반 심층 증거 수집",
+    label: "심층 보고서",
+    description: "AI 기반 심층 분석 보고서 생성",
     icon: Brain,
     color: "text-purple-600",
     bgColor: "bg-purple-50 dark:bg-purple-900/20",
@@ -221,9 +227,17 @@ const SOURCE_CONFIG = {
 } as const;
 
 const STANCE_CONFIG = {
-  pro: { label: "찬성", icon: ThumbsUp, color: "text-teal-600", bgColor: "bg-teal-100 dark:bg-teal-900/30" },
-  con: { label: "반대", icon: ThumbsDown, color: "text-red-600", bgColor: "bg-red-100 dark:bg-red-900/30" },
+  pro: { label: "긍정", icon: ThumbsUp, color: "text-teal-600", bgColor: "bg-teal-100 dark:bg-teal-900/30" },
+  con: { label: "부정", icon: ThumbsDown, color: "text-red-600", bgColor: "bg-red-100 dark:bg-red-900/30" },
   neutral: { label: "중립", icon: Minus, color: "text-gray-600", bgColor: "bg-gray-100 dark:bg-gray-800" },
+} as const;
+
+const SOURCE_CATEGORY_CONFIG = {
+  news: { label: "뉴스", icon: Newspaper, color: "text-blue-600", bgColor: "bg-blue-100 dark:bg-blue-900/30" },
+  community: { label: "커뮤니티", icon: Users, color: "text-orange-600", bgColor: "bg-orange-100 dark:bg-orange-900/30" },
+  blog: { label: "블로그", icon: FileText, color: "text-purple-600", bgColor: "bg-purple-100 dark:bg-purple-900/30" },
+  official: { label: "공식", icon: Shield, color: "text-green-600", bgColor: "bg-green-100 dark:bg-green-900/30" },
+  academic: { label: "학술", icon: GraduationCap, color: "text-indigo-600", bgColor: "bg-indigo-100 dark:bg-indigo-900/30" },
 } as const;
 
 const VERIFICATION_CONFIG = {
@@ -585,6 +599,9 @@ export default function SmartSearch() {
   const [deepLoading, setDeepLoading] = useState(false);
   const [deepError, setDeepError] = useState<string | null>(null);
   const [deepProgress, setDeepProgress] = useState(0);
+  const [showDeepHistory, setShowDeepHistory] = useState(false);
+  const [deepHistoryLoading, setDeepHistoryLoading] = useState(false);
+  const [deepHistoryJobs, setDeepHistoryJobs] = useState<DeepSearchJob[]>([]);
 
   // Get selected project object
   const selectedProject = useMemo(() => {
@@ -648,7 +665,7 @@ export default function SmartSearch() {
     };
 
     loadFromApi();
-  }, [searchParams, getTask, deepResults]);
+  }, [searchParams, getTask]); // Removed deepResults from deps to prevent re-fetching
 
   // Additional State
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
@@ -755,11 +772,18 @@ export default function SmartSearch() {
 
   // Sync SSE result to deepResults state (fallback if onComplete doesn't fire)
   useEffect(() => {
-    if (sseResult && !deepResults) {
-      console.log('[SmartSearch] Syncing sseResult to deepResults:', sseResult);
-      setDeepResults(sseResult);
-      setDeepLoading(false);
-      setDeepProgress(100);
+    if (sseResult) {
+      // Only sync if we don't have evidence yet or sseResult has more evidence
+      const hasNoEvidence = !deepResults || !deepResults.evidence || deepResults.evidence.length === 0;
+      const sseHasMoreEvidence = sseResult.evidence && 
+        (!deepResults?.evidence || sseResult.evidence.length > deepResults.evidence.length);
+      
+      if (hasNoEvidence || sseHasMoreEvidence) {
+        console.log('[SmartSearch] Syncing sseResult to deepResults:', sseResult);
+        setDeepResults(sseResult);
+        setDeepLoading(false);
+        setDeepProgress(100);
+      }
     }
   }, [sseResult, deepResults]);
 
@@ -1301,6 +1325,59 @@ export default function SmartSearch() {
       setDeepLoading(false);
     }
   }, [query]);
+
+  // Load Deep Search History
+  const loadDeepSearchHistory = useCallback(async () => {
+    setDeepHistoryLoading(true);
+    try {
+      const response = await listDeepSearchJobs(0, 20);
+      setDeepHistoryJobs(response.content || []);
+    } catch (e) {
+      console.error('Failed to load deep search history:', e);
+      toast({
+        title: "기록 로드 실패",
+        description: e instanceof Error ? e.message : "Deep Search 기록을 불러오는데 실패했습니다.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeepHistoryLoading(false);
+    }
+  }, [toast]);
+
+  // Load history when panel is opened
+  useEffect(() => {
+    if (showDeepHistory) {
+      loadDeepSearchHistory();
+    }
+  }, [showDeepHistory, loadDeepSearchHistory]);
+
+  // Load a previous deep search result
+  const loadDeepSearchFromHistory = useCallback(async (job: DeepSearchJob) => {
+    if (job.status !== 'COMPLETED') {
+      toast({
+        title: "불러올 수 없음",
+        description: "완료되지 않은 검색입니다.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setDeepLoading(true);
+    setDeepError(null);
+    setDeepJobId(job.jobId);
+    setQuery(job.topic);
+    setShowDeepHistory(false);
+
+    try {
+      const result = await getDeepSearchResult(job.jobId);
+      setDeepResults(result);
+      setDeepProgress(100);
+    } catch (e) {
+      setDeepError(e instanceof Error ? e.message : "결과를 불러오는데 실패했습니다.");
+    } finally {
+      setDeepLoading(false);
+    }
+  }, [toast]);
 
   // Fact Check - Now handled by embedded FactCheckChatbot component
   // Old functions removed: runFactCheck, addClaim, removeClaim, updateClaim
@@ -1857,15 +1934,28 @@ export default function SmartSearch() {
           </ScrollArea>
         </TabsContent>
 
-        {/* Deep Search Tab */}
+        {/* Deep Search Tab - 심층 보고서 */}
         <TabsContent value="deep" className="space-y-4">
+          {/* History toggle and info bar */}
           <Card className={`${MODE_CONFIG.deep.bgColor} border-none`}>
             <CardContent className="py-3">
               <div className="flex items-center gap-2 text-sm">
                 <Brain className={`h-4 w-4 ${MODE_CONFIG.deep.color}`} />
-                <span className="text-muted-foreground">AI가 심층적으로 증거를 수집하고 분석합니다.</span>
+                <span className="text-muted-foreground">AI가 주제에 대한 심층 분석 보고서를 생성합니다.</span>
+                
+                {/* History toggle button */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowDeepHistory(!showDeepHistory)}
+                  className="ml-auto gap-1"
+                >
+                  <History className="h-4 w-4" />
+                  기록
+                </Button>
+                
                 {deepLoading && (
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                     <Progress value={deepProgress} className="w-24 h-2" />
                     <span className="text-xs">{deepProgress}%</span>
                   </div>
@@ -1873,7 +1963,7 @@ export default function SmartSearch() {
                 
                 {/* Export buttons for Deep Search */}
                 {deepResults && !deepLoading && deepJobId && (
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                     <UnifiedExportMenu
                       jobId={deepJobId}
                       query={query || deepResults.topic}
@@ -1887,7 +1977,7 @@ export default function SmartSearch() {
                         source: e.source || 'web',
                         stance: e.stance,
                       }))}
-                      exportOptions={{ filename: `NewsInsight_DeepSearch_${query || deepResults.topic}`, title: query || deepResults.topic }}
+                      exportOptions={{ filename: `NewsInsight_심층보고서_${query || deepResults.topic}`, title: query || deepResults.topic }}
                       size="sm"
                       variant="outline"
                     />
@@ -1897,6 +1987,109 @@ export default function SmartSearch() {
             </CardContent>
           </Card>
 
+          {/* Deep Search History Panel */}
+          {showDeepHistory && (
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <History className="h-4 w-4" />
+                    Deep Search 기록
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={loadDeepSearchHistory}
+                      disabled={deepHistoryLoading}
+                    >
+                      <RefreshCw className={`h-4 w-4 ${deepHistoryLoading ? 'animate-spin' : ''}`} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowDeepHistory(false)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {deepHistoryLoading && deepHistoryJobs.length === 0 ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : deepHistoryJobs.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    아직 Deep Search 기록이 없습니다.
+                  </div>
+                ) : (
+                  <ScrollArea className="max-h-[300px]">
+                    <div className="space-y-2">
+                      {deepHistoryJobs.map((job) => {
+                        const statusConfig: Record<string, { label: string; color: string }> = {
+                          COMPLETED: { label: "완료", color: "bg-green-500" },
+                          IN_PROGRESS: { label: "진행 중", color: "bg-blue-500" },
+                          PENDING: { label: "대기", color: "bg-yellow-500" },
+                          FAILED: { label: "실패", color: "bg-red-500" },
+                          CANCELLED: { label: "취소", color: "bg-gray-500" },
+                          TIMEOUT: { label: "시간 초과", color: "bg-orange-500" },
+                        };
+                        const status = statusConfig[job.status] || { label: job.status, color: "bg-gray-500" };
+                        
+                        return (
+                          <div
+                            key={job.jobId}
+                            className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
+                              job.status === 'COMPLETED' ? 'hover:bg-muted/50 cursor-pointer' : 'opacity-60'
+                            }`}
+                            onClick={() => job.status === 'COMPLETED' && loadDeepSearchFromHistory(job)}
+                          >
+                            <div className="flex-1 min-w-0 mr-4">
+                              <div className="flex items-center gap-2 mb-1">
+                                <Badge className={`${status.color} text-white text-xs`}>
+                                  {status.label}
+                                </Badge>
+                                {job.evidenceCount !== undefined && job.evidenceCount > 0 && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {job.evidenceCount}개 증거
+                                  </Badge>
+                                )}
+                              </div>
+                              <h4 className="font-medium text-sm truncate">{job.topic}</h4>
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(job.createdAt).toLocaleString('ko-KR')}
+                                {job.completedAt && ` · 완료: ${new Date(job.completedAt).toLocaleTimeString('ko-KR')}`}
+                              </p>
+                              {job.errorMessage && (
+                                <p className="text-xs text-destructive mt-1 truncate">
+                                  {job.errorMessage}
+                                </p>
+                              )}
+                            </div>
+                            {job.status === 'COMPLETED' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  loadDeepSearchFromHistory(job);
+                                }}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {deepError && (
             <div className="p-4 rounded-lg bg-destructive/10 text-destructive flex items-center gap-2">
               <AlertCircle className="h-4 w-4" />
@@ -1904,96 +2097,199 @@ export default function SmartSearch() {
             </div>
           )}
 
-          {deepResults?.stanceDistribution && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">입장 분포</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {/* Note: Backend returns ratios as decimals (0.0-1.0), multiply by 100 for percentage */}
-                {(() => {
-                  const proPercent = deepResults.stanceDistribution.proRatio <= 1 
-                    ? deepResults.stanceDistribution.proRatio * 100 
-                    : deepResults.stanceDistribution.proRatio;
-                  const conPercent = deepResults.stanceDistribution.conRatio <= 1 
-                    ? deepResults.stanceDistribution.conRatio * 100 
-                    : deepResults.stanceDistribution.conRatio;
-                  const neutralPercent = deepResults.stanceDistribution.neutralRatio <= 1 
-                    ? deepResults.stanceDistribution.neutralRatio * 100 
-                    : deepResults.stanceDistribution.neutralRatio;
-                  
-                  return (
-                    <>
-                      <div className="flex gap-1 h-6 rounded overflow-hidden mb-2">
-                        {proPercent > 0 && (
-                          <div className="bg-teal-500 text-white text-xs flex items-center justify-center" style={{ width: `${proPercent}%` }}>
-                            {proPercent >= 15 && `${Math.round(proPercent)}%`}
-                          </div>
-                        )}
-                        {neutralPercent > 0 && (
-                          <div className="bg-gray-400 text-white text-xs flex items-center justify-center" style={{ width: `${neutralPercent}%` }}>
-                            {neutralPercent >= 15 && `${Math.round(neutralPercent)}%`}
-                          </div>
-                        )}
-                        {conPercent > 0 && (
-                          <div className="bg-red-500 text-white text-xs flex items-center justify-center" style={{ width: `${conPercent}%` }}>
-                            {conPercent >= 15 && `${Math.round(conPercent)}%`}
-                          </div>
-                        )}
+          {/* 심층 보고서 결과 */}
+          {deepResults && (
+            <ScrollArea className="h-[500px]">
+              <div className="space-y-4 pr-4">
+                {/* 핵심 요약 */}
+                <Card className="border-l-4 border-l-purple-500">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-5 w-5 text-purple-600" />
+                      <CardTitle className="text-lg">핵심 요약</CardTitle>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      <strong>'{deepResults.topic}'</strong>에 대해 {deepResults.evidence?.length || 0}개의 출처를 분석했습니다.
+                      {deepResults.evidence && deepResults.evidence.length > 0 && (
+                        <> 다양한 관점의 자료를 수집하여 주제에 대한 종합적인 이해를 제공합니다.</>
+                      )}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                {/* 분석 개요 */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Database className="h-4 w-4" />
+                      분석 개요
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div className="p-3 rounded-lg bg-muted/50">
+                        <p className="text-2xl font-bold text-primary">{deepResults.evidence?.length || 0}</p>
+                        <p className="text-xs text-muted-foreground">총 수집 자료</p>
                       </div>
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span className="text-teal-600">찬성 {deepResults.stanceDistribution.pro}</span>
-                        <span>중립 {deepResults.stanceDistribution.neutral}</span>
-                        <span className="text-red-600">반대 {deepResults.stanceDistribution.con}</span>
+                      <div className="p-3 rounded-lg bg-muted/50">
+                        <p className="text-2xl font-bold text-green-600">
+                          {new Set(deepResults.evidence?.map(e => e.source).filter(Boolean)).size || 0}
+                        </p>
+                        <p className="text-xs text-muted-foreground">참조 출처</p>
                       </div>
-                    </>
-                  );
-                })()}
-              </CardContent>
-            </Card>
+                      <div className="p-3 rounded-lg bg-muted/50">
+                        <p className="text-2xl font-bold text-blue-600">
+                          {deepResults.evidence?.filter(e => e.title).length || 0}
+                        </p>
+                        <p className="text-xs text-muted-foreground">기사/문서</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* 주요 발견사항 */}
+                {deepResults.evidence && deepResults.evidence.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        주요 발견사항
+                      </CardTitle>
+                      <CardDescription>수집된 자료에서 추출한 핵심 정보</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {deepResults.evidence.slice(0, 5).map((evidence, index) => (
+                        <div 
+                          key={evidence.id} 
+                          className="p-3 rounded-lg bg-muted/30 border-l-2 border-l-purple-400 hover:bg-muted/50 transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <span className="text-xs font-medium text-purple-600">#{index + 1}</span>
+                                {evidence.sourceCategory && SOURCE_CATEGORY_CONFIG[evidence.sourceCategory] && (
+                                  <Badge variant="secondary" className={`text-xs ${SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].color}`}>
+                                    {createElement(SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].icon, { className: "h-3 w-3 mr-1" })}
+                                    {SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].label}
+                                  </Badge>
+                                )}
+                                {evidence.source && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {evidence.source}
+                                  </Badge>
+                                )}
+                              </div>
+                              {evidence.title && (
+                                <h4 className="font-medium text-sm mb-1 line-clamp-1">{evidence.title}</h4>
+                              )}
+                              <p className="text-sm text-muted-foreground line-clamp-2">{evidence.snippet}</p>
+                            </div>
+                            <div className="flex gap-1">
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      onClick={() => {
+                                        setDetailItem({ type: "evidence", data: evidence });
+                                        setDetailDialogOpen(true);
+                                      }}
+                                      className="p-1.5 rounded hover:bg-muted"
+                                    >
+                                      <Eye className="h-4 w-4 text-muted-foreground" />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>상세 보기</TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                              {evidence.url && (
+                                <a
+                                  href={evidence.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1.5 rounded hover:bg-muted"
+                                >
+                                  <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {deepResults.evidence.length > 5 && (
+                        <p className="text-xs text-muted-foreground text-center pt-2">
+                          외 {deepResults.evidence.length - 5}개의 자료가 더 있습니다. PDF 보고서로 내보내기하여 전체 내용을 확인하세요.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* 출처 목록 */}
+                {deepResults.evidence && deepResults.evidence.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Globe className="h-4 w-4" />
+                        참조 출처
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {Array.from(new Set(deepResults.evidence.map(e => e.source).filter(Boolean))).slice(0, 8).map((source, index) => (
+                          <div key={index} className="flex items-center gap-2 text-sm">
+                            <CheckCircle2 className="h-3 w-3 text-green-500" />
+                            <span className="text-muted-foreground">{source}</span>
+                            <Badge variant="secondary" className="text-xs ml-auto">
+                              {deepResults.evidence?.filter(e => e.source === source).length}건
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* 결론 */}
+                <Card className="border-l-4 border-l-green-500">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      결론
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      '{deepResults.topic}'에 대한 심층 분석 결과, {deepResults.evidence?.length || 0}개의 관련 자료를 수집했습니다.
+                      {deepResults.evidence && deepResults.evidence.length > 0 ? (
+                        <> 수집된 자료들은 다양한 출처에서 제공되었으며, 주제에 대한 폭넓은 관점을 제공합니다. 
+                        보다 자세한 내용은 PDF 보고서로 내보내기하여 확인하실 수 있습니다.</>
+                      ) : (
+                        <> 추가적인 검색어나 다른 관점에서의 분석을 시도해보시기 바랍니다.</>
+                      )}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </ScrollArea>
           )}
 
-          <ScrollArea className="h-[400px]">
-            <div className="space-y-3 pr-4">
-              {deepResults?.evidence?.map((evidence) => (
-                <EvidenceCard
-                  key={evidence.id}
-                  evidence={evidence}
-                  isSelected={isSelected(`evidence_${evidence.id}`)}
-                  onSelect={() =>
-                    toggleSelection({
-                      id: `evidence_${evidence.id}`,
-                      type: "evidence",
-                      title: evidence.title || evidence.snippet.slice(0, 50),
-                      url: evidence.url,
-                      snippet: evidence.snippet,
-                      stance: STANCE_CONFIG[evidence.stance]?.label,
-                    })
-                  }
-                  onViewDetail={() => {
-                    setDetailItem({ type: "evidence", data: evidence });
-                    setDetailDialogOpen(true);
-                  }}
-                  hasProject={!!selectedProjectId}
-                  onAddToProject={() => handleAddEvidenceToProject(evidence)}
-                />
-              ))}
-              {!deepLoading && !deepJobId && !deepResults && !deepError && (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
-                  <p>검색어를 입력하고 Deep Search를 시작해보세요.</p>
-                  <p className="text-xs mt-1">AI가 심층 분석을 수행하며 2-5분 정도 소요됩니다.</p>
-                </div>
-              )}
-              {!deepLoading && deepResults && deepResults.evidence?.length === 0 && (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
-                  <p>검색 결과가 없습니다.</p>
-                  <p className="text-xs mt-1">다른 검색어로 다시 시도해보세요.</p>
-                </div>
-              )}
+          {/* 초기 상태 */}
+          {!deepLoading && !deepJobId && !deepResults && !deepError && (
+            <div className="text-center py-12 text-muted-foreground">
+              <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <p>검색어를 입력하고 심층 보고서를 생성해보세요.</p>
+              <p className="text-xs mt-1">AI가 주제에 대한 심층 분석을 수행하며 2-5분 정도 소요됩니다.</p>
             </div>
-          </ScrollArea>
+          )}
+          {!deepLoading && deepResults && deepResults.evidence?.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <p>분석 결과가 없습니다.</p>
+              <p className="text-xs mt-1">다른 검색어로 다시 시도해보세요.</p>
+            </div>
+          )}
         </TabsContent>
 
         {/* Fact Check Tab - Using Embedded Chatbot */}

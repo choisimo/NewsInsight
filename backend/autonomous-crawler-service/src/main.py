@@ -38,6 +38,7 @@ from src.config.consul import load_config_from_consul, wait_for_consul, CONSUL_E
 from src.crawler import AutonomousCrawlerAgent
 from src.kafka import BrowserTaskConsumer, CrawlResultProducer
 from src.kafka.messages import BrowserTaskMessage
+from src.api.sse import SSEEventType, SSEManager, get_sse_manager
 from src.metrics import (
     ARTICLES_EXTRACTED,
     BROWSER_SESSIONS_ACTIVE,
@@ -88,12 +89,13 @@ def configure_logging(settings: Settings) -> None:
 class CrawlerService:
     """Main service class orchestrating the crawler components."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, sse_manager: SSEManager | None = None) -> None:
         self.settings = settings
         self.logger = structlog.get_logger(__name__)
         self.consumer = BrowserTaskConsumer(settings)
         self.producer = CrawlResultProducer(settings)
         self.agent = AutonomousCrawlerAgent(settings)
+        self.sse_manager = sse_manager or get_sse_manager()
         self._shutdown_event = asyncio.Event()
 
     async def start(self) -> None:
@@ -145,6 +147,11 @@ class CrawlerService:
 
         start_time = time.time()
         policy = task.policy or "news_only"
+        source_name = (
+            task.metadata.get("source_name", f"Source-{task.source_id}")
+            if task.metadata
+            else f"Source-{task.source_id}"
+        )
 
         TASKS_RECEIVED.labels(policy=policy).inc()
         TASKS_IN_PROGRESS.inc()
@@ -159,21 +166,57 @@ class CrawlerService:
             policy=policy,
         )
 
+        # SSE: 수집 시작 이벤트
+        await self.sse_manager.send_collection_event(
+            SSEEventType.COLLECTION_START,
+            source_name=source_name,
+            message=f"수집 시작: {task.seed_url}",
+            level="INFO",
+            job_id=task.job_id,
+            source_id=task.source_id,
+            seed_url=task.seed_url,
+            policy=policy,
+        )
+
         status = "success"
         try:
             # Execute the crawl task
             results = await self.agent.execute_task(task)
 
             # Send results to Kafka
-            for result in results:
+            for i, result in enumerate(results):
                 await self.producer.send_result(result)
                 KAFKA_MESSAGES_PRODUCED.labels(topic=self.settings.kafka.crawl_result_topic).inc()
                 ARTICLES_EXTRACTED.labels(source_id=str(task.source_id)).inc()
+
+                # SSE: 수집 진행 이벤트 (매 5개 아티클마다)
+                if (i + 1) % 5 == 0 or i == len(results) - 1:
+                    await self.sse_manager.send_collection_event(
+                        SSEEventType.COLLECTION_PROGRESS,
+                        source_name=source_name,
+                        message=f"아티클 {i + 1}/{len(results)} 수집 완료",
+                        level="INFO",
+                        job_id=task.job_id,
+                        progress=i + 1,
+                        total=len(results),
+                    )
 
             self.logger.info(
                 "Task completed",
                 job_id=task.job_id,
                 articles_extracted=len(results),
+            )
+
+            # SSE: 수집 완료 이벤트
+            duration = time.time() - start_time
+            await self.sse_manager.send_collection_event(
+                SSEEventType.COLLECTION_COMPLETE,
+                source_name=source_name,
+                message=f"수집 완료: {len(results)}개 아티클 ({duration:.1f}초)",
+                level="INFO",
+                job_id=task.job_id,
+                articles_extracted=len(results),
+                duration_seconds=duration,
             )
 
         except Exception as e:
@@ -183,6 +226,16 @@ class CrawlerService:
                 job_id=task.job_id,
                 error=str(e),
                 exc_info=True,
+            )
+
+            # SSE: 수집 에러 이벤트
+            await self.sse_manager.send_collection_event(
+                SSEEventType.COLLECTION_ERROR,
+                source_name=source_name,
+                message=f"수집 실패: {str(e)[:100]}",
+                level="ERROR",
+                job_id=task.job_id,
+                error=str(e),
             )
 
         finally:

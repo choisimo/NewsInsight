@@ -36,6 +36,7 @@ class LlmProviderType(str, Enum):
     OPENROUTER = "OPENROUTER"
     OLLAMA = "OLLAMA"
     AZURE_OPENAI = "AZURE_OPENAI"
+    TOGETHER_AI = "TOGETHER_AI"
     CUSTOM = "CUSTOM"
 
 
@@ -92,36 +93,36 @@ class LlmTestResult(BaseModel):
     testedAt: datetime
 
 
-# Provider metadata
+# Provider metadata (2025년 12월 최신)
 LLM_PROVIDER_TYPES = [
     LlmProviderTypeInfo(
         value=LlmProviderType.OPENAI,
         displayName="OpenAI",
-        description="GPT-4, GPT-3.5 Turbo",
+        description="GPT-5, GPT-4.1, o3/o4 추론 모델",
         requiresApiKey=True,
     ),
     LlmProviderTypeInfo(
         value=LlmProviderType.ANTHROPIC,
         displayName="Anthropic",
-        description="Claude 3.5 Sonnet, Claude 3 Opus",
+        description="Claude 4 Sonnet/Opus/Haiku",
         requiresApiKey=True,
     ),
     LlmProviderTypeInfo(
         value=LlmProviderType.GOOGLE,
         displayName="Google AI",
-        description="Gemini 1.5 Pro, Gemini 1.5 Flash",
+        description="Gemini 3 Pro, Gemini 2.5 Pro/Flash",
         requiresApiKey=True,
     ),
     LlmProviderTypeInfo(
         value=LlmProviderType.OPENROUTER,
         displayName="OpenRouter",
-        description="다양한 모델을 통합 API로 제공",
+        description="125+ 모델 통합 API (무료 모델 포함)",
         requiresApiKey=True,
     ),
     LlmProviderTypeInfo(
         value=LlmProviderType.OLLAMA,
         displayName="Ollama",
-        description="로컬 LLM 실행",
+        description="로컬 LLM 실행 (Llama 3.2, DeepSeek R1)",
         requiresApiKey=False,
         defaultBaseUrl="http://localhost:11434",
     ),
@@ -130,6 +131,13 @@ LLM_PROVIDER_TYPES = [
         displayName="Azure OpenAI",
         description="Azure에서 호스팅하는 OpenAI 모델",
         requiresApiKey=True,
+    ),
+    LlmProviderTypeInfo(
+        value=LlmProviderType.TOGETHER_AI,
+        displayName="Together AI",
+        description="DeepSeek R1, Llama 405B 등 오픈소스 모델",
+        requiresApiKey=True,
+        defaultBaseUrl="https://api.together.xyz/v1",
     ),
     LlmProviderTypeInfo(
         value=LlmProviderType.CUSTOM,

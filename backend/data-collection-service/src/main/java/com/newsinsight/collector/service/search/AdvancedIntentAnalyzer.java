@@ -1,5 +1,6 @@
 package com.newsinsight.collector.service.search;
 
+import com.newsinsight.collector.client.AIDoveClient;
 import com.newsinsight.collector.service.search.HybridRankingService.QueryIntent;
 import com.newsinsight.collector.service.search.HybridRankingService.QueryIntent.IntentType;
 import lombok.Builder;
@@ -9,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -30,6 +32,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Slf4j
 public class AdvancedIntentAnalyzer {
+
+    private final AIDoveClient aiDoveClient;
+    
+    // LLM 분석 결과 캐시 (메모리 절약을 위해 최대 1000개, 5분 TTL 개념으로 관리)
+    private final Map<String, RealtimeAnalysisResult> realtimeAnalysisCache = new ConcurrentHashMap<>();
+    private static final int MAX_CACHE_SIZE = 1000;
 
     // ============================================
     // 상수 및 패턴 정의
@@ -146,6 +154,20 @@ public class AdvancedIntentAnalyzer {
         RELATED_TOPIC,
         PARTIAL_MATCH,
         SYNONYM_SEARCH
+    }
+
+    /**
+     * 실시간 데이터 필요성 분석 결과
+     */
+    @Data
+    @Builder
+    public static class RealtimeAnalysisResult {
+        private boolean needsRealtimeData;
+        private String dataType;          // price, statistics, news, event, weather 등
+        private String reason;            // 판단 이유
+        private double confidence;        // 0.0 ~ 1.0
+        private List<String> entities;    // 관련 엔티티 (비트코인, 삼성전자 등)
+        private long timestamp;           // 분석 시점
     }
 
     // ============================================
@@ -687,5 +709,392 @@ public class AdvancedIntentAnalyzer {
                 .fallbackStrategies(List.of())
                 .metadata(Map.of())
                 .build();
+    }
+
+    // ============================================
+    // 실시간 데이터 필요성 분석 (LLM + 휴리스틱 하이브리드)
+    // ============================================
+
+    /**
+     * 쿼리가 실시간 데이터를 필요로 하는지 분석합니다.
+     * 
+     * 키워드 매칭의 한계를 극복하기 위해:
+     * 1. 빠른 휴리스틱 체크 (키워드 기반)
+     * 2. 의미 기반 패턴 매칭
+     * 3. 필요시 LLM 분석 (새로운 개념, 알려지지 않은 엔티티)
+     * 
+     * @param query 분석할 쿼리
+     * @return 실시간 데이터 필요성 분석 결과
+     */
+    public RealtimeAnalysisResult analyzeRealtimeDataNeed(String query) {
+        if (query == null || query.isBlank()) {
+            return buildDefaultRealtimeResult(false, "empty_query");
+        }
+
+        String cacheKey = query.toLowerCase().trim();
+        
+        // 1. 캐시 확인
+        RealtimeAnalysisResult cached = realtimeAnalysisCache.get(cacheKey);
+        if (cached != null && System.currentTimeMillis() - cached.getTimestamp() < 300_000) { // 5분 TTL
+            log.debug("Realtime analysis cache hit for: {}", query);
+            return cached;
+        }
+
+        // 2. 빠른 휴리스틱 체크
+        RealtimeAnalysisResult heuristicResult = analyzeWithHeuristics(query);
+        if (heuristicResult.getConfidence() >= 0.8) {
+            cacheResult(cacheKey, heuristicResult);
+            return heuristicResult;
+        }
+
+        // 3. 의미 기반 패턴 분석
+        RealtimeAnalysisResult semanticResult = analyzeWithSemanticPatterns(query);
+        if (semanticResult.getConfidence() >= 0.7) {
+            cacheResult(cacheKey, semanticResult);
+            return semanticResult;
+        }
+
+        // 4. LLM 분석 (알 수 없는 엔티티나 새로운 개념의 경우)
+        if (aiDoveClient != null && aiDoveClient.isEnabled() && heuristicResult.getConfidence() < 0.5) {
+            try {
+                RealtimeAnalysisResult llmResult = analyzeWithLLM(query);
+                if (llmResult != null) {
+                    cacheResult(cacheKey, llmResult);
+                    return llmResult;
+                }
+            } catch (Exception e) {
+                log.warn("LLM analysis failed for realtime check: {}", e.getMessage());
+            }
+        }
+
+        // 5. 휴리스틱 + 의미 분석 결과 결합
+        RealtimeAnalysisResult combined = combineResults(heuristicResult, semanticResult);
+        cacheResult(cacheKey, combined);
+        return combined;
+    }
+
+    /**
+     * 휴리스틱 기반 빠른 분석
+     */
+    private RealtimeAnalysisResult analyzeWithHeuristics(String query) {
+        String lower = query.toLowerCase();
+        double confidence = 0.0;
+        String dataType = "unknown";
+        List<String> entities = new ArrayList<>();
+        StringBuilder reason = new StringBuilder();
+
+        // 시간 민감 키워드
+        Map<String, Double> timeKeywords = Map.ofEntries(
+                Map.entry("현재", 0.9), Map.entry("지금", 0.9), Map.entry("오늘", 0.85),
+                Map.entry("실시간", 0.95), Map.entry("최신", 0.8), Map.entry("방금", 0.9),
+                Map.entry("current", 0.9), Map.entry("now", 0.85), Map.entry("today", 0.8),
+                Map.entry("latest", 0.8), Map.entry("live", 0.9), Map.entry("real-time", 0.95)
+        );
+
+        // 가격/시세 키워드
+        Map<String, Double> priceKeywords = Map.ofEntries(
+                Map.entry("가격", 0.85), Map.entry("시세", 0.9), Map.entry("시가", 0.85),
+                Map.entry("종가", 0.85), Map.entry("환율", 0.9), Map.entry("얼마", 0.7),
+                Map.entry("price", 0.85), Map.entry("rate", 0.8), Map.entry("cost", 0.7),
+                Map.entry("worth", 0.75), Map.entry("value", 0.7)
+        );
+
+        // 금융 자산 키워드
+        Map<String, String> assetKeywords = Map.ofEntries(
+                // 암호화폐
+                Map.entry("비트코인", "crypto"), Map.entry("이더리움", "crypto"),
+                Map.entry("리플", "crypto"), Map.entry("도지코인", "crypto"),
+                Map.entry("bitcoin", "crypto"), Map.entry("btc", "crypto"),
+                Map.entry("ethereum", "crypto"), Map.entry("eth", "crypto"),
+                Map.entry("암호화폐", "crypto"), Map.entry("코인", "crypto"),
+                Map.entry("crypto", "crypto"), Map.entry("cryptocurrency", "crypto"),
+                // 주식
+                Map.entry("주가", "stock"), Map.entry("주식", "stock"),
+                Map.entry("코스피", "stock"), Map.entry("코스닥", "stock"),
+                Map.entry("나스닥", "stock"), Map.entry("다우", "stock"),
+                Map.entry("s&p", "stock"), Map.entry("stock", "stock"),
+                Map.entry("nasdaq", "stock"), Map.entry("dow", "stock"),
+                // 환율
+                Map.entry("달러", "forex"), Map.entry("엔화", "forex"),
+                Map.entry("유로", "forex"), Map.entry("원화", "forex"),
+                Map.entry("dollar", "forex"), Map.entry("yen", "forex"),
+                Map.entry("euro", "forex"), Map.entry("usd", "forex"),
+                Map.entry("krw", "forex"), Map.entry("jpy", "forex")
+        );
+
+        // 통계/지표 키워드
+        Map<String, Double> statsKeywords = Map.ofEntries(
+                Map.entry("통계", 0.7), Map.entry("지표", 0.75), Map.entry("수치", 0.7),
+                Map.entry("데이터", 0.6), Map.entry("지수", 0.75), Map.entry("률", 0.7),
+                Map.entry("statistics", 0.7), Map.entry("index", 0.75), Map.entry("rate", 0.7)
+        );
+
+        // 시간 키워드 체크
+        for (Map.Entry<String, Double> entry : timeKeywords.entrySet()) {
+            if (lower.contains(entry.getKey())) {
+                confidence = Math.max(confidence, entry.getValue());
+                reason.append("time_keyword:").append(entry.getKey()).append(" ");
+            }
+        }
+
+        // 가격 키워드 체크
+        for (Map.Entry<String, Double> entry : priceKeywords.entrySet()) {
+            if (lower.contains(entry.getKey())) {
+                confidence = Math.max(confidence, entry.getValue());
+                dataType = "price";
+                reason.append("price_keyword:").append(entry.getKey()).append(" ");
+            }
+        }
+
+        // 자산 키워드 체크
+        for (Map.Entry<String, String> entry : assetKeywords.entrySet()) {
+            if (lower.contains(entry.getKey())) {
+                confidence = Math.max(confidence, 0.8);
+                dataType = entry.getValue();
+                entities.add(entry.getKey());
+                reason.append("asset:").append(entry.getKey()).append(" ");
+            }
+        }
+
+        // 통계 키워드 체크
+        for (Map.Entry<String, Double> entry : statsKeywords.entrySet()) {
+            if (lower.contains(entry.getKey())) {
+                confidence = Math.max(confidence, entry.getValue());
+                if ("unknown".equals(dataType)) dataType = "statistics";
+                reason.append("stats:").append(entry.getKey()).append(" ");
+            }
+        }
+
+        return RealtimeAnalysisResult.builder()
+                .needsRealtimeData(confidence >= 0.6)
+                .dataType(dataType)
+                .reason(reason.toString().trim())
+                .confidence(confidence)
+                .entities(entities)
+                .timestamp(System.currentTimeMillis())
+                .build();
+    }
+
+    /**
+     * 의미 기반 패턴 분석
+     * 키워드가 없어도 문맥에서 실시간 데이터 필요성 감지
+     */
+    private RealtimeAnalysisResult analyzeWithSemanticPatterns(String query) {
+        String lower = query.toLowerCase();
+        double confidence = 0.0;
+        String dataType = "unknown";
+        List<String> entities = new ArrayList<>();
+        StringBuilder reason = new StringBuilder();
+
+        // 패턴 1: "X가 얼마야?", "X 몇이야?" 등의 가격 질문 패턴
+        Pattern priceQuestionPattern = Pattern.compile(
+                "(.+?)(?:가|이|은|는)?\\s*(?:얼마|몇|어느정도|어느 정도|how much|what.*price)"
+        );
+        Matcher priceMatch = priceQuestionPattern.matcher(lower);
+        if (priceMatch.find()) {
+            confidence = Math.max(confidence, 0.75);
+            dataType = "price";
+            entities.add(priceMatch.group(1).trim());
+            reason.append("price_question_pattern ");
+        }
+
+        // 패턴 2: "X 전망", "X 예측" 등 미래 관련 패턴 (현재 데이터 필요)
+        Pattern forecastPattern = Pattern.compile(
+                "(.+?)\\s*(?:전망|예측|예상|향후|미래|forecast|prediction|outlook)"
+        );
+        Matcher forecastMatch = forecastPattern.matcher(lower);
+        if (forecastMatch.find()) {
+            confidence = Math.max(confidence, 0.7);
+            if ("unknown".equals(dataType)) dataType = "forecast";
+            entities.add(forecastMatch.group(1).trim());
+            reason.append("forecast_pattern ");
+        }
+
+        // 패턴 3: 숫자 + 단위 질문 (현재 값 확인)
+        Pattern numericQuestionPattern = Pattern.compile(
+                "(.+?)\\s*(?:달러|원|엔|유로|\\$|₩|¥|€|%|퍼센트).*(?:인가요?|일까요?|입니까|야\\??|인지)"
+        );
+        Matcher numericMatch = numericQuestionPattern.matcher(lower);
+        if (numericMatch.find()) {
+            confidence = Math.max(confidence, 0.8);
+            dataType = "price";
+            reason.append("numeric_question_pattern ");
+        }
+
+        // 패턴 4: 비교 질문 (두 시점 비교 = 현재 데이터 필요)
+        Pattern comparisonPattern = Pattern.compile(
+                "(?:어제|지난주|지난달|작년|전|ago).*(?:비교|대비|vs|versus|compared)"
+        );
+        if (comparisonPattern.matcher(lower).find()) {
+            confidence = Math.max(confidence, 0.7);
+            if ("unknown".equals(dataType)) dataType = "comparison";
+            reason.append("comparison_pattern ");
+        }
+
+        // 패턴 5: 급등/급락, 상승/하락 등 시장 동향
+        Pattern marketTrendPattern = Pattern.compile(
+                "(?:급등|급락|폭등|폭락|상승|하락|오르|내리|surge|crash|rise|fall|up|down)"
+        );
+        if (marketTrendPattern.matcher(lower).find()) {
+            confidence = Math.max(confidence, 0.75);
+            if ("unknown".equals(dataType)) dataType = "market_trend";
+            reason.append("market_trend_pattern ");
+        }
+
+        return RealtimeAnalysisResult.builder()
+                .needsRealtimeData(confidence >= 0.6)
+                .dataType(dataType)
+                .reason(reason.toString().trim())
+                .confidence(confidence)
+                .entities(entities)
+                .timestamp(System.currentTimeMillis())
+                .build();
+    }
+
+    /**
+     * LLM 기반 의미 분석 (새로운 개념이나 알려지지 않은 엔티티용)
+     */
+    private RealtimeAnalysisResult analyzeWithLLM(String query) {
+        String prompt = """
+                다음 질문이 실시간/최신 데이터를 필요로 하는지 분석해주세요.
+                
+                질문: "%s"
+                
+                다음 JSON 형식으로만 응답하세요 (다른 텍스트 없이):
+                {
+                    "needs_realtime": true/false,
+                    "data_type": "price|statistics|news|event|weather|sports|unknown",
+                    "reason": "판단 이유 (한 문장)",
+                    "confidence": 0.0~1.0,
+                    "entities": ["관련 엔티티1", "엔티티2"]
+                }
+                
+                실시간 데이터가 필요한 경우:
+                - 현재 가격, 시세, 환율 등 시간에 따라 변하는 수치
+                - 오늘/현재/지금의 상태를 묻는 질문
+                - 실시간 뉴스, 속보, 이벤트
+                - 날씨, 스포츠 경기 결과 등 시시각각 변하는 정보
+                - 새로운 암호화폐, 주식, 자산의 현재 가치
+                """.formatted(query);
+
+        try {
+            String response = aiDoveClient.chat(prompt, null)
+                    .map(r -> r.reply())
+                    .block(java.time.Duration.ofSeconds(10));
+
+            if (response != null && response.contains("{")) {
+                // JSON 파싱
+                int start = response.indexOf("{");
+                int end = response.lastIndexOf("}") + 1;
+                String json = response.substring(start, end);
+                
+                // 간단한 파싱 (ObjectMapper 없이)
+                boolean needsRealtime = json.contains("\"needs_realtime\": true") || 
+                                        json.contains("\"needs_realtime\":true");
+                
+                String dataType = extractJsonValue(json, "data_type");
+                String reason = extractJsonValue(json, "reason");
+                double confidence = parseConfidence(extractJsonValue(json, "confidence"));
+                List<String> entities = parseEntities(json);
+
+                return RealtimeAnalysisResult.builder()
+                        .needsRealtimeData(needsRealtime)
+                        .dataType(dataType != null ? dataType : "unknown")
+                        .reason("LLM: " + (reason != null ? reason : "analyzed"))
+                        .confidence(confidence)
+                        .entities(entities)
+                        .timestamp(System.currentTimeMillis())
+                        .build();
+            }
+        } catch (Exception e) {
+            log.debug("LLM realtime analysis failed: {}", e.getMessage());
+        }
+
+        return null;
+    }
+
+    private String extractJsonValue(String json, String key) {
+        Pattern pattern = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]+)\"");
+        Matcher matcher = pattern.matcher(json);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return null;
+    }
+
+    private double parseConfidence(String value) {
+        if (value == null) return 0.5;
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            return 0.5;
+        }
+    }
+
+    private List<String> parseEntities(String json) {
+        List<String> entities = new ArrayList<>();
+        Pattern pattern = Pattern.compile("\"entities\"\\s*:\\s*\\[([^\\]]+)\\]");
+        Matcher matcher = pattern.matcher(json);
+        if (matcher.find()) {
+            String entitiesStr = matcher.group(1);
+            Pattern entityPattern = Pattern.compile("\"([^\"]+)\"");
+            Matcher entityMatcher = entityPattern.matcher(entitiesStr);
+            while (entityMatcher.find()) {
+                entities.add(entityMatcher.group(1));
+            }
+        }
+        return entities;
+    }
+
+    private RealtimeAnalysisResult combineResults(
+            RealtimeAnalysisResult heuristic, 
+            RealtimeAnalysisResult semantic) {
+        
+        double combinedConfidence = Math.max(heuristic.getConfidence(), semantic.getConfidence());
+        boolean needsRealtime = combinedConfidence >= 0.6;
+        
+        String dataType = !"unknown".equals(heuristic.getDataType()) 
+                ? heuristic.getDataType() 
+                : semantic.getDataType();
+        
+        List<String> allEntities = new ArrayList<>(heuristic.getEntities());
+        for (String entity : semantic.getEntities()) {
+            if (!allEntities.contains(entity)) {
+                allEntities.add(entity);
+            }
+        }
+        
+        String reason = (heuristic.getReason() + " " + semantic.getReason()).trim();
+
+        return RealtimeAnalysisResult.builder()
+                .needsRealtimeData(needsRealtime)
+                .dataType(dataType)
+                .reason(reason)
+                .confidence(combinedConfidence)
+                .entities(allEntities)
+                .timestamp(System.currentTimeMillis())
+                .build();
+    }
+
+    private RealtimeAnalysisResult buildDefaultRealtimeResult(boolean needsRealtime, String reason) {
+        return RealtimeAnalysisResult.builder()
+                .needsRealtimeData(needsRealtime)
+                .dataType("unknown")
+                .reason(reason)
+                .confidence(needsRealtime ? 0.5 : 0.0)
+                .entities(List.of())
+                .timestamp(System.currentTimeMillis())
+                .build();
+    }
+
+    private void cacheResult(String key, RealtimeAnalysisResult result) {
+        // 캐시 크기 제한
+        if (realtimeAnalysisCache.size() >= MAX_CACHE_SIZE) {
+            // 가장 오래된 항목 제거 (간단한 구현)
+            realtimeAnalysisCache.entrySet().stream()
+                    .min(Comparator.comparingLong(e -> e.getValue().getTimestamp()))
+                    .ifPresent(oldest -> realtimeAnalysisCache.remove(oldest.getKey()));
+        }
+        realtimeAnalysisCache.put(key, result);
     }
 }

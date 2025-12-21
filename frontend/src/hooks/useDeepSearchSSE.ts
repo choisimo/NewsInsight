@@ -2,6 +2,21 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { useBackgroundTasks } from '@/contexts/BackgroundTaskContext';
 import type { DeepSearchJob, DeepSearchResult, Evidence } from '@/lib/api';
 
+// Storage key for access token (matches AuthContext)
+const ACCESS_TOKEN_KEY = 'access_token';
+
+/**
+ * Append authentication token to URL for SSE connections.
+ * EventSource doesn't support custom headers, so we use query parameter.
+ */
+function appendTokenToUrl(url: string): string {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token) return url;
+  
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 // ============================================
 // Types
 // ============================================
@@ -203,8 +218,10 @@ export function useDeepSearchSSE(options: UseDeepSearchSSEOptions): UseDeepSearc
     const baseUrl = resolveBaseUrl();
     const url = `${baseUrl}/api/v1/analysis/deep/${jobId}/stream`;
     
-    console.log('[DeepSearchSSE] Connecting to:', url);
-    const eventSource = new EventSource(url);
+    // Append auth token to URL for SSE authentication
+    const authenticatedUrl = appendTokenToUrl(url);
+    console.log('[DeepSearchSSE] Connecting to:', authenticatedUrl.replace(/token=[^&]+/, 'token=***'));
+    const eventSource = new EventSource(authenticatedUrl);
     eventSourceRef.current = eventSource;
 
     // Helper function to handle SSE event data

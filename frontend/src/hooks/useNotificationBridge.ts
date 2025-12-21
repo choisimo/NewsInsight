@@ -2,6 +2,21 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useNotifications, NotificationType } from '@/contexts/NotificationContext';
 import { DashboardEvent, DashboardEventType } from './useDashboardEvents';
 
+// Storage key for access token (matches AuthContext)
+const ACCESS_TOKEN_KEY = 'access_token';
+
+/**
+ * Append authentication token to URL for SSE connections.
+ * EventSource doesn't support custom headers, so we use query parameter.
+ */
+function appendTokenToUrl(url: string): string {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token) return url;
+  
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 /**
  * SSE 이벤트 타입을 NotificationType으로 매핑
  */
@@ -154,7 +169,9 @@ export function useAutoNotifications(options: {
   useEffect(() => {
     if (!enabled) return;
 
-    const eventSource = new EventSource('/api/v1/events/stream');
+    // Append auth token to URL for SSE authentication
+    const authenticatedUrl = appendTokenToUrl('/api/v1/events/stream');
+    const eventSource = new EventSource(authenticatedUrl);
     
     const handleMessage = (event: MessageEvent) => {
       try {
@@ -172,6 +189,101 @@ export function useAutoNotifications(options: {
       eventSource.close();
     };
   }, [enabled, handleDashboardEvent]);
+}
+
+/**
+ * 프로젝트 알림을 백엔드에서 가져와서 NotificationContext와 연동하는 훅
+ * 
+ * @example
+ * ```tsx
+ * // AppLayout.tsx에서
+ * function AppLayout() {
+ *   const { user } = useAuth();
+ *   useProjectNotifications({ userId: user?.id, enabled: !!user });
+ *   return <Outlet />;
+ * }
+ * ```
+ */
+export function useProjectNotifications(options: {
+  userId?: string;
+  enabled?: boolean;
+  pollInterval?: number; // ms, default 60000 (1분)
+} = {}) {
+  const { userId, enabled = true, pollInterval = 60000 } = options;
+  const { addNotification } = useNotifications();
+  const loadedNotificationIds = useRef<Set<number>>(new Set());
+
+  const loadProjectNotifications = useCallback(async () => {
+    if (!userId) return;
+
+    try {
+      // 동적 import로 순환 의존성 방지
+      const { getUnreadProjectNotifications, markProjectNotificationAsRead } = await import('@/lib/api');
+      
+      const unreadNotifications = await getUnreadProjectNotifications(userId);
+      
+      for (const notification of unreadNotifications) {
+        // 이미 로드된 알림은 건너뛰기
+        if (loadedNotificationIds.current.has(notification.id)) {
+          continue;
+        }
+        
+        loadedNotificationIds.current.add(notification.id);
+        
+        // NotificationContext에 추가
+        addNotification({
+          type: mapProjectNotificationType(notification.notificationType),
+          title: notification.title,
+          message: notification.message,
+          actionUrl: notification.actionUrl,
+          actionLabel: '상세 보기',
+          persistent: true,
+        });
+        
+        // 백엔드에서도 읽음 처리
+        try {
+          await markProjectNotificationAsRead(notification.id);
+        } catch (e) {
+          console.error('Failed to mark notification as read:', e);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load project notifications:', error);
+    }
+  }, [userId, addNotification]);
+
+  useEffect(() => {
+    if (!enabled || !userId) return;
+
+    // 초기 로드
+    loadProjectNotifications();
+
+    // 주기적 폴링
+    const interval = setInterval(loadProjectNotifications, pollInterval);
+    
+    return () => clearInterval(interval);
+  }, [enabled, userId, loadProjectNotifications, pollInterval]);
+}
+
+/**
+ * 프로젝트 알림 타입을 NotificationType으로 매핑
+ */
+function mapProjectNotificationType(notificationType: string): NotificationType {
+  const typeMap: Record<string, NotificationType> = {
+    'PROJECT_CREATED': 'success',
+    'PROJECT_UPDATED': 'info',
+    'PROJECT_DELETED': 'warning',
+    'MEMBER_ADDED': 'info',
+    'MEMBER_REMOVED': 'warning',
+    'ITEM_ADDED': 'success',
+    'ITEM_REMOVED': 'info',
+    'SEARCH_COMPLETED': 'success',
+    'REPORT_READY': 'success',
+    'ANALYSIS_COMPLETED': 'success',
+    'ERROR': 'error',
+  };
+  
+  return typeMap[notificationType] || 'info';
 }
 
 export default useNotificationBridge;

@@ -2,7 +2,11 @@ package com.newsinsight.collector.service.report;
 
 import com.newsinsight.collector.dto.report.ReportMetadata;
 import com.newsinsight.collector.dto.report.ReportRequest;
+import com.newsinsight.collector.entity.CrawlEvidence;
+import com.newsinsight.collector.entity.CrawlJob;
 import com.newsinsight.collector.entity.search.SearchHistory;
+import com.newsinsight.collector.repository.CrawlEvidenceRepository;
+import com.newsinsight.collector.repository.CrawlJobRepository;
 import com.newsinsight.collector.repository.SearchHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +31,8 @@ public class ReportGenerationService {
 
     private final PdfExportService pdfExportService;
     private final SearchHistoryRepository searchHistoryRepository;
+    private final CrawlJobRepository crawlJobRepository;
+    private final CrawlEvidenceRepository crawlEvidenceRepository;
     
     // 생성된 보고서 캐시 (실제 운영에서는 Redis나 파일 시스템 사용)
     private final Map<String, byte[]> reportCache = new ConcurrentHashMap<>();
@@ -145,7 +151,12 @@ public class ReportGenerationService {
      * 동기 보고서 생성 (즉시 다운로드용)
      */
     public byte[] generateReportSync(String jobId, ReportRequest request) throws IOException {
-        // 검색 이력 조회
+        // Deep Search 보고서인 경우 별도 처리
+        if (request.getReportType() == ReportRequest.ReportType.DEEP_SEARCH) {
+            return generateDeepSearchReportSync(jobId, request);
+        }
+        
+        // 검색 이력 조회 (통합 검색)
         List<SearchHistory> histories = searchHistoryRepository.findByExternalIdContaining(jobId);
         
         if (histories.isEmpty()) {
@@ -165,6 +176,85 @@ public class ReportGenerationService {
         return pdfExportService.generateUnifiedSearchReport(
                 title,
                 request.getQuery(),
+                request.getTimeWindow(),
+                summaryData,
+                results,
+                request.getChartImages(),
+                request.getIncludeSections()
+        );
+    }
+
+    /**
+     * Deep Search 보고서 동기 생성
+     */
+    private byte[] generateDeepSearchReportSync(String jobId, ReportRequest request) throws IOException {
+        // CrawlJob 조회
+        CrawlJob job = crawlJobRepository.findById(jobId)
+                .orElseThrow(() -> new IllegalArgumentException("Deep Search job not found: " + jobId));
+        
+        // CrawlEvidence 조회
+        List<CrawlEvidence> evidenceList = crawlEvidenceRepository.findByJobId(jobId);
+        
+        // 증거를 결과 형식으로 변환
+        List<Map<String, Object>> results = new ArrayList<>();
+        for (CrawlEvidence evidence : evidenceList) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("id", evidence.getId());
+            result.put("title", evidence.getTitle());
+            result.put("url", evidence.getUrl());
+            result.put("snippet", evidence.getSnippet());
+            result.put("content", evidence.getSnippet());
+            result.put("source", evidence.getSource());
+            result.put("stance", evidence.getStance() != null ? evidence.getStance().name().toLowerCase() : "neutral");
+            results.add(result);
+        }
+        
+        // 입장별 분포 계산
+        long proCount = evidenceList.stream().filter(e -> e.getStance() != null && "PRO".equals(e.getStance().name())).count();
+        long conCount = evidenceList.stream().filter(e -> e.getStance() != null && "CON".equals(e.getStance().name())).count();
+        long neutralCount = evidenceList.stream().filter(e -> e.getStance() == null || "NEUTRAL".equals(e.getStance().name())).count();
+        long total = Math.max(evidenceList.size(), 1);
+        
+        // 요약 데이터 생성
+        Map<String, Object> summaryData = new HashMap<>();
+        summaryData.put("totalResults", evidenceList.size());
+        summaryData.put("dbResults", 0);
+        summaryData.put("webResults", evidenceList.size());
+        summaryData.put("aiResults", 0);
+        summaryData.put("topic", job.getTopic());
+        
+        // 입장 분포
+        Map<String, Object> stanceDistribution = new HashMap<>();
+        stanceDistribution.put("pro", proCount);
+        stanceDistribution.put("con", conCount);
+        stanceDistribution.put("neutral", neutralCount);
+        stanceDistribution.put("proRatio", proCount / (double) total);
+        stanceDistribution.put("conRatio", conCount / (double) total);
+        stanceDistribution.put("neutralRatio", neutralCount / (double) total);
+        summaryData.put("stanceDistribution", stanceDistribution);
+        
+        // AI 요약 생성
+        String aiSummary = String.format(
+                "Deep Search 분석 결과: '%s' 주제에 대해 %d개의 증거를 수집했습니다. " +
+                "찬성 %d개 (%.0f%%), 반대 %d개 (%.0f%%), 중립 %d개 (%.0f%%)의 입장 분포를 보입니다.",
+                job.getTopic(), evidenceList.size(),
+                proCount, (proCount * 100.0 / total),
+                conCount, (conCount * 100.0 / total),
+                neutralCount, (neutralCount * 100.0 / total)
+        );
+        summaryData.put("aiSummary", aiSummary);
+        
+        // 보고서 제목 생성
+        String title = request.getCustomTitle() != null 
+                ? request.getCustomTitle()
+                : "'" + job.getTopic() + "' Deep Search 분석 보고서";
+        
+        String query = request.getQuery() != null ? request.getQuery() : job.getTopic();
+        
+        // PDF 생성 및 반환
+        return pdfExportService.generateUnifiedSearchReport(
+                title,
+                query,
                 request.getTimeWindow(),
                 summaryData,
                 results,

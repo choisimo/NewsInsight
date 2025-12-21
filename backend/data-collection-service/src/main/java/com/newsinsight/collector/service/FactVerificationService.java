@@ -709,18 +709,32 @@ public class FactVerificationService {
 
     /**
      * 모든 등록된 팩트체크 소스에서 병렬로 근거를 수집합니다.
+     * 실시간 데이터가 필요한 쿼리의 경우 RealtimeSearchSource를 우선 처리합니다.
      */
     private List<SourceEvidence> fetchAllSourceEvidence(String topic, String language) {
         List<SourceEvidence> allEvidence = new CopyOnWriteArrayList<>();
+        
+        // 0. 실시간 검색이 필요한지 판단하고 우선 처리
+        boolean needsRealtime = isRealtimeDataRequired(topic);
+        if (needsRealtime) {
+            log.info("Topic '{}' requires realtime data, prioritizing realtime search", topic);
+            List<SourceEvidence> realtimeEvidence = fetchRealtimeEvidence(topic, language);
+            if (!realtimeEvidence.isEmpty()) {
+                // 실시간 데이터를 가장 앞에 배치 (우선순위 높음)
+                allEvidence.addAll(realtimeEvidence);
+                log.info("Fetched {} realtime evidence items", realtimeEvidence.size());
+            }
+        }
         
         // 1. 기본 Wikipedia 정보 수집 (기존 로직 유지)
         List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(topic);
         allEvidence.addAll(wikiEvidence);
         
-        // 2. 추가 팩트체크 소스에서 병렬 수집
+        // 2. 추가 팩트체크 소스에서 병렬 수집 (실시간 소스 제외 - 이미 처리됨)
         if (factCheckSources != null && !factCheckSources.isEmpty()) {
             List<Mono<List<SourceEvidence>>> sourceFetches = factCheckSources.stream()
                     .filter(FactCheckSource::isAvailable)
+                    .filter(source -> !needsRealtime || !"realtime_search".equals(source.getSourceId()))
                     .map(source -> {
                         log.debug("Fetching evidence from source: {}", source.getSourceId());
                         return source.fetchEvidence(topic, language)
@@ -756,6 +770,59 @@ public class FactVerificationService {
         
         log.info("Collected total {} evidence items for topic: {}", allEvidence.size(), topic);
         return new ArrayList<>(allEvidence);
+    }
+    
+    /**
+     * 실시간 데이터가 필요한 주제인지 판단
+     * 
+     * 기존 키워드 매칭의 한계를 극복하기 위해 AdvancedIntentAnalyzer의
+     * 의미 기반 분석을 사용합니다. (LLM + 휴리스틱 + 의미 패턴)
+     * 
+     * 이를 통해:
+     * - 새로운 암호화폐/자산 이름도 감지
+     * - "X가 얼마야?" 같은 패턴 인식
+     * - 문맥에서 시간 민감성 추론
+     */
+    private boolean isRealtimeDataRequired(String topic) {
+        if (topic == null) return false;
+        
+        // AdvancedIntentAnalyzer의 의미 기반 분석 사용
+        var realtimeAnalysis = advancedIntentAnalyzer.analyzeRealtimeDataNeed(topic);
+        
+        if (realtimeAnalysis.isNeedsRealtimeData()) {
+            log.info("Realtime data required for '{}': type={}, confidence={}, reason={}",
+                    topic, 
+                    realtimeAnalysis.getDataType(),
+                    String.format("%.2f", realtimeAnalysis.getConfidence()),
+                    realtimeAnalysis.getReason());
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * 실시간 검색 소스에서 증거 수집
+     */
+    private List<SourceEvidence> fetchRealtimeEvidence(String topic, String language) {
+        if (factCheckSources == null) return List.of();
+        
+        return factCheckSources.stream()
+                .filter(source -> "realtime_search".equals(source.getSourceId()))
+                .filter(FactCheckSource::isAvailable)
+                .findFirst()
+                .map(source -> {
+                    try {
+                        return source.fetchEvidence(topic, language)
+                                .collectList()
+                                .timeout(Duration.ofSeconds(timeoutSeconds))
+                                .block();
+                    } catch (Exception e) {
+                        log.warn("Failed to fetch realtime evidence: {}", e.getMessage());
+                        return List.<SourceEvidence>of();
+                    }
+                })
+                .orElse(List.of());
     }
 
     private List<SourceEvidence> fetchWikipediaInfo(String topic) {
@@ -1066,11 +1133,35 @@ public class FactVerificationService {
             }
         } else {
             // 충분한 증거가 있는 경우
-            prompt.append("## 수집된 정보 (").append(evidenceCount).append("개):\n");
+            prompt.append("## 수집된 정보 (").append(evidenceCount).append("개):\n\n");
+            
+            // 실시간 검색 결과를 먼저 표시 (우선순위 높음)
+            boolean hasRealtimeData = false;
             for (SourceEvidence e : evidence) {
-                String url = (e.getUrl() != null && !e.getUrl().isBlank()) ? " - " + e.getUrl() : "";
-                prompt.append("- [").append(e.getSourceName()).append("]").append(url).append("\n");
-                prompt.append("  내용: ").append(truncateContent(e.getExcerpt(), 500)).append("\n\n");
+                if ("realtime_search".equals(e.getSourceType()) || 
+                    "realtime_search_citation".equals(e.getSourceType())) {
+                    if (!hasRealtimeData) {
+                        prompt.append("### 🔴 실시간 검색 결과 (최신 데이터 - 우선 참고)\n");
+                        hasRealtimeData = true;
+                    }
+                    String url = (e.getUrl() != null && !e.getUrl().isBlank()) ? " - " + e.getUrl() : "";
+                    prompt.append("- [").append(e.getSourceName()).append("]").append(url).append("\n");
+                    prompt.append("  내용: ").append(truncateContent(e.getExcerpt(), 600)).append("\n\n");
+                }
+            }
+            if (hasRealtimeData) {
+                prompt.append("⚠️ **위 실시간 검색 결과의 가격/시세 데이터를 최우선으로 사용하세요.**\n\n");
+            }
+            
+            // 나머지 증거 표시
+            prompt.append("### 참고 자료\n");
+            for (SourceEvidence e : evidence) {
+                if (!"realtime_search".equals(e.getSourceType()) && 
+                    !"realtime_search_citation".equals(e.getSourceType())) {
+                    String url = (e.getUrl() != null && !e.getUrl().isBlank()) ? " - " + e.getUrl() : "";
+                    prompt.append("- [").append(e.getSourceName()).append("]").append(url).append("\n");
+                    prompt.append("  내용: ").append(truncateContent(e.getExcerpt(), 500)).append("\n\n");
+                }
             }
         }
 

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import structlog
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, HttpUrl
@@ -997,6 +997,37 @@ def register_routes(app: FastAPI):
                     )
                     if resp.status_code == 200:
                         data = resp.json()
+                        all_models = data.get("data", [])
+
+                        # 주요 모델 제공자 우선순위
+                        priority_providers = [
+                            "openai",
+                            "anthropic",
+                            "google",
+                            "meta-llama",
+                            "mistralai",
+                            "deepseek",
+                            "qwen",
+                            "cohere",
+                        ]
+
+                        def get_provider_priority(model_id: str) -> int:
+                            for i, provider in enumerate(priority_providers):
+                                if model_id.startswith(provider):
+                                    return i
+                            return len(priority_providers)
+
+                        # 인기 모델 정렬 (제공자 우선순위 → 이름순)
+                        sorted_models = sorted(
+                            all_models,
+                            key=lambda m: (
+                                get_provider_priority(m["id"]),
+                                # 무료 모델은 후순위
+                                0 if m.get("pricing", {}).get("prompt", "0") != "0" else 1,
+                                m["id"],
+                            ),
+                        )
+
                         models = [
                             {
                                 "id": m["id"],
@@ -1004,13 +1035,13 @@ def register_routes(app: FastAPI):
                                 "context_length": m.get("context_length"),
                                 "pricing": m.get("pricing"),
                             }
-                            for m in data.get("data", [])[:50]  # 상위 50개
+                            for m in sorted_models[:100]  # 상위 100개
                         ]
                         return {
                             "provider": provider.value,
                             "models": models,
                             "source": "api",
-                            "total": len(data.get("data", [])),
+                            "total": len(all_models),
                         }
                     else:
                         return {
@@ -1066,13 +1097,66 @@ def register_routes(app: FastAPI):
                     }
 
                 elif provider == LLMProvider.GOOGLE:
-                    # Google AI도 정적 목록 사용
-                    return {
-                        "provider": provider.value,
-                        "models": _get_static_models("google"),
-                        "source": "static",
-                        "message": "Google AI는 정적 모델 목록 사용",
-                    }
+                    # Google AI - Generative Language API로 모델 목록 조회
+                    key = api_key or os.getenv("GOOGLE_API_KEY", "")
+                    if not key:
+                        return {
+                            "provider": provider.value,
+                            "models": _get_static_models("google"),
+                            "source": "static",
+                            "message": "API 키가 없어 정적 목록 반환",
+                        }
+
+                    try:
+                        resp = await client.get(
+                            f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            # gemini 모델만 필터링 (generateContent 지원 모델)
+                            models = [
+                                {
+                                    "id": m["name"].replace("models/", ""),
+                                    "name": m.get("displayName", m["name"].replace("models/", "")),
+                                    "context_length": m.get("inputTokenLimit"),
+                                    "description": m.get("description", ""),
+                                }
+                                for m in data.get("models", [])
+                                if "generateContent" in m.get("supportedGenerationMethods", [])
+                                and "gemini" in m.get("name", "").lower()
+                            ]
+                            # 최신 모델 우선 정렬
+                            models.sort(
+                                key=lambda x: (
+                                    0
+                                    if "2.5" in x["id"]
+                                    else (
+                                        1 if "2.0" in x["id"] else (2 if "1.5" in x["id"] else 3)
+                                    ),
+                                    0 if "pro" in x["id"].lower() else 1,
+                                    x["id"],
+                                )
+                            )
+                            return {
+                                "provider": provider.value,
+                                "models": models[:15],
+                                "source": "api",
+                                "total": len(models),
+                            }
+                        else:
+                            return {
+                                "provider": provider.value,
+                                "models": _get_static_models("google"),
+                                "source": "static",
+                                "error": f"API 호출 실패: {resp.status_code}",
+                            }
+                    except Exception as e:
+                        return {
+                            "provider": provider.value,
+                            "models": _get_static_models("google"),
+                            "source": "static",
+                            "error": f"Google AI API 오류: {str(e)[:50]}",
+                        }
 
                 elif provider == LLMProvider.AZURE:
                     # Azure는 배포 기반이라 동적 조회 불가
@@ -1132,38 +1216,53 @@ def register_routes(app: FastAPI):
             "openai": [
                 {"id": "gpt-4o", "name": "GPT-4o (추천)"},
                 {"id": "gpt-4o-mini", "name": "GPT-4o Mini (빠름)"},
+                {"id": "gpt-4.1", "name": "GPT-4.1"},
+                {"id": "gpt-4.1-mini", "name": "GPT-4.1 Mini"},
                 {"id": "gpt-4-turbo", "name": "GPT-4 Turbo"},
                 {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo (저렴)"},
+                {"id": "o1", "name": "o1 (추론)"},
                 {"id": "o1-preview", "name": "o1-preview (추론)"},
                 {"id": "o1-mini", "name": "o1-mini (추론, 빠름)"},
+                {"id": "o3-mini", "name": "o3-mini (최신 추론)"},
             ],
             "anthropic": [
+                {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4 (최신)"},
                 {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet (추천)"},
                 {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku (빠름)"},
                 {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus (강력)"},
             ],
             "google": [
-                {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro (추천)"},
-                {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash (빠름)"},
-                {"id": "gemini-2.0-flash-exp", "name": "Gemini 2.0 Flash (실험)"},
+                {"id": "gemini-2.5-flash-preview-05-20", "name": "Gemini 2.5 Flash (최신)"},
+                {"id": "gemini-2.5-pro-preview-05-06", "name": "Gemini 2.5 Pro (최신)"},
+                {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash"},
+                {"id": "gemini-2.0-flash-lite", "name": "Gemini 2.0 Flash Lite (빠름)"},
+                {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro"},
+                {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash"},
             ],
             "openrouter": [
                 {"id": "openai/gpt-4o", "name": "GPT-4o (OpenAI)"},
+                {"id": "openai/gpt-4.1", "name": "GPT-4.1 (OpenAI)"},
+                {"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4 (Anthropic)"},
                 {"id": "anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet"},
+                {"id": "google/gemini-2.5-flash-preview", "name": "Gemini 2.5 Flash (Google)"},
+                {"id": "google/gemini-2.0-flash-001", "name": "Gemini 2.0 Flash (Google)"},
                 {"id": "google/gemini-pro-1.5", "name": "Gemini 1.5 Pro"},
+                {"id": "meta-llama/llama-3.3-70b-instruct", "name": "Llama 3.3 70B"},
                 {"id": "meta-llama/llama-3.1-405b-instruct", "name": "Llama 3.1 405B"},
-                {"id": "meta-llama/llama-3.1-70b-instruct", "name": "Llama 3.1 70B"},
-                {"id": "mistralai/mixtral-8x22b-instruct", "name": "Mixtral 8x22B"},
+                {"id": "deepseek/deepseek-r1", "name": "DeepSeek R1 (추론)"},
                 {"id": "deepseek/deepseek-chat", "name": "DeepSeek Chat"},
                 {"id": "qwen/qwen-2.5-72b-instruct", "name": "Qwen 2.5 72B"},
             ],
             "ollama": [
-                {"id": "llama3.1", "name": "Llama 3.1 (추천)"},
+                {"id": "llama3.3", "name": "Llama 3.3 (최신)"},
+                {"id": "llama3.2", "name": "Llama 3.2"},
+                {"id": "llama3.1", "name": "Llama 3.1"},
                 {"id": "llama3.1:70b", "name": "Llama 3.1 70B"},
                 {"id": "mistral", "name": "Mistral"},
                 {"id": "mixtral", "name": "Mixtral"},
                 {"id": "codellama", "name": "Code Llama"},
                 {"id": "qwen2.5", "name": "Qwen 2.5"},
+                {"id": "deepseek-r1", "name": "DeepSeek R1"},
                 {"id": "gemma2", "name": "Gemma 2"},
             ],
             "azure": [

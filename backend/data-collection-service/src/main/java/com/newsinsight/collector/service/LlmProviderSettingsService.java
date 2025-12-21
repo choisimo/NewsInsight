@@ -257,7 +257,7 @@ public class LlmProviderSettingsService {
                 : settings.getProviderType().getDefaultBaseUrl();
 
         return switch (settings.getProviderType()) {
-            case OPENAI, OPENROUTER -> baseUrl + "/models";
+            case OPENAI, OPENROUTER, TOGETHER_AI -> baseUrl + "/models";
             case ANTHROPIC -> baseUrl + "/v1/messages"; // Will return 405 but proves connectivity
             case GOOGLE -> baseUrl + "/v1/models";
             case OLLAMA -> baseUrl + "/api/tags";

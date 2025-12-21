@@ -17,6 +17,9 @@ import {
   ChevronDown,
   Loader2,
   Settings2,
+  Clock,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -44,10 +47,14 @@ import { toast } from 'sonner';
 import {
   exportUnifiedSearchReport,
   exportDeepSearchReport,
+  requestUnifiedSearchReport,
+  getReportStatus,
+  downloadReport,
   triggerPdfDownload,
   type ReportRequest,
   type ReportSection,
   type ReportType,
+  type ReportMetadata,
   DEFAULT_REPORT_SECTIONS,
 } from '@/lib/api';
 import { useExport, type ExportFormat, type ExportableSearchResult, type ExportOptions } from '@/hooks/useExport';
@@ -338,6 +345,11 @@ export function UnifiedExportMenu({
     DEFAULT_REPORT_SECTIONS[reportType]
   );
   
+  // Async export state
+  const [asyncExportMode, setAsyncExportMode] = useState(false);
+  const [asyncReportStatus, setAsyncReportStatus] = useState<ReportMetadata | null>(null);
+  const [asyncProgressDialogOpen, setAsyncProgressDialogOpen] = useState(false);
+  
   const { exportData, copyToClipboard } = useExport();
   
   // Generate base filename
@@ -399,6 +411,87 @@ export function UnifiedExportMenu({
     } finally {
       setIsExporting(false);
     }
+  };
+
+  // Async PDF Export with polling (for large reports)
+  const handleAsyncPdfExport = async () => {
+    if (!jobId) {
+      toast.error('PDF 내보내기는 검색 작업 ID가 필요합니다.');
+      return;
+    }
+    
+    setIsExporting(true);
+    setAsyncProgressDialogOpen(true);
+    setPdfDialogOpen(false);
+    
+    try {
+      const chartImages = captureChartImages();
+      
+      const request: ReportRequest = {
+        reportType,
+        targetId: jobId,
+        query,
+        timeWindow,
+        includeSections: selectedSections,
+        chartImages,
+        language: 'ko',
+      };
+
+      // Request async report generation
+      const initialStatus = await requestUnifiedSearchReport(jobId, request);
+      setAsyncReportStatus(initialStatus);
+      
+      if (initialStatus.status === 'COMPLETED' && initialStatus.reportId) {
+        // Report was cached or generated immediately
+        const blob = await downloadReport(initialStatus.reportId);
+        triggerPdfDownload(blob, `${baseFilename}.pdf`);
+        toast.success('PDF 보고서가 다운로드되었습니다.');
+        setAsyncProgressDialogOpen(false);
+        setAsyncReportStatus(null);
+        return;
+      }
+      
+      // Poll for completion
+      const reportId = initialStatus.reportId;
+      const maxWaitMs = 120000; // 2 minutes
+      const pollIntervalMs = 2000; // 2 seconds
+      const startTime = Date.now();
+      
+      while (Date.now() - startTime < maxWaitMs) {
+        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+        
+        const status = await getReportStatus(reportId);
+        setAsyncReportStatus(status);
+        
+        if (status.status === 'COMPLETED') {
+          const blob = await downloadReport(reportId);
+          triggerPdfDownload(blob, `${baseFilename}.pdf`);
+          toast.success('PDF 보고서가 다운로드되었습니다.');
+          setAsyncProgressDialogOpen(false);
+          setAsyncReportStatus(null);
+          return;
+        }
+        
+        if (status.status === 'FAILED' || status.status === 'EXPIRED') {
+          throw new Error(status.errorMessage || '보고서 생성에 실패했습니다.');
+        }
+      }
+      
+      throw new Error('보고서 생성 시간이 초과되었습니다.');
+    } catch (error) {
+      console.error('Async PDF export failed:', error);
+      toast.error(error instanceof Error ? error.message : 'PDF 보고서 생성에 실패했습니다.');
+      setAsyncReportStatus(null);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Cancel/close async progress dialog
+  const handleCancelAsyncExport = () => {
+    setAsyncProgressDialogOpen(false);
+    setAsyncReportStatus(null);
+    setIsExporting(false);
   };
 
   // AI Content exports
@@ -689,6 +782,26 @@ ${plainText}
             <div className="mt-4 pt-4 border-t text-sm text-muted-foreground">
               {selectedSections.length}개 섹션 선택됨
             </div>
+
+            {/* Async mode toggle */}
+            <div className="mt-4 pt-4 border-t">
+              <div className="flex items-start space-x-3 p-2 rounded-lg hover:bg-muted/50 transition-colors">
+                <Checkbox
+                  id="async-mode"
+                  checked={asyncExportMode}
+                  onCheckedChange={(checked) => setAsyncExportMode(!!checked)}
+                />
+                <div className="flex-1">
+                  <Label htmlFor="async-mode" className="text-sm font-medium cursor-pointer flex items-center gap-2">
+                    <Clock className="h-4 w-4" />
+                    백그라운드 생성
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    대용량 보고서의 경우 백그라운드에서 생성하고 완료 시 다운로드합니다.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
 
           <DialogFooter>
@@ -696,7 +809,7 @@ ${plainText}
               취소
             </Button>
             <Button
-              onClick={handlePdfExport}
+              onClick={asyncExportMode ? handleAsyncPdfExport : handlePdfExport}
               disabled={isExporting || selectedSections.length === 0}
             >
               {isExporting ? (
@@ -704,12 +817,108 @@ ${plainText}
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   생성 중...
                 </>
+              ) : asyncExportMode ? (
+                <>
+                  <Clock className="h-4 w-4 mr-2" />
+                  백그라운드 생성
+                </>
               ) : (
                 <>
                   <FileText className="h-4 w-4 mr-2" />
                   내보내기
                 </>
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Async Export Progress Dialog */}
+      <Dialog open={asyncProgressDialogOpen} onOpenChange={(open) => !open && handleCancelAsyncExport()}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {asyncReportStatus?.status === 'COMPLETED' ? (
+                <CheckCircle2 className="h-5 w-5 text-green-500" />
+              ) : asyncReportStatus?.status === 'FAILED' ? (
+                <XCircle className="h-5 w-5 text-red-500" />
+              ) : (
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              )}
+              PDF 보고서 생성 중
+            </DialogTitle>
+            <DialogDescription>
+              보고서를 생성하고 있습니다. 완료되면 자동으로 다운로드됩니다.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-6">
+            {/* Status display */}
+            <div className="flex flex-col items-center gap-4">
+              {asyncReportStatus?.status === 'GENERATING' && (
+                <>
+                  <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                    <div 
+                      className="h-full bg-primary rounded-full animate-pulse"
+                      style={{ width: '60%' }}
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">보고서 생성 중...</p>
+                </>
+              )}
+              
+              {asyncReportStatus?.status === 'PENDING' && (
+                <>
+                  <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                    <div 
+                      className="h-full bg-primary/50 rounded-full animate-pulse"
+                      style={{ width: '30%' }}
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">대기 중...</p>
+                </>
+              )}
+              
+              {asyncReportStatus?.status === 'COMPLETED' && (
+                <p className="text-sm text-green-600">생성 완료! 다운로드 중...</p>
+              )}
+              
+              {asyncReportStatus?.status === 'FAILED' && (
+                <p className="text-sm text-red-600">
+                  {asyncReportStatus.errorMessage || '보고서 생성에 실패했습니다.'}
+                </p>
+              )}
+              
+              {!asyncReportStatus && (
+                <>
+                  <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                    <div 
+                      className="h-full bg-primary/30 rounded-full animate-pulse"
+                      style={{ width: '10%' }}
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">요청 중...</p>
+                </>
+              )}
+            </div>
+
+            {/* Report info */}
+            {asyncReportStatus && (
+              <div className="mt-4 pt-4 border-t text-xs text-muted-foreground space-y-1">
+                <p>보고서 ID: {asyncReportStatus.reportId}</p>
+                {asyncReportStatus.pageCount && (
+                  <p>페이지 수: {asyncReportStatus.pageCount}</p>
+                )}
+                {asyncReportStatus.generationTimeMs && (
+                  <p>생성 시간: {(asyncReportStatus.generationTimeMs / 1000).toFixed(1)}초</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancelAsyncExport}>
+              {asyncReportStatus?.status === 'FAILED' ? '닫기' : '취소'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -61,12 +61,72 @@ interface UserLlmSettingsProps {
 }
 
 const DEFAULT_MODELS: Record<LlmProviderType, string[]> = {
-  OPENAI: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-  ANTHROPIC: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
-  GOOGLE: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'],
-  OPENROUTER: ['openai/gpt-4o', 'anthropic/claude-3.5-sonnet', 'google/gemini-pro-1.5'],
-  OLLAMA: ['llama3.1', 'mistral', 'mixtral', 'codellama'],
-  AZURE_OPENAI: ['gpt-4o', 'gpt-4-turbo', 'gpt-35-turbo'],
+  // OpenAI - 2025년 12월 최신 (GPT-5 시리즈 출시)
+  OPENAI: [
+    'gpt-5', 'gpt-5-mini', 'gpt-5-nano',           // Frontier 모델
+    'gpt-4.1', 'gpt-4.1-mini',                      // 고급 모델
+    'o3', 'o3-mini', 'o3-pro', 'o4-mini',          // 추론 모델
+    'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo',        // 기존 모델
+  ],
+  // Anthropic Claude - 2025년 12월 최신 (Claude 4 시리즈)
+  ANTHROPIC: [
+    'claude-sonnet-4-20250514',                    // 추천, 성능-가격 최적
+    'claude-opus-4-20250514',                      // 가장 강력
+    'claude-haiku-4-20250514',                     // 경량, 빠른 응답
+    'claude-3-5-sonnet-20241022',                  // 이전 버전 호환
+    'claude-3-5-haiku-20241022',
+  ],
+  // Google Gemini - 2025년 12월 최신 (Gemini 3 시리즈)
+  GOOGLE: [
+    'gemini-3-pro-preview',                        // 최고 지능, 멀티모달
+    'gemini-3-flash-preview',                      // Pro 수준, Flash 속도
+    'gemini-2.5-pro',                              // 씽킹 모델, 복잡 추론
+    'gemini-2.5-flash',                            // 최고 가격-성능비
+    'gemini-2.5-flash-lite',                       // 비용 최적화
+    'gemini-2.0-flash',                            // 워크홀스
+  ],
+  // OpenRouter - 다양한 공급자 모델 통합 (무료 모델 포함)
+  OPENROUTER: [
+    // 무료 모델 (Free)
+    'google/gemini-2.0-flash-exp:free',
+    'google/gemini-exp-1206:free',
+    'meta-llama/llama-3.2-3b-instruct:free',
+    'meta-llama/llama-3.1-8b-instruct:free',
+    'microsoft/phi-3-mini-128k-instruct:free',
+    'mistralai/mistral-7b-instruct:free',
+    'openchat/openchat-7b:free',
+    'huggingfaceh4/zephyr-7b-beta:free',
+    'qwen/qwen-2-7b-instruct:free',
+    'nousresearch/hermes-3-llama-3.1-405b:free',
+    // 유료 모델
+    'openai/gpt-5', 'openai/gpt-4o',
+    'anthropic/claude-sonnet-4', 'anthropic/claude-3.5-haiku',
+    'google/gemini-2.5-pro', 'google/gemini-3-pro',
+    'meta-llama/llama-3.1-405b-instruct',
+    'mistralai/mistral-large-2411',
+    'qwen/qwen-max',
+    'deepseek/deepseek-r1',
+  ],
+  // Ollama - 로컬 실행 모델
+  OLLAMA: [
+    'llama3.2',                                    // Meta Llama 3.2
+    'mistral',                                     // Mistral AI
+    'neural-chat',                                 // Intel
+    'deepseek-r1',                                 // DeepSeek R1
+    'smollm2',                                     // 경량 모델
+    'mixtral', 'codellama',
+  ],
+  // Azure OpenAI - 배포된 모델만 사용 가능
+  AZURE_OPENAI: [
+    'gpt-5', 'gpt-4o', 'gpt-4-turbo', 'gpt-35-turbo',
+  ],
+  // Together AI - DeepSeek 및 오픈소스 모델
+  TOGETHER_AI: [
+    'deepseek-ai/DeepSeek-R1-Distill-Llama-70B',  // 추론 능력 70B
+    'deepseek-ai/DeepSeek-V3',                    // DeepSeek V3
+    'meta-llama/Llama-3.1-405B-Instruct-Turbo',
+    'mistralai/Mixtral-8x22B-Instruct-v0.1',
+  ],
   CUSTOM: ['default'],
 };
 

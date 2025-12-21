@@ -9,10 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY bias_mcp/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py .
+# Note: Build context should be mcp/ folder
+# Use: docker build -f bias_mcp/Dockerfile -t bias-mcp .
+COPY bias_mcp/server.py .
+COPY shared ./shared
 
 ENV PORT=5001
 ENV DB_BACKEND=postgres

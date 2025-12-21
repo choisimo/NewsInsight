@@ -312,7 +312,7 @@ services:
 
   browser-use-api:
     build:
-      context: ../../backend/browser-use
+      context: ../../backend/services/browser-use-api
       dockerfile: Dockerfile.api
     image: newsinsight/browser-use-api:local-preview
     restart: unless-stopped

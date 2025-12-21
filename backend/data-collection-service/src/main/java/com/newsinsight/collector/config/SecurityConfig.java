@@ -134,17 +134,17 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/analysis/deep/*/stream").permitAll()
                         .requestMatchers("/api/v1/analysis/live").permitAll()
                         .requestMatchers("/api/v1/search-history/stream").permitAll()
-                        .requestMatchers("/api/v1/factcheck-chat/session/*/message").permitAll()
-                        .requestMatchers("/api/v1/factcheck-chat/session").permitAll()
-                        .requestMatchers("/api/v1/factcheck-chat/session/**").permitAll()
+                        // Factcheck Chat - 익명 세션도 사용 가능하도록 전체 허용
+                        .requestMatchers(HttpMethod.POST, "/api/v1/factcheck-chat/session").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/factcheck-chat/session/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/factcheck-chat/session/**").permitAll()
+                        .requestMatchers("/api/v1/factcheck-chat/**").permitAll()
                         
                         // ========================================
                         // Public Report Export (익명 세션에서도 PDF 다운로드 허용)
+                        // Note: Spring Security 6에서 ** 뒤에 추가 패턴 불가
                         // ========================================
-                        .requestMatchers("/api/v1/reports/*/export").permitAll()
-                        .requestMatchers("/api/v1/reports/unified-search/*/export").permitAll()
-                        .requestMatchers("/api/v1/reports/deep-search/*/export").permitAll()
-                        .requestMatchers("/api/v1/reports/ml-analysis/*/export").permitAll()
+                        .requestMatchers("/api/v1/reports/**").permitAll()
                         
                         // ========================================
                         // Admin Only Endpoints (ADMIN 권한 필요)
@@ -152,48 +152,44 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/workspace/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/workspace/files/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/admin/llm-providers/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/llm-providers/types").permitAll()
                         .requestMatchers("/api/v1/llm-providers/**").hasAnyRole("ADMIN", "OPERATOR")
                         
                         // ========================================
-                        // Authenticated Endpoints (로그인 필요)
+                        // Authenticated Endpoints (로그인 필요 X)
                         // ========================================
-                        // Search API
-                        .requestMatchers("/api/v1/search/**").authenticated()
+                        // Search API - 루트 경로와 하위 경로 모두 허용
+                        .requestMatchers("/api/v1/search").permitAll()
+                        .requestMatchers("/api/v1/search/**").permitAll()
                         .requestMatchers("/api/v1/search-history/**").authenticated()
                         .requestMatchers("/api/v1/search-templates/**").authenticated()
                         
                         // Data & Collections
-                        .requestMatchers("/api/v1/data/**").authenticated()
-                        .requestMatchers("/api/v1/collections/**").authenticated()
-                        .requestMatchers("/api/v1/sources/**").authenticated()
+                        .requestMatchers("/api/v1/data/**").permitAll()
+                        .requestMatchers("/api/v1/collections/**").permitAll()
+                        .requestMatchers("/api/v1/sources/**").permitAll()
                         
                         // Analysis & AI
-                        .requestMatchers("/api/v1/analysis/**").authenticated()
-                        .requestMatchers("/api/v1/ai/**").authenticated()
-                        .requestMatchers("/api/v1/ml/**").authenticated()
-                        
-                        // Reports
-                        .requestMatchers("/api/v1/reports/**").authenticated()
+                        .requestMatchers("/api/v1/analysis/**").permitAll()
+                        .requestMatchers("/api/v1/ai/**").permitAll()
+                        .requestMatchers("/api/v1/ml/**").permitAll()
                         
                         // Projects & Workspace (일반)
-                        .requestMatchers("/api/v1/projects/**").authenticated()
-                        .requestMatchers("/api/v1/workspace/**").authenticated()
+                        .requestMatchers("/api/v1/projects/**").permitAll()
+                        .requestMatchers("/api/v1/workspace/**").permitAll()
                         
                         // Articles
-                        .requestMatchers("/api/v1/articles/**").authenticated()
+                        .requestMatchers("/api/v1/articles/**").permitAll()
                         
                         // Jobs & AutoCrawl
-                        .requestMatchers("/api/v1/jobs/**").authenticated()
-                        .requestMatchers("/api/v1/autocrawl/**").authenticated()
+                        .requestMatchers("/api/v1/jobs/**").permitAll()
+                        .requestMatchers("/api/v1/autocrawl/**").permitAll()
                         
                         // Events (SSE)
-                        .requestMatchers("/api/v1/events/**").authenticated()
-                        
-                        // Factcheck Chat
-                        .requestMatchers("/api/v1/factcheck-chat/**").authenticated()
+                        .requestMatchers("/api/v1/events/**").permitAll()
                         
                         // Config (read-only for authenticated users)
-                        .requestMatchers(HttpMethod.GET, "/api/v1/config/**").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/config/**").permitAll()
                         .requestMatchers("/api/v1/config/**").hasAnyRole("ADMIN", "OPERATOR")
                         
                         // Default: require authentication
@@ -241,15 +237,15 @@ public class SecurityConfig {
                 return;
             }
 
-            String authHeader = request.getHeader("Authorization");
+            // Try to extract token from multiple sources
+            String token = extractToken(request);
 
-            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            if (token == null) {
                 filterChain.doFilter(request, response);
                 return;
             }
 
             try {
-                String token = authHeader.substring(7);
                 SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
 
                 Claims claims = Jwts.parser()
@@ -294,17 +290,55 @@ public class SecurityConfig {
             filterChain.doFilter(request, response);
         }
 
+        /**
+         * Extract JWT token from multiple sources:
+         * 1. Authorization header (Bearer token)
+         * 2. Query parameter (token)
+         * 3. Cookie (access_token)
+         * 
+         * This allows SSE/EventSource connections to be authenticated
+         * since EventSource doesn't support custom headers.
+         */
+        private String extractToken(HttpServletRequest request) {
+            // 1. Check Authorization header first (standard method)
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                return authHeader.substring(7);
+            }
+
+            // 2. Check query parameter (for SSE/EventSource)
+            String tokenParam = request.getParameter("token");
+            if (tokenParam != null && !tokenParam.isBlank()) {
+                return tokenParam;
+            }
+
+            // 3. Check cookie (for SSE/EventSource)
+            if (request.getCookies() != null) {
+                for (jakarta.servlet.http.Cookie cookie : request.getCookies()) {
+                    if ("access_token".equals(cookie.getName())) {
+                        String cookieValue = cookie.getValue();
+                        if (cookieValue != null && !cookieValue.isBlank()) {
+                            return cookieValue;
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+
         @Override
         protected boolean shouldNotFilter(HttpServletRequest request) {
             String path = request.getServletPath();
-            // Public 엔드포인트는 필터 스킵
+            // Public 엔드포인트는 필터 스킵 (SSE 스트림은 토큰 인증을 위해 필터 통과)
             return path.startsWith("/actuator") ||
                    path.startsWith("/swagger-ui") ||
                    path.startsWith("/v3/api-docs") ||
                    path.endsWith("/health") ||
                    path.contains("/health/") ||
-                   path.endsWith("/stream") ||
-                   path.contains("/stream/");
+                   // Reports 엔드포인트는 public (PDF export 등)
+                   path.startsWith("/api/v1/reports/");
+            // SSE 스트림 엔드포인트는 이제 필터를 통과하여 토큰 인증 가능
         }
     }
 }

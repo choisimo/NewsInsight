@@ -68,7 +68,7 @@ public class DataSourceSeeder implements ApplicationRunner {
         int skipped = 0;
         for (DataSource desired : sources) {
             DataSource existing = dataSourceRepository
-                    .findByUrl(desired.getUrl())
+                    .findFirstByUrl(desired.getUrl())
                     .or(() -> dataSourceRepository.findByName(desired.getName()))
                     .orElse(null);
 
@@ -412,6 +412,141 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .isActive(true)
                 .collectionFrequency(0)
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"medium\",\"category\":\"aggregator_search\"}")
+                .build(),
+                
+            // ========== COMMUNITY Sources (커뮤니티 여론 수집) ==========
+            // DCInside (디시인사이드)
+            DataSource.builder()
+                .name("디시인사이드 (Browser Agent)")
+                .url("https://www.dcinside.com/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(3600)
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // Clien (클리앙)
+            DataSource.builder()
+                .name("클리앙 (Browser Agent)")
+                .url("https://www.clien.net/service/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(3600)
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"medium\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // Ruliweb (루리웹)
+            DataSource.builder()
+                .name("루리웹 (Browser Agent)")
+                .url("https://bbs.ruliweb.com/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(3600)
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // Ppomppu (뽐뿌)
+            DataSource.builder()
+                .name("뽐뿌 (Browser Agent)")
+                .url("https://www.ppomppu.co.kr/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(3600)
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // TheQoo (더쿠)
+            DataSource.builder()
+                .name("더쿠 (Browser Agent)")
+                .url("https://theqoo.net/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(3600)
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // FMKorea (에펨코리아)
+            DataSource.builder()
+                .name("에펨코리아 (Browser Agent)")
+                .url("https://www.fmkorea.com/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(3600)
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // MLB Park (엠팍)
+            DataSource.builder()
+                .name("엠엘비파크 (Browser Agent)")
+                .url("https://mlbpark.donga.com/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(3600)
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // Bobaedream (보배드림 - 자동차)
+            DataSource.builder()
+                .name("보배드림 (Browser Agent)")
+                .url("https://www.bobaedream.co.kr/")
+                .sourceType(SourceType.BROWSER_AGENT)
+                .isActive(true)
+                .collectionFrequency(7200)
+                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
+                .build(),
+                
+            // ========== COMMUNITY Search Sources (커뮤니티 검색) ==========
+            DataSource.builder()
+                .name("Reddit 검색")
+                .url("https://www.reddit.com")
+                .sourceType(SourceType.WEB_SEARCH)
+                .searchUrlTemplate("https://www.reddit.com/search/?q={query}&type=link")
+                .searchPriority(5)
+                .isActive(true)
+                .collectionFrequency(0)
+                .metadataJson("{\"region\":\"global\",\"language\":\"en\",\"reliability\":\"medium\",\"category\":\"community_search\",\"source_category\":\"community\"}")
+                .build(),
+                
+            DataSource.builder()
+                .name("Twitter/X 검색")
+                .url("https://twitter.com")
+                .sourceType(SourceType.WEB_SEARCH)
+                .searchUrlTemplate("https://twitter.com/search?q={query}&f=live")
+                .searchPriority(6)
+                .isActive(true)
+                .collectionFrequency(0)
+                .metadataJson("{\"region\":\"global\",\"language\":\"multi\",\"reliability\":\"low\",\"category\":\"social_search\",\"source_category\":\"community\"}")
+                .build(),
+                
+            // ========== BLOG Sources (블로그/의견) ==========
+            DataSource.builder()
+                .name("네이버 블로그 검색")
+                .url("https://search.naver.com")
+                .sourceType(SourceType.WEB_SEARCH)
+                .searchUrlTemplate("https://search.naver.com/search.naver?where=blog&query={query}")
+                .searchPriority(7)
+                .isActive(true)
+                .collectionFrequency(0)
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"blog_search\",\"source_category\":\"blog\"}")
+                .build(),
+                
+            DataSource.builder()
+                .name("브런치 검색")
+                .url("https://brunch.co.kr")
+                .sourceType(SourceType.WEB_SEARCH)
+                .searchUrlTemplate("https://brunch.co.kr/search?q={query}")
+                .searchPriority(8)
+                .isActive(true)
+                .collectionFrequency(0)
+                .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"medium\",\"category\":\"blog_search\",\"source_category\":\"blog\"}")
                 .build()
         );
     }

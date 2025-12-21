@@ -317,6 +317,14 @@ spring:
             # /api/actuator/health -> /actuator/health 로 재작성
             - RewritePath=/api/actuator/(?<segment>.*), /actuator/${segment}
 
+        # General Health Check - /api/health 경로 지원
+        - id: api-health
+          uri: http://localhost:${PORT:8000}
+          predicates:
+            - Path=/api/health
+          filters:
+            - RewritePath=/api/health, /actuator/health
+
       # NOTE: CORS is handled by SecurityConfig.java - DO NOT enable globalcors
       # Having both causes duplicate Access-Control-Allow-Origin headers
       # globalcors:

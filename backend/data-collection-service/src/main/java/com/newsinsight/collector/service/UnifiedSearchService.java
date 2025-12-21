@@ -20,7 +20,10 @@ import com.newsinsight.collector.service.autocrawl.AutoCrawlIntegrationService;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.AnalyzedQuery;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.FallbackStrategy;
+import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.RealtimeAnalysisResult;
 import com.newsinsight.collector.service.search.HybridSearchService;
+import com.newsinsight.collector.service.factcheck.RealtimeSearchSource;
+import com.newsinsight.collector.service.FactVerificationService.SourceEvidence;
 import com.newsinsight.collector.service.search.HybridRankingService.RankedResult;
 import lombok.Builder;
 import lombok.Data;
@@ -81,6 +84,7 @@ public class UnifiedSearchService {
     private final SearchHistoryService searchHistoryService;
     private final AdvancedIntentAnalyzer advancedIntentAnalyzer;
     private final SearchCacheService searchCacheService;
+    private final RealtimeSearchSource realtimeSearchSource;
 
     @Value("${autocrawl.enabled:true}")
     private boolean autoCrawlEnabled;
@@ -1900,7 +1904,11 @@ public class UnifiedSearchService {
         try {
             unifiedSearchEventService.publishStatusUpdate(jobId, "ai", "AI가 관련 정보를 분석하고 있습니다...");
             
-            String prompt = buildAISearchPrompt(query, window);
+            // ===== 실시간 데이터 필요 여부 분석 =====
+            String realtimeContext = collectRealtimeDataIfNeeded(jobId, query);
+            
+            // 프롬프트 생성 (실시간 데이터 포함)
+            String prompt = buildAISearchPromptWithRealtimeData(query, window, realtimeContext);
             
             // Use fallback chain
             Flux<String> aiStream = getAiStreamWithFallbackForSearch(prompt, query, window);
@@ -1938,6 +1946,103 @@ public class UnifiedSearchService {
             log.error("AI search failed for job: {}", jobId, e);
             unifiedSearchEventService.publishSourceError(jobId, "ai", "AI 분석 오류");
         }
+    }
+
+    /**
+     * 실시간 데이터 필요 여부를 분석하고, 필요시 Perplexity Online으로 데이터를 수집합니다.
+     * 
+     * @param jobId 검색 작업 ID
+     * @param query 사용자 쿼리
+     * @return 실시간 데이터 컨텍스트 문자열 (필요 없는 경우 빈 문자열)
+     */
+    private String collectRealtimeDataIfNeeded(String jobId, String query) {
+        try {
+            // 실시간 데이터 필요 여부 분석
+            RealtimeAnalysisResult realtimeAnalysis = advancedIntentAnalyzer.analyzeRealtimeDataNeed(query);
+            
+            if (!realtimeAnalysis.isNeedsRealtimeData()) {
+                log.debug("Query '{}' does not require realtime data (confidence: {})", 
+                        query, realtimeAnalysis.getConfidence());
+                return "";
+            }
+            
+            if (!realtimeSearchSource.isAvailable()) {
+                log.debug("Realtime search source is not available for query: '{}'", query);
+                return "";
+            }
+            
+            log.info("Query '{}' requires realtime data (type: {}, confidence: {}, reason: {})", 
+                    query, realtimeAnalysis.getDataType(), realtimeAnalysis.getConfidence(), 
+                    realtimeAnalysis.getReason());
+            
+            unifiedSearchEventService.publishStatusUpdate(jobId, "ai", "실시간 데이터 수집 중...");
+            
+            // Perplexity Online으로 실시간 데이터 수집
+            List<SourceEvidence> realtimeEvidence = realtimeSearchSource
+                    .fetchEvidence(query, "ko")
+                    .collectList()
+                    .block(Duration.ofSeconds(30));
+            
+            if (realtimeEvidence == null || realtimeEvidence.isEmpty()) {
+                log.info("No realtime evidence collected for query: '{}'", query);
+                return "";
+            }
+            
+            // 실시간 데이터를 컨텍스트 문자열로 변환
+            StringBuilder contextBuilder = new StringBuilder();
+            contextBuilder.append("\n\n## 실시간 검색 결과 (반드시 이 데이터를 우선 참조하세요)\n\n");
+            
+            for (SourceEvidence evidence : realtimeEvidence) {
+                contextBuilder.append("### 출처: ").append(evidence.getSourceName()).append("\n");
+                contextBuilder.append(evidence.getExcerpt()).append("\n");
+                if (evidence.getUrl() != null) {
+                    contextBuilder.append("URL: ").append(evidence.getUrl()).append("\n");
+                }
+                contextBuilder.append("\n");
+            }
+            
+            log.info("Collected {} realtime evidence items for query: '{}'", 
+                    realtimeEvidence.size(), query);
+            
+            return contextBuilder.toString();
+            
+        } catch (Exception e) {
+            log.warn("Failed to collect realtime data for query '{}': {}", query, e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * 실시간 데이터를 포함한 AI 검색 프롬프트를 생성합니다.
+     * 
+     * @param query 사용자 쿼리
+     * @param window 시간 범위
+     * @param realtimeContext 실시간 데이터 컨텍스트 (빈 문자열 가능)
+     * @return AI 프롬프트
+     */
+    private String buildAISearchPromptWithRealtimeData(String query, String window, String realtimeContext) {
+        String basePrompt = buildAISearchPrompt(query, window);
+        
+        if (realtimeContext == null || realtimeContext.isBlank()) {
+            return basePrompt;
+        }
+        
+        // 실시간 데이터를 프롬프트에 삽입
+        // "한국어로 답변해주세요" 또는 프롬프트 끝에 추가
+        String realtimeInstructions = realtimeContext + 
+                "\n\n**중요**: 위의 실시간 검색 결과에 포함된 가격, 시세, 통계 데이터를 반드시 사용하세요. " +
+                "추정하거나 과거 데이터를 사용하지 마세요. 실시간 데이터의 출처도 명시해주세요.\n\n";
+        
+        // 프롬프트에 "한국어로 답변해주세요"가 있으면 그 앞에 삽입
+        if (basePrompt.contains("한국어로 답변해주세요")) {
+            return basePrompt.replace(
+                    "한국어로 답변해주세요.",
+                    realtimeInstructions + "한국어로 답변해주세요."
+            );
+        }
+        
+        // 없으면 프롬프트 끝에 추가
+        return basePrompt + realtimeInstructions;
     }
 
     private void persistAiReportToSearchHistory(String jobId, String query, String window, String fullMarkdown) {

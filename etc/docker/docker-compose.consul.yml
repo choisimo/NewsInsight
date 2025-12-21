@@ -45,6 +45,9 @@ services:
       - PROJECT_ROOT=/workspace
       - ADMIN_CONFIG_DIR=/app/config
       - CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:8810,http://frontend:8080
+      # Service URLs for internal Docker network communication
+      - COLLECTOR_SERVICE_URL=http://collector-service:8081
+      - CRAWLER_SERVICE_URL=http://autonomous-crawler:8030
     volumes:
       # Docker socket for environment management (docker-compose operations)
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -122,7 +125,7 @@ services:
   bot-detector:
     build:
       context: ../../
-      dockerfile: backend/browser-use/bot-detector/Dockerfile
+      dockerfile: backend/services/bot-detector/Dockerfile
     image: newsinsight/bot-detector:local
     restart: unless-stopped
     environment:
@@ -442,7 +445,7 @@ services:
       - KAGGLE_MCP_URL=http://kaggle-mcp:5012
       - MLTRAINING_MCP_URL=http://mltraining-mcp:5013
       - ROBOFLOW_MCP_URL=http://roboflow-mcp:5014
-      - AIAGENT_MCP_URL=http://aiagent-mcp:5004
+      - AIAGENT_MCP_URL=http://aiagent-mcp:5010
     expose:
       - "9090"
     ports:
@@ -463,7 +466,7 @@ services:
   # Browser-Use API Server with AI Dove Integration
   browser-use-api:
     build:
-      context: ../../backend/browser-use
+      context: ../../backend/services/browser-use-api
       dockerfile: Dockerfile.api
     image: newsinsight/browser-use-api:local
     restart: unless-stopped
@@ -552,7 +555,7 @@ services:
   # ============================================================================
   ip-rotation:
     build:
-      context: ../../backend/browser-use/ip-rotation
+      context: ../../backend/services/ip-rotation
       dockerfile: Dockerfile
     image: newsinsight/ip-rotation:local
     restart: unless-stopped
@@ -650,8 +653,8 @@ services:
   # ============================================================================
   newsinsight-mcp:
     build:
-      context: ../../mcp/newsinsight_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: newsinsight_mcp/Dockerfile
     image: newsinsight/newsinsight-mcp:local
     restart: unless-stopped
     environment:
@@ -679,8 +682,8 @@ services:
 
   bias-mcp:
     build:
-      context: ../../mcp/bias_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: bias_mcp/Dockerfile
     image: newsinsight/bias-mcp:local
     restart: unless-stopped
     environment:
@@ -708,8 +711,8 @@ services:
 
   factcheck-mcp:
     build:
-      context: ../../mcp/factcheck_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: factcheck_mcp/Dockerfile
     image: newsinsight/factcheck-mcp:local
     restart: unless-stopped
     environment:
@@ -737,8 +740,8 @@ services:
 
   topic-mcp:
     build:
-      context: ../../mcp/topic_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: topic_mcp/Dockerfile
     image: newsinsight/topic-mcp:local
     restart: unless-stopped
     environment:
@@ -766,23 +769,23 @@ services:
 
   aiagent-mcp:
     build:
-      context: ../../mcp/aiagent_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: aiagent_mcp/Dockerfile
     image: newsinsight/aiagent-mcp:local
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-newsinsight}
       - ENCRYPTION_KEY=${AI_PROVIDER_ENCRYPTION_KEY:-}
-      - PORT=5004
+      - PORT=5010
     expose:
-      - "5004"
+      - "5010"
     ports:
-      - "5004:5004"
+      - "5010:5010"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5010/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -792,8 +795,8 @@ services:
 
   huggingface-mcp:
     build:
-      context: ../../mcp/huggingface_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: huggingface_mcp/Dockerfile
     image: newsinsight/huggingface-mcp:local
     restart: unless-stopped
     environment:
@@ -818,8 +821,8 @@ services:
 
   kaggle-mcp:
     build:
-      context: ../../mcp/kaggle_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: kaggle_mcp/Dockerfile
     image: newsinsight/kaggle-mcp:local
     restart: unless-stopped
     environment:
@@ -844,8 +847,8 @@ services:
 
   mltraining-mcp:
     build:
-      context: ../../mcp/mltraining_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: mltraining_mcp/Dockerfile
     image: newsinsight/mltraining-mcp:local
     restart: unless-stopped
     environment:
@@ -872,8 +875,8 @@ services:
 
   roboflow-mcp:
     build:
-      context: ../../mcp/roboflow_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: roboflow_mcp/Dockerfile
     image: newsinsight/roboflow-mcp:local
     restart: unless-stopped
     environment:

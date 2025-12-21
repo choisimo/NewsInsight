@@ -11,8 +11,10 @@ import {
   XCircle,
   AlertTriangle,
   Terminal,
+  ShieldAlert,
 } from 'lucide-react';
 import { environmentsApi } from '@/lib/adminApi';
+import { useAuth } from '@/contexts/AuthContext';
 import type { Environment, EnvironmentStatus, ContainerInfo } from '@/types/admin';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,12 +32,10 @@ export default function AdminEnvironments() {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [actionOutput, setActionOutput] = useState<string>('');
   
-  // TODO: Add Auth Context check for role-based access if needed
-  // const { user } = useAuth();
-  // const isOperator = user?.role === 'operator' || user?.role === 'admin';
-  // const isAdmin = user?.role === 'admin';
-  const isOperator = true; // Temporary bypass
-  const isAdmin = true; // Temporary bypass
+  // Role-based access control
+  const { user } = useAuth();
+  const isOperator = user?.role === 'operator' || user?.role === 'admin';
+  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     loadEnvironments();
@@ -153,6 +153,21 @@ export default function AdminEnvironments() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  // 권한이 없는 경우 접근 불가 UI
+  if (!isOperator) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <ShieldAlert className="w-16 h-16 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">접근 권한이 없습니다</h2>
+        <p className="text-muted-foreground text-center">
+          환경 관리 기능은 Operator 또는 Admin 권한이 필요합니다.
+          <br />
+          현재 역할: {user?.role || '없음'}
+        </p>
       </div>
     );
   }

@@ -51,6 +51,13 @@ public class CrawlEvidence {
     @Column(length = 255)
     private String source;
 
+    /**
+     * Source category: news, community, blog, official, academic
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source_category", length = 32)
+    private SourceCategory sourceCategory;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -68,6 +75,17 @@ public class CrawlEvidence {
             }
         }
 
+        // Infer source category from URL domain
+        SourceCategory category = SourceCategory.NEWS;
+        if (evidence.getUrl() != null) {
+            try {
+                java.net.URI uri = java.net.URI.create(evidence.getUrl());
+                category = SourceCategory.inferFromDomain(uri.getHost());
+            } catch (Exception ignored) {
+                // Keep default NEWS
+            }
+        }
+
         return CrawlEvidence.builder()
                 .jobId(jobId)
                 .url(evidence.getUrl())
@@ -75,6 +93,7 @@ public class CrawlEvidence {
                 .stance(stance)
                 .snippet(evidence.getSnippet())
                 .source(evidence.getSource())
+                .sourceCategory(category)
                 .build();
     }
 }

@@ -12,7 +12,6 @@ import os
 import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
-from urllib.parse import urlparse
 from collections import Counter
 
 import requests
@@ -20,11 +19,23 @@ from mcp.server import FastMCP
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 
+# Shared modules
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.db import get_postgres_conn, get_mongo_db, DB_BACKEND, check_db_connection
+from shared.health import create_health_response
+from shared.aidove import AIDOVE_WEBHOOK_URL, call_aidove
+
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-PORT = int(os.environ.get("PORT", "5004"))
+# 포트 설정 (shared ports 모듈에서 가져오거나 환경변수)
+try:
+    from shared.ports import MCP_PORTS
+    PORT = MCP_PORTS.get("sentiment_mcp", 5004)
+except ImportError:
+    PORT = int(os.environ.get("PORT", "5004"))
 
 server = FastMCP(
     "sentiment-analysis-mcp",
@@ -35,32 +46,21 @@ server = FastMCP(
 
 @server.custom_route("/health", methods=["GET"])
 async def health_endpoint(request: Request) -> JSONResponse:
+    db_status = check_db_connection()
     return JSONResponse(
-        {
-            "status": "healthy",
-            "server": "sentiment-analysis-mcp",
-            "version": "1.0.0",
-        }
+        create_health_response(
+            server_name="sentiment-analysis-mcp",
+            version="1.0.0",
+            extra_info=db_status
+        )
     )
 
+# DB 설정은 shared.db에서 가져옴 (DB_BACKEND, get_postgres_conn, get_mongo_db)
+# AiDove 설정은 shared.aidove에서 가져옴 (AIDOVE_WEBHOOK_URL, call_aidove)
 
-# DB 백엔드 선택
-DB_BACKEND = os.environ.get("DB_BACKEND", "postgres")
-
-# PostgreSQL 접속 정보
-POSTGRES_DSN = os.environ.get("DATABASE_URL")
-
-# MongoDB 접속 정보
-MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/newsinsight")
-
-# Sentiment Addon URL
+# Sentiment Addon URL (서비스별 설정)
 SENTIMENT_ADDON_URL = os.environ.get(
     "SENTIMENT_ADDON_URL", "http://sentiment-addon:8002"
-)
-
-# AiDove Webhook URL
-AIDOVE_WEBHOOK_URL = os.environ.get(
-    "AIDOVE_WEBHOOK_URL", "https://workflow.nodove.com/webhook/aidove"
 )
 
 
@@ -108,42 +108,9 @@ STOPWORDS = {
 
 
 # ─────────────────────────────────────────────
-# 3. DB 연결 헬퍼
+# 3. DB 연결 헬퍼 (shared.db 모듈 사용)
 # ─────────────────────────────────────────────
-
-_pg_conn = None
-_mongo_client = None
-_mongo_db = None
-
-
-def get_postgres_conn():
-    """PostgreSQL 연결을 반환합니다."""
-    global _pg_conn
-    import psycopg2
-
-    if _pg_conn is None or _pg_conn.closed != 0:
-        if not POSTGRES_DSN:
-            raise RuntimeError("DATABASE_URL이 설정되어 있지 않습니다.")
-        _pg_conn = psycopg2.connect(POSTGRES_DSN)
-        _pg_conn.autocommit = True
-    return _pg_conn
-
-
-def get_mongo_db():
-    """MongoDB 데이터베이스 객체를 반환합니다."""
-    global _mongo_client, _mongo_db
-    from pymongo import MongoClient
-
-    if _mongo_db is None:
-        if not MONGODB_URI:
-            raise RuntimeError("MONGODB_URI가 설정되어 있지 않습니다.")
-
-        _mongo_client = MongoClient(MONGODB_URI)
-        parsed = urlparse(MONGODB_URI)
-        db_name = parsed.path.lstrip("/").split("?")[0] or "newsinsight"
-        _mongo_db = _mongo_client[db_name]
-
-    return _mongo_db
+# get_postgres_conn(), get_mongo_db()는 shared.db에서 import됨
 
 
 # ─────────────────────────────────────────────

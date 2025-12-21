@@ -31,7 +31,11 @@ public interface DataSourceRepository extends JpaRepository<DataSource, Long> {
 
     Optional<DataSource> findByName(String name);
 
-    Optional<DataSource> findByUrl(String url);
+    /**
+     * Find a DataSource by URL.
+     * Returns the first match if duplicates exist (to handle legacy data).
+     */
+    Optional<DataSource> findFirstByUrl(String url);
 
     @Query("SELECT ds FROM DataSource ds WHERE ds.isActive = true " +
            "AND (ds.lastCollected IS NULL OR ds.lastCollected < :threshold)")

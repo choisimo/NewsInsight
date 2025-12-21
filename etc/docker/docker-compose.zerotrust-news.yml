@@ -315,7 +315,7 @@ services:
 
   browser-use-api:
     build:
-      context: ../../backend/browser-use
+      context: ../../backend/services/browser-use-api
       dockerfile: Dockerfile.api
     image: news/browser-use-api:local
     container_name: news-browser-use-api

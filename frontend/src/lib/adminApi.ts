@@ -25,6 +25,15 @@ export const authApi = {
     return response.data;
   },
   
+  refresh: async (): Promise<Token> => {
+    const client = await getApiClient();
+    // Browser automatically sends HTTP-Only refresh_token cookie
+    const response = await client.post<Token>('/api/v1/admin/auth/refresh', {}, {
+      withCredentials: true, // Ensure cookies are sent
+    });
+    return response.data;
+  },
+  
   logout: async (): Promise<void> => {
     const client = await getApiClient();
     await client.post('/api/v1/admin/auth/logout');

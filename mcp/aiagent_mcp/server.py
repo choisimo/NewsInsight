@@ -16,7 +16,6 @@ import random
 import time
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any, Tuple
-from urllib.parse import urlparse
 from contextlib import contextmanager
 from base64 import b64encode, b64decode
 
@@ -26,12 +25,24 @@ from mcp.server import FastMCP
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 
+# Shared modules
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.db import get_postgres_conn, check_db_connection, DB_BACKEND
+from shared.health import create_health_response
+
 # ─────────────────────────────────────────────
 # 1. MCP 서버 기본 설정
 # ─────────────────────────────────────────────
 
-# 포트 설정 (환경변수에서 읽음)
-PORT = int(os.environ.get("PORT", "5010"))
+# 포트 설정 (shared ports 모듈에서 가져오거나 환경변수)
+try:
+    from shared.ports import MCP_PORTS
+
+    PORT = MCP_PORTS.get("aiagent_mcp", 5010)
+except ImportError:
+    PORT = int(os.environ.get("PORT", "5010"))
 
 server = FastMCP(
     "ai-agent-mcp",
@@ -40,22 +51,18 @@ server = FastMCP(
 )
 
 
-# Health check endpoint
+# Health check endpoint (using shared module)
 @server.custom_route("/health", methods=["GET"])
 async def health_endpoint(request: Request) -> JSONResponse:
+    db_status = check_db_connection()
     return JSONResponse(
-        {
-            "status": "healthy",
-            "server": "ai-agent-mcp",
-            "version": "1.0.0",
-        }
+        create_health_response(
+            server_name="ai-agent-mcp", version="1.0.0", extra_info=db_status
+        )
     )
 
 
-# DB 백엔드
-DB_BACKEND = os.environ.get("DB_BACKEND", "postgres")
-POSTGRES_DSN = os.environ.get("DATABASE_URL")
-MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/newsinsight")
+# DB 설정은 shared.db에서 가져옴 (get_postgres_conn)
 
 # 암호화 키 (API key 암호화용)
 ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "newsinsight-default-key-change-me")
@@ -100,23 +107,9 @@ def decrypt_api_key(encrypted_key: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# 3. DB 연결 헬퍼
+# 3. DB 연결 헬퍼 (shared.db 모듈 사용)
 # ─────────────────────────────────────────────
-
-_pg_conn = None
-
-
-def get_postgres_conn():
-    """PostgreSQL 연결을 반환합니다."""
-    global _pg_conn
-    import psycopg2
-
-    if _pg_conn is None or _pg_conn.closed != 0:
-        if not POSTGRES_DSN:
-            raise RuntimeError("DATABASE_URL이 설정되어 있지 않습니다.")
-        _pg_conn = psycopg2.connect(POSTGRES_DSN)
-        _pg_conn.autocommit = True
-    return _pg_conn
+# get_postgres_conn()은 shared.db에서 import됨
 
 
 # ─────────────────────────────────────────────

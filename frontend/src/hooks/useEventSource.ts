@@ -1,5 +1,20 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
+// Storage key for access token (matches AuthContext)
+const ACCESS_TOKEN_KEY = 'access_token';
+
+/**
+ * Append authentication token to URL for SSE connections.
+ * EventSource doesn't support custom headers, so we use query parameter.
+ */
+function appendTokenToUrl(url: string): string {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token) return url;
+  
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export interface UseEventSourceOptions {
   /** SSE 메시지 수신 시 콜백 */
   onMessage: (data: string, event?: MessageEvent) => void;
@@ -110,7 +125,9 @@ export function useEventSource(
       setStatus('connecting');
     }
 
-    const eventSource = new EventSource(url);
+    // Append auth token to URL for SSE authentication
+    const authenticatedUrl = appendTokenToUrl(url);
+    const eventSource = new EventSource(authenticatedUrl);
     sourceRef.current = eventSource;
 
     eventSource.onopen = () => {

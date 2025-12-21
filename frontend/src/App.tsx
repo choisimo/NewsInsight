@@ -7,8 +7,9 @@ import { BackgroundTaskProvider } from "@/contexts/BackgroundTaskContext";
 import { SearchJobProvider } from "@/contexts/SearchJobContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { QuickAccessProvider } from "@/contexts/QuickAccessContext";
+import { useMemo } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ActiveJobsIndicator } from "@/components/ActiveJobsIndicator";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -50,6 +51,8 @@ import AdminAuditLogs from "./pages/admin/AdminAuditLogs";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminLogin from "./pages/admin/AdminLogin";
 import AdminSetup from "./pages/admin/AdminSetup";
+import AdminLlmProviders from "./pages/admin/AdminLlmProviders";
+import AdminConfigExport from "./pages/admin/AdminConfigExport";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 const queryClient = new QueryClient();
@@ -57,6 +60,29 @@ const queryClient = new QueryClient();
 const RedirectWithState = ({ to }: { to: string }) => {
   const location = useLocation();
   return <Navigate to={to} replace state={location.state} />;
+};
+
+// Wrapper to pass authenticated userId to SearchJobProvider
+const AuthenticatedSearchJobProvider = ({ children }: { children: React.ReactNode }) => {
+  const { user, isAuthenticated } = useAuth();
+  
+  // Generate a stable anonymous session ID for unauthenticated users
+  const anonymousSessionId = useMemo(() => {
+    const stored = sessionStorage.getItem('anonymous_session_id');
+    if (stored) return stored;
+    const newId = `anon-${crypto.randomUUID().slice(0, 8)}`;
+    sessionStorage.setItem('anonymous_session_id', newId);
+    return newId;
+  }, []);
+  
+  // Use authenticated user ID or anonymous session ID
+  const userId = isAuthenticated && user?.id ? user.id : anonymousSessionId;
+  
+  return (
+    <SearchJobProvider userId={userId}>
+      {children}
+    </SearchJobProvider>
+  );
 };
 
 const AppContent = () => {
@@ -114,6 +140,8 @@ const AppContent = () => {
                 <Route path="/admin/scripts" element={<ProtectedRoute requiredRole="operator"><AdminScripts /></ProtectedRoute>} />
                 <Route path="/admin/audit-logs" element={<ProtectedRoute requiredRole="admin"><AdminAuditLogs /></ProtectedRoute>} />
                 <Route path="/admin/users" element={<ProtectedRoute requiredRole="admin"><AdminUsers /></ProtectedRoute>} />
+                <Route path="/admin/llm-providers" element={<ProtectedRoute requiredRole="admin"><AdminLlmProviders /></ProtectedRoute>} />
+                <Route path="/admin/config-export" element={<ProtectedRoute requiredRole="admin"><AdminConfigExport /></ProtectedRoute>} />
                 
                 {/* Settings */}
                 <Route path="/settings" element={<Settings />} />
@@ -134,7 +162,7 @@ const App = () => (
       <AuthProvider>
         <NotificationProvider>
           <BackgroundTaskProvider>
-            <SearchJobProvider>
+            <AuthenticatedSearchJobProvider>
               <QuickAccessProvider>
                 <TooltipProvider>
                   <Toaster />
@@ -144,7 +172,7 @@ const App = () => (
                   </BrowserRouter>
                 </TooltipProvider>
               </QuickAccessProvider>
-            </SearchJobProvider>
+            </AuthenticatedSearchJobProvider>
           </BackgroundTaskProvider>
         </NotificationProvider>
       </AuthProvider>

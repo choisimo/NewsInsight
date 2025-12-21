@@ -131,6 +131,7 @@ export interface Token {
   access_token: string;
   token_type: string;
   expires_in: number;
+  // refresh_token is now sent via HTTP-Only cookie, not in response body
 }
 
 export interface HealthCheck {

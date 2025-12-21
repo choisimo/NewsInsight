@@ -3,6 +3,7 @@ Script Service - 스크립트/작업 관리 및 실행 서비스
 """
 import asyncio
 import os
+import re
 import signal
 import subprocess
 from datetime import datetime
@@ -23,6 +24,129 @@ from ..models.schemas import (
     TaskStatus,
     UserRole,
 )
+
+
+# ============================================================================
+# 보안: 위험 명령어 필터링
+# ============================================================================
+
+# 절대 허용하지 않는 위험한 명령어 패턴들
+DANGEROUS_COMMAND_PATTERNS = [
+    # 시스템 파괴 명령어
+    r'\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?/\s*$',  # rm -rf /
+    r'\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+)?(-[a-zA-Z]*f[a-zA-Z]*\s+)?/\s*$',  # rm -fr /
+    r'\brm\s+-[a-zA-Z]*\s+/\s*$',  # rm -* /
+    r'\brm\s+--no-preserve-root',  # rm --no-preserve-root
+    r':\s*\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;',  # fork bomb :(){ :|:& };:
+    r'\bdd\s+.*of=/dev/(sd[a-z]|hd[a-z]|nvme)',  # dd to disk devices
+    r'\bmkfs\s+',  # format filesystem
+    r'\bfdisk\s+',  # partition table manipulation
+    r'\bparted\s+',  # partition manipulation
+    
+    # 위험한 경로 삭제
+    r'\brm\s+.*\s+/boot\b',
+    r'\brm\s+.*\s+/etc\b',
+    r'\brm\s+.*\s+/usr\b',
+    r'\brm\s+.*\s+/bin\b',
+    r'\brm\s+.*\s+/sbin\b',
+    r'\brm\s+.*\s+/lib\b',
+    r'\brm\s+.*\s+/var\b',
+    r'\brm\s+.*\s+/home\b',
+    r'\brm\s+.*\s+/root\b',
+    r'\brm\s+.*\s+/sys\b',
+    r'\brm\s+.*\s+/proc\b',
+    r'\brm\s+.*\s+/dev\b',
+    
+    # 권한 상승 및 보안 우회
+    r'\bchmod\s+777\s+/',  # chmod 777 /
+    r'\bchmod\s+-R\s+777\s+/',  # chmod -R 777 /
+    r'\bchown\s+-R\s+.*:.*\s+/',  # chown -R on root
+    
+    # 네트워크 공격 관련
+    r'\bnc\s+-[a-zA-Z]*e',  # netcat with execute
+    r'\bcurl\s+.*\|\s*(ba)?sh',  # curl pipe to shell
+    r'\bwget\s+.*\|\s*(ba)?sh',  # wget pipe to shell
+    
+    # 암호화폐 채굴 등 악용 가능 패턴
+    r'\b(xmrig|minerd|cgminer|bfgminer)\b',
+    
+    # 시스템 종료/재부팅
+    r'\bshutdown\b',
+    r'\breboot\b',
+    r'\bhalt\b',
+    r'\bpoweroff\b',
+    r'\binit\s+[06]\b',
+    
+    # 사용자/패스워드 조작
+    r'\bpasswd\s+root\b',
+    r'\busermod\s+-[a-zA-Z]*\s+root\b',
+    r'\buserdel\s+',
+    r'\bgroupdel\s+',
+    
+    # 위험한 환경변수 조작
+    r'\bexport\s+PATH=\s*$',  # PATH 비우기
+    r'\bexport\s+LD_PRELOAD=',  # LD_PRELOAD 조작
+    
+    # 시스템 로그 삭제
+    r'\brm\s+.*(/var/log|\.log)',
+    r'>\s*/var/log/',
+    r'\btruncate\s+.*(/var/log|\.log)',
+]
+
+# 위험 키워드 (sudo와 함께 사용 시 추가 경고)
+DANGEROUS_WITH_SUDO = [
+    r'\bsudo\s+rm\s+-[a-zA-Z]*r',
+    r'\bsudo\s+rm\s+/',
+    r'\bsudo\s+dd\b',
+    r'\bsudo\s+mkfs\b',
+    r'\bsudo\s+fdisk\b',
+]
+
+
+class CommandSecurityError(Exception):
+    """명령어 보안 검사 실패 예외"""
+    def __init__(self, command: str, reason: str, pattern: str = None):
+        self.command = command
+        self.reason = reason
+        self.pattern = pattern
+        super().__init__(f"Security violation: {reason}")
+
+
+def validate_command_security(command: str) -> tuple[bool, str]:
+    """
+    명령어 보안 검사
+    
+    Args:
+        command: 실행할 명령어
+        
+    Returns:
+        (is_safe, reason): 안전 여부와 이유
+        
+    Raises:
+        CommandSecurityError: 위험한 명령어 감지 시
+    """
+    # 명령어 정규화 (소문자 변환, 연속 공백 제거)
+    normalized = ' '.join(command.lower().split())
+    
+    # 위험 패턴 검사
+    for pattern in DANGEROUS_COMMAND_PATTERNS:
+        if re.search(pattern, normalized, re.IGNORECASE):
+            raise CommandSecurityError(
+                command=command,
+                reason=f"위험한 명령어 패턴이 감지되었습니다: 시스템 보안을 위해 이 명령어는 실행할 수 없습니다.",
+                pattern=pattern
+            )
+    
+    # sudo + 위험 명령어 조합 검사
+    for pattern in DANGEROUS_WITH_SUDO:
+        if re.search(pattern, normalized, re.IGNORECASE):
+            raise CommandSecurityError(
+                command=command,
+                reason=f"sudo와 함께 사용된 위험한 명령어가 감지되었습니다. 시스템 보호를 위해 차단됩니다.",
+                pattern=pattern
+            )
+    
+    return True, "OK"
 
 
 class ScriptService:
@@ -335,6 +459,12 @@ python3 -c "import sys,json; [print(f'{json.loads(l).get(\"Name\")}: {json.loads
             compose_file=compose_file,
             **parameters,
         )
+        
+        # 보안 검사: 위험한 명령어 차단
+        try:
+            validate_command_security(command)
+        except CommandSecurityError as e:
+            raise ValueError(f"보안 위반: {e.reason}")
 
         execution = TaskExecution(
             id=execution_id,
@@ -417,6 +547,14 @@ python3 -c "import sys,json; [print(f'{json.loads(l).get(\"Name\")}: {json.loads
             compose_file=compose_file,
             **parameters,
         )
+        
+        # 보안 검사: 위험한 명령어 차단
+        try:
+            validate_command_security(command)
+        except CommandSecurityError as e:
+            yield f"[SECURITY ERROR] {e.reason}\n"
+            yield f"[BLOCKED] 명령어가 보안 정책에 의해 차단되었습니다.\n"
+            return
 
         execution = TaskExecution(
             id=execution_id,

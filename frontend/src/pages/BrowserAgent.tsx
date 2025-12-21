@@ -41,6 +41,9 @@ import {
   X,
   Copy,
   BarChart3,
+  StopCircle,
+  AlertTriangle,
+  TrendingUp,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -86,11 +89,16 @@ import {
   requestManualIntervention,
   cancelBrowserJob,
   getBrowserWSUrl,
+  getBrowserUseStats,
+  getActiveBrowserJobs,
+  cancelAllBrowserJobs,
   type BrowserJobStatus,
   type BrowserJobStatusResponse,
   type BrowserWSMessage,
   type HumanAction,
   type InterventionType,
+  type BrowserUseStats,
+  type BrowserJobSummary,
 } from "@/lib/api";
 
 const STATUS_CONFIG: Record<BrowserJobStatus, { label: string; icon: typeof Clock; color: string }> = {
@@ -484,6 +492,46 @@ const BrowserAgent = () => {
   });
 
   const isHealthy = health?.status === "healthy";
+
+  // Browser stats query
+  const [showStats, setShowStats] = useState(false);
+  const { data: browserStats, refetch: refetchStats, isLoading: statsLoading } = useQuery({
+    queryKey: ["browserUse", "stats"],
+    queryFn: getBrowserUseStats,
+    enabled: showStats,
+    staleTime: 10_000,
+    refetchInterval: showStats ? 15_000 : false,
+  });
+
+  // Active jobs query
+  const { data: activeJobs, refetch: refetchActiveJobs } = useQuery({
+    queryKey: ["browserUse", "activeJobs"],
+    queryFn: getActiveBrowserJobs,
+    enabled: showStats,
+    staleTime: 5_000,
+    refetchInterval: showStats ? 10_000 : false,
+  });
+
+  // Cancel all jobs mutation
+  const cancelAllMutation = useMutation({
+    mutationFn: cancelAllBrowserJobs,
+    onSuccess: (result) => {
+      toast({
+        title: "Jobs Cancelled",
+        description: `${result.cancelled} jobs cancelled${result.errors.length > 0 ? `, ${result.errors.length} errors` : ''}`,
+      });
+      refetchStats();
+      refetchActiveJobs();
+      queryClient.invalidateQueries({ queryKey: ["browserUse"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to Cancel Jobs",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 
   // Job status polling
   const { data: currentJob } = useQuery({
@@ -946,6 +994,16 @@ const BrowserAgent = () => {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {/* Stats Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowStats(!showStats)}
+                className="gap-1"
+              >
+                <TrendingUp className="h-4 w-4" />
+                통계
+              </Button>
               {/* History Button */}
               <Button
                 variant="outline"
@@ -986,6 +1044,221 @@ const BrowserAgent = () => {
             </div>
           )}
         </header>
+
+        {/* Stats Dashboard Panel */}
+        {showStats && (
+          <Card className="mb-6">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5" />
+                  Browser Agent 통계
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      refetchStats();
+                      refetchActiveJobs();
+                    }}
+                    disabled={statsLoading}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${statsLoading ? 'animate-spin' : ''}`} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowStats(false)}
+                    className="h-8 w-8 p-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {statsLoading && !browserStats ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : browserStats ? (
+                <div className="space-y-6">
+                  {/* Stats Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className="text-center p-4 bg-muted/50 rounded-lg">
+                      <p className="text-3xl font-bold">{browserStats.totalJobs}</p>
+                      <p className="text-xs text-muted-foreground">전체 작업</p>
+                    </div>
+                    <div className="text-center p-4 bg-blue-500/10 rounded-lg border border-blue-500/20">
+                      <p className="text-3xl font-bold text-blue-600">{browserStats.activeJobs}</p>
+                      <p className="text-xs text-muted-foreground">실행 중</p>
+                    </div>
+                    <div className="text-center p-4 bg-orange-500/10 rounded-lg border border-orange-500/20">
+                      <p className="text-3xl font-bold text-orange-600">{browserStats.waitingIntervention}</p>
+                      <p className="text-xs text-muted-foreground">대기 중</p>
+                    </div>
+                    <div className="text-center p-4 bg-green-500/10 rounded-lg border border-green-500/20">
+                      <p className="text-3xl font-bold text-green-600">{browserStats.completedJobs}</p>
+                      <p className="text-xs text-muted-foreground">완료</p>
+                    </div>
+                    <div className="text-center p-4 bg-red-500/10 rounded-lg border border-red-500/20">
+                      <p className="text-3xl font-bold text-red-600">{browserStats.failedJobs}</p>
+                      <p className="text-xs text-muted-foreground">실패/취소</p>
+                    </div>
+                  </div>
+
+                  {/* Active Jobs List */}
+                  {activeJobs && activeJobs.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-medium flex items-center gap-2">
+                          <Activity className="h-4 w-4" />
+                          활성 작업 ({activeJobs.length}개)
+                        </h4>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => {
+                            if (confirm(`${activeJobs.length}개의 모든 활성 작업을 취소하시겠습니까?`)) {
+                              cancelAllMutation.mutate();
+                            }
+                          }}
+                          disabled={cancelAllMutation.isPending}
+                          className="gap-1"
+                        >
+                          {cancelAllMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <StopCircle className="h-4 w-4" />
+                          )}
+                          모두 취소
+                        </Button>
+                      </div>
+                      <ScrollArea className="max-h-[200px]">
+                        <div className="space-y-2">
+                          {activeJobs.map((job) => (
+                            <div
+                              key={job.job_id}
+                              className="flex items-center justify-between p-3 rounded-lg border bg-card"
+                            >
+                              <div className="flex-1 min-w-0 mr-4">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Badge className={STATUS_CONFIG[job.status]?.color || 'bg-gray-500'}>
+                                    {STATUS_CONFIG[job.status]?.label || job.status}
+                                  </Badge>
+                                  {job.intervention_requested && (
+                                    <Badge variant="outline" className="text-orange-600 border-orange-300">
+                                      <AlertTriangle className="h-3 w-3 mr-1" />
+                                      개입 필요
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-xs text-muted-foreground truncate">
+                                  ID: {job.job_id}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  진행: {Math.round(job.progress * 100)}%
+                                  {job.started_at && ` · 시작: ${new Date(job.started_at).toLocaleTimeString('ko-KR')}`}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setCurrentJobId(job.job_id);
+                                    setShowStats(false);
+                                  }}
+                                  className="h-8 w-8 p-0"
+                                  title="작업 보기"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={async () => {
+                                    try {
+                                      await cancelBrowserJob(job.job_id);
+                                      toast({ title: "취소됨", description: `작업 ${job.job_id.slice(0, 8)}... 취소됨` });
+                                      refetchActiveJobs();
+                                      refetchStats();
+                                    } catch (e) {
+                                      toast({
+                                        title: "취소 실패",
+                                        description: e instanceof Error ? e.message : "Unknown error",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                  title="취소"
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  )}
+
+                  {/* Recent Jobs */}
+                  {browserStats.recentJobs.length > 0 && (
+                    <Collapsible>
+                      <CollapsibleTrigger asChild>
+                        <Button variant="ghost" size="sm" className="w-full justify-between">
+                          <span className="flex items-center gap-2">
+                            <History className="h-4 w-4" />
+                            최근 작업 ({browserStats.recentJobs.length}개)
+                          </span>
+                          <ChevronDown className="h-4 w-4" />
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <ScrollArea className="max-h-[250px] mt-2">
+                          <div className="space-y-2">
+                            {browserStats.recentJobs.map((job) => (
+                              <div
+                                key={job.job_id}
+                                className="flex items-center justify-between p-2 rounded border text-sm"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <Badge className={`${STATUS_CONFIG[job.status]?.color || 'bg-gray-500'} text-xs`}>
+                                    {STATUS_CONFIG[job.status]?.label || job.status}
+                                  </Badge>
+                                  <span className="text-xs text-muted-foreground truncate max-w-[200px]">
+                                    {job.job_id}
+                                  </span>
+                                </div>
+                                <span className="text-xs text-muted-foreground">
+                                  {Math.round(job.progress * 100)}%
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
+
+                  {/* No active jobs message */}
+                  {(!activeJobs || activeJobs.length === 0) && (
+                    <div className="text-center py-4 text-muted-foreground text-sm">
+                      현재 활성화된 작업이 없습니다.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  통계를 불러올 수 없습니다.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* History Panel */}
         {showHistory && storageLoaded && (
