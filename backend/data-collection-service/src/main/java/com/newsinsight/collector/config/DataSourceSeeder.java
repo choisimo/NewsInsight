@@ -422,7 +422,7 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .sourceType(SourceType.BROWSER_AGENT)
                 .isActive(true)
                 .collectionFrequency(3600)
-                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .browserAgentConfig(BrowserAgentConfig.forCommunityExploration())
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
                 .build(),
                 
@@ -433,7 +433,7 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .sourceType(SourceType.BROWSER_AGENT)
                 .isActive(true)
                 .collectionFrequency(3600)
-                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .browserAgentConfig(BrowserAgentConfig.forCommunityExploration())
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"medium\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
                 .build(),
                 
@@ -444,7 +444,7 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .sourceType(SourceType.BROWSER_AGENT)
                 .isActive(true)
                 .collectionFrequency(3600)
-                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .browserAgentConfig(BrowserAgentConfig.forCommunityExploration())
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
                 .build(),
                 
@@ -455,7 +455,7 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .sourceType(SourceType.BROWSER_AGENT)
                 .isActive(true)
                 .collectionFrequency(3600)
-                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .browserAgentConfig(BrowserAgentConfig.forCommunityExploration())
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
                 .build(),
                 
@@ -466,7 +466,7 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .sourceType(SourceType.BROWSER_AGENT)
                 .isActive(true)
                 .collectionFrequency(3600)
-                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .browserAgentConfig(BrowserAgentConfig.forCommunityExploration())
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
                 .build(),
                 
@@ -477,7 +477,7 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .sourceType(SourceType.BROWSER_AGENT)
                 .isActive(true)
                 .collectionFrequency(3600)
-                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .browserAgentConfig(BrowserAgentConfig.forCommunityExploration())
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
                 .build(),
                 
@@ -488,7 +488,7 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .sourceType(SourceType.BROWSER_AGENT)
                 .isActive(true)
                 .collectionFrequency(3600)
-                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .browserAgentConfig(BrowserAgentConfig.forCommunityExploration())
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
                 .build(),
                 
@@ -499,7 +499,7 @@ public class DataSourceSeeder implements ApplicationRunner {
                 .sourceType(SourceType.BROWSER_AGENT)
                 .isActive(true)
                 .collectionFrequency(7200)
-                .browserAgentConfig(BrowserAgentConfig.forNewsExploration())
+                .browserAgentConfig(BrowserAgentConfig.forCommunityExploration())
                 .metadataJson("{\"region\":\"korea\",\"language\":\"ko\",\"reliability\":\"low\",\"category\":\"community\",\"source_category\":\"community\",\"crawler\":\"browser_agent\"}")
                 .build(),
                 

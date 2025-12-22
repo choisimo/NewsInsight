@@ -217,6 +217,22 @@ public class BrowserAgentConfig {
                 .build();
     }
 
+    /**
+     * Create config for community/forum site exploration.
+     * 커뮤니티/포럼 사이트 수집에 적합한 설정.
+     * NEWS_ONLY 대신 FOCUSED_TOPIC 정책 사용.
+     */
+    public static BrowserAgentConfig forCommunityExploration() {
+        return BrowserAgentConfig.builder()
+                .maxDepth(2)
+                .maxPages(50)
+                .budgetSeconds(300)
+                .policy(BrowserAgentPolicy.FOCUSED_TOPIC)
+                .extractStructured(true)
+                .captureScreenshots(false)
+                .build();
+    }
+
     // ========================================
     // 유틸리티 메서드
     // ========================================
