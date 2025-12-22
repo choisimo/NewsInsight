@@ -189,6 +189,28 @@ public class LlmProviderSettingsService {
                 .collect(Collectors.toList());
     }
 
+    // ========== API 키 직접 조회 (내부 서비스용) ==========
+
+    /**
+     * 전역 설정에서 API 키 직접 조회 (실시간 검색 등 내부 서비스용)
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> getGlobalApiKey(LlmProviderType providerType) {
+        return repository.findGlobalByProviderType(providerType)
+                .filter(LlmProviderSettings::getEnabled)
+                .map(LlmProviderSettings::getApiKey);
+    }
+
+    /**
+     * 전역 설정에서 Base URL 직접 조회
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> getGlobalBaseUrl(LlmProviderType providerType) {
+        return repository.findGlobalByProviderType(providerType)
+                .filter(LlmProviderSettings::getEnabled)
+                .map(LlmProviderSettings::getBaseUrl);
+    }
+
     // ========== 연결 테스트 ==========
 
     /**
@@ -263,6 +285,9 @@ public class LlmProviderSettingsService {
             case OLLAMA -> baseUrl + "/api/tags";
             case AZURE_OPENAI -> baseUrl + "/openai/deployments?api-version=" + 
                     (settings.getAzureApiVersion() != null ? settings.getAzureApiVersion() : "2024-02-01");
+            case PERPLEXITY -> baseUrl + "/chat/completions";
+            case BRAVE_SEARCH -> baseUrl + "/web/search";
+            case TAVILY -> baseUrl + "/search";
             case CUSTOM -> baseUrl + "/health";
         };
     }

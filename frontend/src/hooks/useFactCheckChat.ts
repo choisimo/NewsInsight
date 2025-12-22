@@ -180,8 +180,9 @@ export const useFactCheckChat = (options: UseFactCheckChatOptions): UseFactCheck
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
+          // Handle both 'data: ' and 'data:' formats (with or without space)
+          if (line.startsWith('data:')) {
+            const data = line.startsWith('data: ') ? line.slice(6) : line.slice(5);
             
             if (data === '[DONE]') {
               setIsStreaming(false);

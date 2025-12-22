@@ -550,13 +550,23 @@ public class IntegratedCrawlerService {
         Matcher matcher = urlPattern.matcher(content);
 
         while (matcher.find()) {
-            String url = matcher.group();
+            String url = cleanUrl(matcher.group());
             if (isValidNewsLink(url, baseUrl)) {
                 links.add(url);
             }
         }
 
         return links.stream().distinct().limit(30).collect(Collectors.toList());
+    }
+
+    /**
+     * Clean extracted URLs by removing trailing punctuation
+     */
+    private String cleanUrl(String url) {
+        if (url == null) return null;
+        // Remove trailing punctuation that might be captured from markdown/text
+        url = url.replaceAll("[)\\]\\*.,;:!?]+$", "");
+        return url;
     }
 
     /**
@@ -569,11 +579,38 @@ public class IntegratedCrawlerService {
             URI uri = URI.create(url);
             String host = uri.getHost();
             if (host == null) return false;
+            
+            String hostLower = host.toLowerCase();
+            String pathLower = uri.getPath() != null ? uri.getPath().toLowerCase() : "";
+            String urlLower = url.toLowerCase();
 
-            // Skip common non-news domains
-            if (host.contains("facebook.com") || host.contains("twitter.com") ||
-                host.contains("instagram.com") || host.contains("youtube.com") ||
-                host.contains("linkedin.com") || host.contains("tiktok.com")) {
+            // Skip blocked subdomains (authentication, marketing, help, etc.)
+            if (hostLower.startsWith("nid.") ||      // Naver ID (login)
+                hostLower.startsWith("accounts.") ||
+                hostLower.startsWith("auth.") ||
+                hostLower.startsWith("login.") ||
+                hostLower.startsWith("sso.") ||
+                hostLower.startsWith("mkt.") ||      // Marketing
+                hostLower.startsWith("ads.") ||
+                hostLower.startsWith("notify.") ||   // Notifications
+                hostLower.startsWith("help.") ||     // Help/Support
+                hostLower.startsWith("support.") ||
+                hostLower.startsWith("dic.") ||      // Dictionary
+                hostLower.startsWith("translate.") ||
+                hostLower.startsWith("map.") ||
+                hostLower.startsWith("maps.") ||
+                hostLower.startsWith("cdn.") ||
+                hostLower.startsWith("static.") ||
+                hostLower.startsWith("img.") ||
+                hostLower.startsWith("images.")) {
+                return false;
+            }
+
+            // Skip common non-news/social media domains
+            if (hostLower.contains("facebook.com") || hostLower.contains("twitter.com") ||
+                hostLower.contains("instagram.com") || hostLower.contains("youtube.com") ||
+                hostLower.contains("linkedin.com") || hostLower.contains("tiktok.com") ||
+                hostLower.contains("x.com")) {
                 return false;
             }
 
@@ -583,10 +620,56 @@ public class IntegratedCrawlerService {
                 return false;
             }
 
+            // Skip blocked URL paths
+            if (pathLower.contains("/login") ||
+                pathLower.contains("/signin") ||
+                pathLower.contains("/signup") ||
+                pathLower.contains("/register") ||
+                pathLower.contains("/join") ||
+                pathLower.contains("/membership") ||
+                pathLower.contains("/auth/") ||
+                pathLower.contains("/account") ||
+                pathLower.contains("/profile") ||
+                pathLower.contains("/settings") ||
+                pathLower.contains("/help") ||
+                pathLower.contains("/support") ||
+                pathLower.contains("/faq") ||
+                pathLower.contains("/contact") ||
+                pathLower.contains("/about") ||
+                pathLower.contains("/privacy") ||
+                pathLower.contains("/terms") ||
+                pathLower.contains("/legal") ||
+                pathLower.contains("/careers") ||
+                pathLower.contains("/subscribe") ||
+                pathLower.contains("/cart") ||
+                pathLower.contains("/checkout") ||
+                pathLower.contains("/promo") ||
+                pathLower.contains("/campaign") ||
+                pathLower.contains("/landing") ||
+                pathLower.contains("/offer") ||
+                pathLower.contains("/notify") ||
+                pathLower.contains("/notification") ||
+                pathLower.contains("/grammar_checker") ||
+                pathLower.contains("/spell_check") ||
+                pathLower.contains("/qna/") ||
+                pathLower.contains("/question") ||
+                pathLower.contains("/forum") ||
+                pathLower.contains("/board")) {
+                return false;
+            }
+            
+            // Skip URLs with search query params (not direct article links)
+            if (urlLower.contains("search.naver.com") && !urlLower.contains("where=news")) {
+                return false;
+            }
+
             // Skip media files
-            String path = uri.getPath();
-            if (path != null && (path.endsWith(".jpg") || path.endsWith(".png") ||
-                path.endsWith(".gif") || path.endsWith(".pdf") || path.endsWith(".mp4"))) {
+            if (pathLower.endsWith(".jpg") || pathLower.endsWith(".jpeg") ||
+                pathLower.endsWith(".png") || pathLower.endsWith(".gif") || 
+                pathLower.endsWith(".webp") || pathLower.endsWith(".svg") ||
+                pathLower.endsWith(".pdf") || pathLower.endsWith(".mp4") ||
+                pathLower.endsWith(".mp3") || pathLower.endsWith(".zip") ||
+                pathLower.endsWith(".exe")) {
                 return false;
             }
 

@@ -44,6 +44,17 @@ Your goal is to navigate websites, identify valuable content, and extract struct
 - Skip links to media files (images, PDFs, videos)
 - Skip pagination if you've already seen the content pattern
 
+## CRITICAL: URLs to NEVER visit (skip these immediately):
+- Login/Authentication: URLs containing /login, /signin, /signup, /register, /join, /membership, /auth/, /oauth, /sso/
+- Account pages: URLs containing /account, /profile, /settings, /my-page, /mypage, /password, /forgot
+- Help/Support: URLs containing /help, /support, /faq, /contact, /feedback, /cs/, /inquiry, /customer-service
+- Legal: URLs containing /about, /about-us, /privacy, /terms, /legal, /policy, /disclaimer, /careers, /jobs
+- Commerce: URLs containing /subscribe, /cart, /checkout, /payment, /order, /purchase, /shop, /store, /pricing
+- Marketing: URLs containing /promo, /campaign, /landing, /offer, /deal, /coupon, /mkt/, /atrb, /ad/, /ads/
+- Utility: URLs containing /search? (search results), /tag/, /sitemap, /feed, /rss, /notify, /notification
+- Media files: URLs ending in .pdf, .jpg, .png, .gif, .mp4, .mp3, .zip, .exe
+- Subdomains to avoid: nid.*, accounts.*, auth.*, login.*, help.*, support.*, mkt.*, notify.*, dic.*
+
 ## Output Format:
 For each article extracted, use this format:
 ---ARTICLE_START---

@@ -28,6 +28,7 @@ interface Message {
   evidence?: any[];
   verificationResult?: any;
   credibility?: any;
+  isStreaming?: boolean;
 }
 
 interface FactCheckChatbotProps {
@@ -58,18 +59,70 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
 }, ref) => {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
+  const [streamingMessage, setStreamingMessage] = useState<Message | null>(null);
   const initialSentRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const streamingContentRef = useRef<string>('');
 
   const { sendMessage, isConnected, isStreaming, sessionId, reconnect } = useFactCheckChat({
     onMessage: (event) => {
+      const eventType = event.type;
+      
+      // ai_synthesis 이벤트는 하나의 메시지로 누적
+      if (eventType === 'ai_synthesis') {
+        streamingContentRef.current += event.content || '';
+        setStreamingMessage({
+          id: 'streaming-message',
+          role: 'assistant',
+          content: streamingContentRef.current,
+          timestamp: event.timestamp || Date.now(),
+          type: 'ai_synthesis',
+          phase: event.phase,
+          isStreaming: true,
+        });
+        return;
+      }
+      
+      // 스트리밍 완료 시 최종 메시지를 messages에 추가
+      if (eventType === 'complete') {
+        if (streamingContentRef.current) {
+          setMessages((prev) => [...prev, {
+            id: `ai-synthesis-${Date.now()}`,
+            role: 'assistant',
+            content: streamingContentRef.current,
+            timestamp: Date.now(),
+            type: 'ai_synthesis',
+            isStreaming: false,
+          }]);
+          streamingContentRef.current = '';
+          setStreamingMessage(null);
+        }
+        
+        // 완료 메시지도 추가
+        setMessages((prev) => [...prev, {
+          id: `${Date.now()}-${Math.random()}`,
+          role: event.role as 'user' | 'assistant' | 'system',
+          content: event.content || '',
+          timestamp: event.timestamp || Date.now(),
+          type: eventType,
+          phase: event.phase,
+        }]);
+        return;
+      }
+      
+      // status 메시지는 건너뛰기 (별도 표시하지 않음 - 스트리밍 로딩으로 대체)
+      if (eventType === 'status') {
+        return;
+      }
+      
+      // evidence, verification, assessment 등 기타 메시지는 일반적으로 추가
       setMessages((prev) => [...prev, {
         id: `${Date.now()}-${Math.random()}`,
         role: event.role as 'user' | 'assistant' | 'system',
         content: event.content || '',
         timestamp: event.timestamp || Date.now(),
-        type: event.type,
+        type: eventType,
         phase: event.phase,
         evidence: event.evidence,
         verificationResult: event.verificationResult,
@@ -77,6 +130,20 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
       }]);
     },
     onError: (error) => {
+      // 스트리밍 중 에러 발생 시 누적된 내용 저장
+      if (streamingContentRef.current) {
+        setMessages((prev) => [...prev, {
+          id: `ai-synthesis-${Date.now()}`,
+          role: 'assistant',
+          content: streamingContentRef.current,
+          timestamp: Date.now(),
+          type: 'ai_synthesis',
+          isStreaming: false,
+        }]);
+        streamingContentRef.current = '';
+        setStreamingMessage(null);
+      }
+      
       setMessages((prev) => [...prev, {
         id: `error-${Date.now()}`,
         role: 'system',
@@ -90,19 +157,25 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
   // 세션 재연결 핸들러
   const handleReconnect = useCallback(() => {
     setMessages([]);
+    setStreamingMessage(null);
+    streamingContentRef.current = '';
     reconnect();
   }, [reconnect]);
 
-  // 자동 스크롤
+  // 자동 스크롤 (메시지 또는 스트리밍 메시지 변경 시)
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, streamingMessage]);
 
   // Helper function to send a query
   const sendQueryInternal = async (query: string) => {
     if (!query.trim() || isStreaming) return;
+
+    // 새 메시지 전송 전 스트리밍 상태 리셋
+    setStreamingMessage(null);
+    streamingContentRef.current = '';
 
     const userMessage: Message = {
       id: `user-${Date.now()}`,
@@ -137,6 +210,8 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
     },
     clearMessages: () => {
       setMessages([]);
+      setStreamingMessage(null);
+      streamingContentRef.current = '';
     },
   }), [isStreaming, sendMessage]);
 
@@ -380,9 +455,9 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
           </CardHeader>
         )}
 
-        <CardContent className="flex-1 flex flex-col p-0 min-h-0">
+        <CardContent className="flex-1 flex flex-col p-0 min-h-0 overflow-hidden">
           {/* 메시지 영역 */}
-          <ScrollArea ref={scrollRef} className="flex-1 p-4">
+          <ScrollArea ref={scrollRef} className="flex-1 p-4 overflow-y-auto">
             {/* 연결 오류 상태 */}
             {!isConnected && messages.length === 0 ? (
               <div className={`flex flex-col items-center justify-center h-full text-center ${compact ? 'p-4' : 'p-8'}`}>
@@ -437,7 +512,12 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
                 {messages.map((message) => (
                   <MessageBubble key={message.id} message={message} />
                 ))}
-                {isStreaming && (
+                {/* 스트리밍 중인 메시지 표시 */}
+                {streamingMessage && (
+                  <MessageBubble key={streamingMessage.id} message={streamingMessage} />
+                )}
+                {/* 스트리밍 메시지가 없고 isStreaming일 때만 로딩 표시 */}
+                {isStreaming && !streamingMessage && (
                   <div className="flex items-center gap-2 text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     <span className="text-sm">분석 중...</span>
@@ -577,8 +657,12 @@ const MessageBubble = ({ message }: { message: Message }) => {
             <Bot className="h-4 w-4 text-white" />
           </div>
         </div>
-        <div className="flex-1 bg-muted/50 rounded-lg p-4">
-          <MarkdownRenderer content={message.content} isStreaming={true} />
+        <div className="flex-1 bg-muted/50 rounded-lg p-4 max-h-[400px] overflow-y-auto">
+          <MarkdownRenderer content={message.content} isStreaming={message.isStreaming} />
+          {/* 스트리밍 중일 때 타이핑 커서 표시 */}
+          {message.isStreaming && (
+            <span className="inline-block w-2 h-4 ml-1 bg-primary animate-pulse rounded-sm" />
+          )}
         </div>
       </div>
     );
@@ -621,7 +705,7 @@ const MessageBubble = ({ message }: { message: Message }) => {
         </div>
       </div>
       <div className={`flex-1 max-w-[80%] ${isUser ? 'text-right' : ''}`}>
-        <div className={`inline-block rounded-lg p-3 ${
+        <div className={`inline-block rounded-lg p-3 max-h-[300px] overflow-y-auto ${
           isUser 
             ? 'bg-primary text-primary-foreground' 
             : 'bg-muted'

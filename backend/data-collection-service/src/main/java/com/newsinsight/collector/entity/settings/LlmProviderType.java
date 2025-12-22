@@ -11,6 +11,10 @@ public enum LlmProviderType {
     OLLAMA("Ollama", "http://localhost:11434"),
     AZURE_OPENAI("Azure OpenAI", null),
     TOGETHER_AI("Together AI", "https://api.together.xyz/v1"),
+    // Search API Providers (실시간 검색용)
+    PERPLEXITY("Perplexity", "https://api.perplexity.ai"),
+    BRAVE_SEARCH("Brave Search", "https://api.search.brave.com/res/v1"),
+    TAVILY("Tavily", "https://api.tavily.com"),
     CUSTOM("Custom", null);
 
     private final String displayName;

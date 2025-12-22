@@ -157,6 +157,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/llm-providers/effective").permitAll()
                         .requestMatchers("/api/v1/llm-providers/enabled").permitAll()
                         .requestMatchers("/api/v1/llm-providers/config/**").permitAll()
+                        .requestMatchers("/api/v1/llm-providers/user").permitAll()
+                        .requestMatchers("/api/v1/llm-providers/user/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/llm-providers/**").permitAll()
                         .requestMatchers("/api/v1/llm-providers/**").hasAnyRole("ADMIN", "OPERATOR")
                         
                         // ========================================

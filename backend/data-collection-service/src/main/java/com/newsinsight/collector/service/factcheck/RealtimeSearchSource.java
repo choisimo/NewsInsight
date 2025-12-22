@@ -41,18 +41,51 @@ public class RealtimeSearchSource implements FactCheckSource {
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
     private final TrustScoreConfig trustScoreConfig;
+    private final com.newsinsight.collector.service.LlmProviderSettingsService llmProviderSettingsService;
 
     @Value("${PERPLEXITY_API_KEY:}")
-    private String apiKey;
+    private String envApiKey;
 
     @Value("${PERPLEXITY_BASE_URL:https://api.perplexity.ai}")
-    private String baseUrl;
+    private String envBaseUrl;
 
     @Value("${collector.realtime-search.enabled:true}")
     private boolean enabled;
 
     @Value("${collector.realtime-search.timeout-seconds:30}")
     private int timeoutSeconds;
+    
+    /**
+     * Get API key from LLM Provider Settings or fall back to environment variable
+     */
+    private String getApiKey() {
+        try {
+            var apiKey = llmProviderSettingsService.getGlobalApiKey(
+                com.newsinsight.collector.entity.settings.LlmProviderType.PERPLEXITY);
+            if (apiKey.isPresent() && !apiKey.get().isBlank()) {
+                return apiKey.get();
+            }
+        } catch (Exception e) {
+            log.debug("Failed to get Perplexity settings from database: {}", e.getMessage());
+        }
+        return envApiKey;
+    }
+    
+    /**
+     * Get base URL from LLM Provider Settings or fall back to environment variable
+     */
+    private String getBaseUrl() {
+        try {
+            var baseUrl = llmProviderSettingsService.getGlobalBaseUrl(
+                com.newsinsight.collector.entity.settings.LlmProviderType.PERPLEXITY);
+            if (baseUrl.isPresent() && !baseUrl.get().isBlank()) {
+                return baseUrl.get();
+            }
+        } catch (Exception e) {
+            log.debug("Failed to get Perplexity base URL from database: {}", e.getMessage());
+        }
+        return envBaseUrl;
+    }
 
     // 실시간 검색이 필요한 키워드 패턴
     private static final List<String> REALTIME_KEYWORDS = List.of(
@@ -94,6 +127,7 @@ public class RealtimeSearchSource implements FactCheckSource {
 
     @Override
     public boolean isAvailable() {
+        String apiKey = getApiKey();
         return enabled && apiKey != null && !apiKey.isBlank();
     }
 
@@ -108,6 +142,9 @@ public class RealtimeSearchSource implements FactCheckSource {
 
     @Override
     public Flux<SourceEvidence> fetchEvidence(String topic, String language) {
+        String apiKey = getApiKey();
+        String baseUrl = getBaseUrl();
+        
         if (!isAvailable()) {
             log.debug("Realtime Search is not available (enabled={}, hasKey={})", 
                     enabled, apiKey != null && !apiKey.isBlank());
