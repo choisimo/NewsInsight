@@ -355,18 +355,25 @@ public class LlmProviderSettingsService {
     }
 
     private void updateSettingsFromRequest(LlmProviderSettings settings, LlmProviderSettingsRequest request) {
-        if (request.getApiKey() != null) {
+        // API Key: only update if provided and not blank
+        if (request.getApiKey() != null && !request.getApiKey().isBlank()) {
             // Encrypt the API key before storing
             String encryptedApiKey = apiKeyEncryptor.encrypt(request.getApiKey());
             settings.setApiKey(encryptedApiKey);
             log.debug("API key encrypted and stored for provider: {}", settings.getProviderType());
         }
-        if (request.getDefaultModel() != null) {
+        
+        // Default Model: always required, update if provided and not blank
+        if (request.getDefaultModel() != null && !request.getDefaultModel().isBlank()) {
             settings.setDefaultModel(request.getDefaultModel());
         }
+        
+        // Base URL: update if provided (can be blank for some providers)
         if (request.getBaseUrl() != null) {
-            settings.setBaseUrl(request.getBaseUrl());
+            settings.setBaseUrl(request.getBaseUrl().isBlank() ? null : request.getBaseUrl());
         }
+        
+        // Boolean and numeric fields: always update if provided
         if (request.getEnabled() != null) {
             settings.setEnabled(request.getEnabled());
         }
@@ -385,11 +392,13 @@ public class LlmProviderSettingsService {
         if (request.getMaxRequestsPerMinute() != null) {
             settings.setMaxRequestsPerMinute(request.getMaxRequestsPerMinute());
         }
+        
+        // Azure specific fields: update if provided and not blank
         if (request.getAzureDeploymentName() != null) {
-            settings.setAzureDeploymentName(request.getAzureDeploymentName());
+            settings.setAzureDeploymentName(request.getAzureDeploymentName().isBlank() ? null : request.getAzureDeploymentName());
         }
         if (request.getAzureApiVersion() != null) {
-            settings.setAzureApiVersion(request.getAzureApiVersion());
+            settings.setAzureApiVersion(request.getAzureApiVersion().isBlank() ? null : request.getAzureApiVersion());
         }
     }
 }

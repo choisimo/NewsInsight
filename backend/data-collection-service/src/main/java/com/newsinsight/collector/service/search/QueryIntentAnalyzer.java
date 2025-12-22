@@ -97,9 +97,11 @@ public class QueryIntentAnalyzer {
                 
                 if (llmResult != null && llmResult.getConfidence() >= 0.5) {
                     QueryIntent intent = llmIntentAnalyzer.convertToQueryIntent(llmResult);
-                    log.info("LLM intent analysis succeeded: query='{}', type={}, confidence={:.2f}", 
-                            query, intent.getType(), intent.getConfidence());
-                    return intent;
+                    if (intent != null) {
+                        log.info("LLM intent analysis succeeded: query='{}', type={}, confidence={:.2f}", 
+                                query, intent.getType(), intent.getConfidence());
+                        return intent;
+                    }
                 } else if (llmResult != null) {
                     log.debug("LLM confidence too low ({:.2f}), using rule-based fallback", 
                             llmResult.getConfidence());

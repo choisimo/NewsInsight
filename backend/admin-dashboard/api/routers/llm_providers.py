@@ -213,12 +213,9 @@ async def list_provider_types(
 
 @router.get("/global", response_model=list[LlmProviderSettings])
 async def list_global_settings(
-    current_user=Depends(get_current_user_optional),
+    current_user=Depends(require_role(UserRole.ADMIN)),
 ):
-    """전역 LLM 설정 목록 조회 - 비인증 사용자는 빈 목록 반환"""
-    # 비인증 사용자 또는 ADMIN이 아닌 경우 빈 목록 반환
-    if current_user.id == "anonymous" or current_user.role != UserRole.ADMIN:
-        return []
+    """전역 LLM 설정 목록 조회 (Admin 권한 필요)"""
     result = await call_collector_service("GET", "/api/v1/admin/llm-providers")
     return result
 

@@ -1460,7 +1460,7 @@ const Settings = () => {
                   <Label className="text-muted-foreground">외부 링크</Label>
                   <div className="flex flex-wrap gap-2">
                     <Button variant="outline" size="sm" asChild>
-                      <a href="https://github.com/your-repo/newsinsight" target="_blank" rel="noopener noreferrer">
+                      <a href="https://github.com/choisimo/newsinsight" target="_blank" rel="noopener noreferrer">
                         <ExternalLink className="h-4 w-4 mr-2" />
                         GitHub
                       </a>

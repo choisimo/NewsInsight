@@ -119,6 +119,80 @@ const INTERVENTION_CONFIG: Record<InterventionType, { label: string; description
   custom: { label: "Custom", description: "Custom intervention" },
 };
 
+// Utility function to check if result contains meaningful content (not just action logs)
+const isValidResultContent = (result: string | undefined | null): boolean => {
+  if (!result || !result.trim()) return false;
+  
+  const trimmed = result.trim().toLowerCase();
+  
+  // Check if it's just an action log
+  const actionLogPrefixes = [
+    'navigate to',
+    'navigating to',
+    'clicked on',
+    'clicking on',
+    'typing',
+    'scrolling',
+    'waiting',
+    'loading',
+    'extracting',
+    'searching for',
+    'opening',
+    'closing',
+    'going to',
+    'visited',
+    'completed action',
+    'performed action',
+    'executed',
+    'action:',
+  ];
+  
+  // If it starts with an action prefix and is short, it's likely an action log
+  for (const prefix of actionLogPrefixes) {
+    if (trimmed.startsWith(prefix) && result.length < 200) {
+      return false;
+    }
+  }
+  
+  // Must have some substantial content (more than 50 chars)
+  return result.trim().length > 50;
+};
+
+// Clean result text by filtering out action logs
+const cleanResultText = (result: string | undefined | null): string => {
+  if (!result) return '';
+  
+  const lines = result.split('\n');
+  const cleanedLines = lines.filter(line => {
+    const trimmed = line.trim().toLowerCase();
+    if (!trimmed) return false;
+    
+    const actionLogPrefixes = [
+      'navigate to',
+      'navigating to',
+      'clicked on',
+      'clicking on',
+      'typing',
+      'scrolling',
+      'waiting',
+      'loading',
+      'opening',
+      'closing',
+      'going to',
+      'visited',
+    ];
+    
+    for (const prefix of actionLogPrefixes) {
+      if (trimmed.startsWith(prefix) && line.length < 150) {
+        return false;
+      }
+    }
+    return true;
+  });
+  
+  return cleanedLines.join('\n').trim();
+};
+
 interface InterventionPanelProps {
   job: BrowserJobStatusResponse;
   onSubmit: (action: HumanAction) => void;
@@ -1815,9 +1889,14 @@ const BrowserAgent = () => {
 
                   {currentJob.result && (
                     <div>
-                      <Label className="text-sm">Result</Label>
+                      <Label className="text-sm flex items-center gap-2">
+                        Result
+                        {!isValidResultContent(currentJob.result) && (
+                          <Badge variant="secondary" className="text-xs">액션 로그</Badge>
+                        )}
+                      </Label>
                       <div className="mt-1 p-2 bg-muted rounded text-xs max-h-40 overflow-y-auto whitespace-pre-wrap">
-                        {currentJob.result}
+                        {cleanResultText(currentJob.result) || currentJob.result}
                       </div>
                     </div>
                   )}
@@ -1975,11 +2054,17 @@ const BrowserAgent = () => {
                         결과 저장
                       </Button>
                       
-                      {/* Deep Search (only if has result) */}
-                      {currentJob.result && (
+                      {/* Deep Search - always show if task exists, use result if valid */}
+                      {task && (
                         <Button
                           variant="outline"
-                          onClick={() => handleDeepSearchAnalysis(currentJob.result, task)}
+                          onClick={() => {
+                            const cleanedResult = cleanResultText(currentJob.result);
+                            handleDeepSearchAnalysis(
+                              isValidResultContent(cleanedResult) ? cleanedResult : undefined,
+                              task
+                            );
+                          }}
                           className="text-purple-600 hover:text-purple-700 border-purple-300"
                         >
                           <Microscope className="h-4 w-4 mr-2" />
@@ -1987,11 +2072,17 @@ const BrowserAgent = () => {
                         </Button>
                       )}
                       
-                      {/* FactCheck (only if has result) */}
-                      {currentJob.result && (
+                      {/* FactCheck - always show if task exists, use result if valid */}
+                      {task && (
                         <Button
                           variant="outline"
-                          onClick={() => handleFactCheckAnalysis(currentJob.result, task)}
+                          onClick={() => {
+                            const cleanedResult = cleanResultText(currentJob.result);
+                            handleFactCheckAnalysis(
+                              isValidResultContent(cleanedResult) ? cleanedResult : undefined,
+                              task
+                            );
+                          }}
                           className="text-green-600 hover:text-green-700 border-green-300"
                         >
                           <Shield className="h-4 w-4 mr-2" />
@@ -2006,7 +2097,7 @@ const BrowserAgent = () => {
                       </Button>
                     </div>
                     
-                    {/* Result Preview (if exists) */}
+                    {/* Result Preview (if exists and is valid) */}
                     {currentJob.result && (
                       <div className="mt-6 text-left">
                         <Collapsible>
@@ -2015,6 +2106,9 @@ const BrowserAgent = () => {
                               <span className="flex items-center gap-2">
                                 <FileText className="h-4 w-4" />
                                 추출된 결과 미리보기
+                                {!isValidResultContent(currentJob.result) && (
+                                  <Badge variant="secondary" className="text-xs">액션 로그</Badge>
+                                )}
                               </span>
                               <ChevronDown className="h-4 w-4" />
                             </Button>
@@ -2022,9 +2116,14 @@ const BrowserAgent = () => {
                           <CollapsibleContent>
                             <ScrollArea className="h-[200px] bg-muted p-3 rounded-lg">
                               <pre className="text-xs whitespace-pre-wrap text-left">
-                                {currentJob.result}
+                                {cleanResultText(currentJob.result) || currentJob.result}
                               </pre>
                             </ScrollArea>
+                            {!isValidResultContent(currentJob.result) && (
+                              <p className="text-xs text-muted-foreground mt-2">
+                                결과에 주로 액션 로그가 포함되어 있습니다. 팩트체크/딥 리서치는 작업 설명을 기반으로 수행됩니다.
+                              </p>
+                            )}
                           </CollapsibleContent>
                         </Collapsible>
                       </div>

@@ -157,12 +157,16 @@ async def get_current_user(
 
 
 def require_role(required_role: UserRole) -> Callable:
-    """특정 역할 이상 권한 요구"""
+    """특정 역할 이상 권한 요구 (ADMIN은 항상 허용)"""
 
     async def role_checker(
         current_user: User = Depends(get_current_user),
         auth_service: AuthService = Depends(get_auth_service),
     ) -> User:
+        # ADMIN은 모든 경로에 접근 가능
+        if current_user.role == UserRole.ADMIN:
+            return current_user
+            
         if not auth_service.check_permission(current_user.role, required_role):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

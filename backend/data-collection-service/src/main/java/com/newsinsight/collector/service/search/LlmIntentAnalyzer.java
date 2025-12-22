@@ -129,37 +129,21 @@ public class LlmIntentAnalyzer {
     }
 
     /**
-     * LLM 호출 (폴백 체인)
+     * LLM 호출 (AIDove 우선, 실패 시 에러 반환)
      */
     private Mono<String> callLlmWithFallback(String prompt) {
-        // 1. AI Dove 시도
+        // AIDove만 시도 (실패 시 규칙 기반으로 폴백)
         if (aiDoveClient.isEnabled()) {
             return aiDoveClient.chat(prompt, null)
                     .map(AIDoveClient.AIDoveResponse::reply)
                     .timeout(Duration.ofSeconds(timeoutSeconds))
                     .onErrorResume(e -> {
-                        log.debug("AI Dove failed for intent analysis, trying OpenAI: {}", e.getMessage());
-                        return tryOpenAI(prompt);
-                    });
-        }
-        
-        // 2. OpenAI 시도
-        return tryOpenAI(prompt);
-    }
-
-    private Mono<String> tryOpenAI(String prompt) {
-        if (openAICompatibleClient.isOpenAIEnabled()) {
-            return openAICompatibleClient.streamFromOpenAI(prompt)
-                    .collectList()
-                    .map(chunks -> String.join("", chunks))
-                    .timeout(Duration.ofSeconds(timeoutSeconds))
-                    .onErrorResume(e -> {
-                        log.warn("All LLM providers failed for intent analysis: {}", e.getMessage());
+                        log.warn("AI Dove failed for intent analysis: {}", e.getMessage());
                         return Mono.error(e);
                     });
         }
         
-        return Mono.error(new IllegalStateException("No LLM provider available for intent analysis"));
+        return Mono.error(new IllegalStateException("AIDove is not enabled for intent analysis"));
     }
 
     /**
@@ -254,16 +238,19 @@ public class LlmIntentAnalyzer {
     }
 
     /**
-     * 서비스 활성화 여부
+     * 서비스 활성화 여부 (AIDove만 사용)
      */
     public boolean isEnabled() {
-        return enabled && (aiDoveClient.isEnabled() || openAICompatibleClient.isOpenAIEnabled());
+        return enabled && aiDoveClient.isEnabled();
     }
 
     /**
      * LLM 분석 결과를 QueryIntent로 변환
      */
     public QueryIntent convertToQueryIntent(IntentAnalysisResult result) {
+        if (result == null) {
+            return null;
+        }
         return QueryIntent.builder()
                 .type(result.getIntentType())
                 .confidence(result.getConfidence())

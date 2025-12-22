@@ -855,50 +855,176 @@ async def execute_human_action(job: Job, action: HumanAction) -> bool:
 		return False
 
 
+def _is_action_log(text: str) -> bool:
+	"""Check if a text is just an action log rather than actual content."""
+	if not text or not text.strip():
+		return True
+	text_lower = text.strip().lower()
+	# Common action log prefixes that are NOT actual content
+	action_prefixes = [
+		'navigate to',
+		'navigating to',
+		'clicked on',
+		'clicking on',
+		'typing',
+		'scrolling',
+		'waiting',
+		'loading',
+		'extracting',
+		'searching for',
+		'opening',
+		'closing',
+		'going to',
+		'visited',
+		'completed action',
+		'performed action',
+		'executed',
+		'action:',
+	]
+	for prefix in action_prefixes:
+		if text_lower.startswith(prefix):
+			# Only consider it an action log if it's short (< 200 chars)
+			# Longer text with these prefixes might contain actual content
+			if len(text) < 200:
+				return True
+	return False
+
+
 def _extract_agent_result_text(result: Any) -> str:
+	"""
+	Extract meaningful result text from browser-use agent result.
+
+	The browser-use library returns AgentHistoryList which contains:
+	- final_result(): method that returns the final answer
+	- history: list of AgentHistory items, each containing:
+	  - model_output: ModelOutput with current_state, action descriptions
+	  - result: list of ActionResult with extracted_content, error, etc.
+
+	We need to extract:
+	1. final_result() if available and meaningful
+	2. All extracted_content from history that isn't just action logs
+	3. Any text content from model_output that represents actual results
+	"""
 	if result is None:
 		return ''
 	if isinstance(result, str):
 		return result
 
+	collected_content: list[str] = []
+	seen_content: set[str] = set()
+
+	def add_content(text: str) -> None:
+		"""Add content if it's not an action log and not seen before."""
+		if not text or not isinstance(text, str):
+			return
+		text = text.strip()
+		if not text or _is_action_log(text):
+			return
+		# Normalize for deduplication
+		normalized = text.lower()[:100]
+		if normalized not in seen_content:
+			seen_content.add(normalized)
+			collected_content.append(text)
+
+	# 1. Try final_result() method first - this is the primary result
 	if hasattr(result, 'final_result'):
 		final_result = getattr(result, 'final_result')
 		try:
 			text = final_result() if callable(final_result) else final_result
-		except Exception:
-			text = None
-		if isinstance(text, str) and text.strip():
-			return text
+			if isinstance(text, str) and text.strip() and not _is_action_log(text):
+				# If final_result is meaningful, use it as primary
+				add_content(text)
+		except Exception as e:
+			logger.debug(f'Error getting final_result: {e}')
 
+	# 2. Try extracted_content attribute directly
 	if hasattr(result, 'extracted_content'):
 		extracted_content = getattr(result, 'extracted_content')
 		try:
 			content = extracted_content() if callable(extracted_content) else extracted_content
-		except Exception:
-			content = None
-		if isinstance(content, str) and content.strip():
-			return content
-		if isinstance(content, list):
-			parts = [p.strip() for p in content if isinstance(p, str) and p.strip()]
-			if parts:
-				seen: set[str] = set()
-				unique_parts: list[str] = []
-				for p in parts:
-					if p in seen:
-						continue
-					seen.add(p)
-					unique_parts.append(p)
-				return '\n\n'.join(unique_parts)
+			if isinstance(content, str):
+				add_content(content)
+			elif isinstance(content, list):
+				for item in content:
+					if isinstance(item, str):
+						add_content(item)
+		except Exception as e:
+			logger.debug(f'Error getting extracted_content: {e}')
 
+	# 3. Iterate through history to find all extracted content
 	history = getattr(result, 'history', None)
 	if isinstance(history, list):
-		for item in reversed(history):
-			item_results = getattr(item, 'result', None)
+		for history_item in history:
+			# Check model_output for any content
+			model_output = getattr(history_item, 'model_output', None)
+			if model_output:
+				# Check current_state which might contain extracted info
+				current_state = getattr(model_output, 'current_state', None)
+				if current_state:
+					# current_state might have 'memory' or 'summary' fields
+					memory = getattr(current_state, 'memory', None)
+					if isinstance(memory, str):
+						add_content(memory)
+					summary = getattr(current_state, 'summary', None)
+					if isinstance(summary, str):
+						add_content(summary)
+					# Also check 'evaluation_previous_goal' which might have useful info
+					eval_goal = getattr(current_state, 'evaluation_previous_goal', None)
+					if isinstance(eval_goal, str) and len(eval_goal) > 50:
+						add_content(eval_goal)
+
+			# Check result list for extracted_content
+			item_results = getattr(history_item, 'result', None)
 			if isinstance(item_results, list):
-				for r in reversed(item_results):
-					extracted_content = getattr(r, 'extracted_content', None)
-					if isinstance(extracted_content, str) and extracted_content.strip():
-						return extracted_content
+				for action_result in item_results:
+					# extracted_content is the main content field
+					extracted = getattr(action_result, 'extracted_content', None)
+					if isinstance(extracted, str):
+						add_content(extracted)
+					# Also check 'include_in_memory' content
+					include_mem = getattr(action_result, 'include_in_memory', None)
+					if isinstance(include_mem, str):
+						add_content(include_mem)
+
+	# 4. Try to get any 'all_results' or similar aggregate
+	if hasattr(result, 'all_results'):
+		all_results = getattr(result, 'all_results')
+		try:
+			results_list = all_results() if callable(all_results) else all_results
+			if isinstance(results_list, list):
+				for r in results_list:
+					if isinstance(r, str):
+						add_content(r)
+		except Exception as e:
+			logger.debug(f'Error getting all_results: {e}')
+
+	# 5. Last resort: try to get string representation if nothing else worked
+	if not collected_content:
+		try:
+			str_repr = str(result)
+			# Only use if it's not the default object repr and is substantial
+			if str_repr and not str_repr.startswith('<') and len(str_repr) > 100:
+				# Try to find meaningful content in the string representation
+				if 'extracted_content' in str_repr or 'result' in str_repr.lower():
+					add_content(str_repr[:2000])  # Limit length
+		except Exception:
+			pass
+
+	# Combine collected content
+	if collected_content:
+		# If we have a clear final result (first item), prioritize it
+		if len(collected_content) == 1:
+			return collected_content[0]
+
+		# Otherwise, combine unique content pieces
+		# Put longer/more substantial content first
+		collected_content.sort(key=lambda x: len(x), reverse=True)
+
+		# Remove very short items if we have longer ones
+		if len(collected_content) > 1 and len(collected_content[0]) > 200:
+			collected_content = [c for c in collected_content if len(c) > 50 or c == collected_content[0]]
+
+		return '\n\n---\n\n'.join(collected_content[:5])  # Limit to top 5 pieces
 
 	return ''
 
@@ -1103,7 +1229,26 @@ State the problem clearly so a human operator can assist."""
 			# ============================================
 			# Result Guarantee Logic - Never return "not found"
 			# ============================================
+			# Debug: Log result structure for troubleshooting
+			logger.info(f'Job {job.id}: Raw result type: {type(result).__name__}')
+			if hasattr(result, '__dict__'):
+				logger.info(f'Job {job.id}: Result attributes: {list(result.__dict__.keys())[:10]}')
+			if hasattr(result, 'final_result'):
+				try:
+					fr = result.final_result
+					fr_val = fr() if callable(fr) else fr
+					logger.info(f'Job {job.id}: final_result() returned: {str(fr_val)[:200] if fr_val else "None"}')
+				except Exception as e:
+					logger.info(f'Job {job.id}: final_result() error: {e}')
+			if hasattr(result, 'history') and isinstance(result.history, list):
+				logger.info(f'Job {job.id}: History has {len(result.history)} items')
+				for i, hist in enumerate(result.history[-3:]):  # Last 3 items
+					logger.info(f'Job {job.id}: History[{i}] result: {getattr(hist, "result", None)}')
+
 			result_str = _extract_agent_result_text(result)
+			logger.info(
+				f'Job {job.id}: Extracted result length: {len(result_str)}, preview: {result_str[:300] if result_str else "EMPTY"}'
+			)
 
 			# Check for "not found" patterns in multiple languages
 			not_found_patterns = [

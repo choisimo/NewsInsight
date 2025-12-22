@@ -218,6 +218,36 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
   useEffect(() => {
     if (initialSentRef.current || !isConnected) return;
 
+    // Check for data from Browser Agent via sessionStorage
+    const fromAgentData = sessionStorage.getItem('factCheck_fromAgent');
+    if (fromAgentData) {
+      try {
+        const parsed = JSON.parse(fromAgentData);
+        const topic = parsed.topic || '';
+        const content = parsed.content || '';
+        
+        // Clear sessionStorage to prevent re-triggering
+        sessionStorage.removeItem('factCheck_fromAgent');
+        
+        // Build query from agent data
+        let query = '';
+        if (content && content.trim()) {
+          query = `다음 내용에 대해 팩트체크해주세요:\n\n주제: ${topic}\n\n내용:\n${content}`;
+        } else if (topic && topic.trim()) {
+          query = `다음 주제에 대해 팩트체크해주세요: "${topic}"`;
+        }
+        
+        if (query) {
+          initialSentRef.current = true;
+          sendQueryInternal(query);
+          return;
+        }
+      } catch (e) {
+        console.error('Failed to parse factCheck_fromAgent data:', e);
+        sessionStorage.removeItem('factCheck_fromAgent');
+      }
+    }
+
     if (initialClaims && initialClaims.length > 0) {
       initialSentRef.current = true;
       sendClaimsInternal(initialClaims);

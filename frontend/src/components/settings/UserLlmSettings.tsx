@@ -367,9 +367,9 @@ export const UserLlmSettings: React.FC<UserLlmSettingsProps> = ({ userId }) => {
               </CardDescription>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setApiKeyWizardOpen(true)}>
+              <Button variant="outline" disabled>
                 <Wand2 className="h-4 w-4 mr-2" />
-                API 키 자동 발급
+                [구현 중] API 키 자동 발급
               </Button>
               <Button variant="outline" onClick={loadData}>
                 <RefreshCw className="h-4 w-4 mr-2" />

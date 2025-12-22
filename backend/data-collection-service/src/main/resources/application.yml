@@ -11,12 +11,15 @@ spring:
       acks: ${KAFKA_PRODUCER_ACKS:all}
       retries: ${KAFKA_PRODUCER_RETRIES:3}
       retry-backoff-ms: ${KAFKA_PRODUCER_RETRY_BACKOFF_MS:1000}
-      delivery-timeout-ms: ${KAFKA_PRODUCER_DELIVERY_TIMEOUT_MS:30000}
+      # delivery.timeout.ms must be >= linger.ms + request.timeout.ms
+      # linger.ms=5 (hardcoded in KafkaConfig), request.timeout.ms=30000
+      # So delivery-timeout-ms must be >= 30005
+      delivery-timeout-ms: ${KAFKA_PRODUCER_DELIVERY_TIMEOUT_MS:120000}
       enable-idempotence: ${KAFKA_PRODUCER_ENABLE_IDEMPOTENCE:true}
       properties:
         # Fast-fail settings to avoid long blocking on Kafka unavailability
         max.block.ms: ${KAFKA_PRODUCER_MAX_BLOCK_MS:5000}
-        request.timeout.ms: ${KAFKA_PRODUCER_REQUEST_TIMEOUT_MS:10000}
+        request.timeout.ms: ${KAFKA_PRODUCER_REQUEST_TIMEOUT_MS:30000}
         metadata.max.age.ms: ${KAFKA_PRODUCER_METADATA_MAX_AGE_MS:60000}
     # Consumer reliability settings
     consumer:
