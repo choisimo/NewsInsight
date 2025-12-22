@@ -159,9 +159,11 @@ public class IntegratedCrawlerService {
                     // 크롤링 결과가 없을 경우 기본 evidence 생성
                     if (pages.isEmpty()) {
                         log.warn("No pages crawled, generating fallback evidence for topic: {}", request.topic());
-                        List<EvidenceDto> fallbackEvidence = generateFallbackEvidence(request.topic(), callback);
-                        allEvidence.addAll(fallbackEvidence);
-                        return Mono.just(createResult(request.topic(), allPages, allEvidence));
+                        return generateFallbackEvidenceAsync(request.topic(), callback)
+                                .map(fallbackEvidence -> {
+                                    allEvidence.addAll(fallbackEvidence);
+                                    return createResult(request.topic(), allPages, allEvidence);
+                                });
                     }
                     
                     if (request.extractEvidence()) {
@@ -172,8 +174,11 @@ public class IntegratedCrawlerService {
                                     // 크롤링은 했지만 evidence가 없을 경우에도 fallback 생성
                                     if (allEvidence.isEmpty()) {
                                         log.warn("Pages crawled but no evidence extracted, generating fallback for topic: {}", request.topic());
-                                        List<EvidenceDto> fallbackEvidence = generateFallbackEvidence(request.topic(), callback);
-                                        allEvidence.addAll(fallbackEvidence);
+                                        return generateFallbackEvidenceAsync(request.topic(), callback)
+                                                .map(fallbackEvidence -> {
+                                                    allEvidence.addAll(fallbackEvidence);
+                                                    return createResult(request.topic(), allPages, allEvidence);
+                                                });
                                     }
                                     return Mono.just(createResult(request.topic(), allPages, allEvidence));
                                 });
@@ -185,58 +190,85 @@ public class IntegratedCrawlerService {
     }
 
     /**
-     * Generate fallback evidence when crawling fails
+     * Generate fallback evidence when crawling fails (DEPRECATED - use async version)
      * Uses AI Dove to generate topic analysis without external crawling
      */
+    @Deprecated
     private List<EvidenceDto> generateFallbackEvidence(String topic, CrawlProgressCallback callback) {
+        // Synchronous wrapper - should not be called from reactive chain
+        return generateFallbackEvidenceAsync(topic, callback)
+                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                .block(java.time.Duration.ofSeconds(30));
+    }
+    
+    /**
+     * Generate fallback evidence when crawling fails (Async version)
+     * Uses AI Dove to generate topic analysis without external crawling
+     */
+    private Mono<List<EvidenceDto>> generateFallbackEvidenceAsync(String topic, CrawlProgressCallback callback) {
         if (callback != null) {
             callback.onProgress(50, 100, "외부 크롤링 실패 - AI 분석으로 대체");
         }
         
         // AI Dove를 사용하여 주제 분석 시도
         if (aiDoveClient.isEnabled()) {
-            try {
-                String prompt = """
-                    주제 '%s'에 대해 분석해주세요. 
-                    다음 형식으로 JSON 배열을 반환해주세요:
-                    [
-                      {"title": "관점 제목", "snippet": "해당 관점에 대한 설명 (2-3문장)", "stance": "pro" 또는 "con" 또는 "neutral", "source": "AI 분석"}
-                    ]
-                    최소 3개, 최대 5개의 다양한 관점을 포함해주세요.
-                    JSON 배열만 반환하세요.
-                    """.formatted(topic);
-                
-                var response = aiDoveClient.chat(prompt, null).block();
-                if (response != null && response.reply() != null) {
-                    String json = extractJsonArray(response.reply());
-                    if (json != null) {
-                        JsonNode evidenceArray = objectMapper.readTree(json);
-                        List<EvidenceDto> evidence = new ArrayList<>();
-                        int id = 1;
-                        for (JsonNode node : evidenceArray) {
-                            EvidenceDto e = EvidenceDto.builder()
-                                    .id((long) id++)
-                                    .url("https://ai-analysis/" + topic.hashCode() + "/" + id)
-                                    .title(node.has("title") ? node.get("title").asText() : "AI 분석 결과")
-                                    .stance(node.has("stance") ? node.get("stance").asText().toLowerCase() : "neutral")
-                                    .snippet(node.has("snippet") ? node.get("snippet").asText() : "")
-                                    .source("AI 분석")
-                                    .build();
-                            evidence.add(e);
-                            if (callback != null) {
-                                callback.onEvidenceFound(e);
+            String prompt = """
+                주제 '%s'에 대해 분석해주세요. 
+                다음 형식으로 JSON 배열을 반환해주세요:
+                [
+                  {"title": "관점 제목", "snippet": "해당 관점에 대한 설명 (2-3문장)", "stance": "pro" 또는 "con" 또는 "neutral", "source": "AI 분석"}
+                ]
+                최소 3개, 최대 5개의 다양한 관점을 포함해주세요.
+                JSON 배열만 반환하세요.
+                """.formatted(topic);
+            
+            return aiDoveClient.chat(prompt, null)
+                    .timeout(java.time.Duration.ofSeconds(30))
+                    .map(response -> {
+                        if (response != null && response.reply() != null) {
+                            String json = extractJsonArray(response.reply());
+                            if (json != null) {
+                                try {
+                                    JsonNode evidenceArray = objectMapper.readTree(json);
+                                    List<EvidenceDto> evidence = new ArrayList<>();
+                                    int id = 1;
+                                    for (JsonNode node : evidenceArray) {
+                                        EvidenceDto e = EvidenceDto.builder()
+                                                .id((long) id++)
+                                                .url("https://ai-analysis/" + topic.hashCode() + "/" + id)
+                                                .title(node.has("title") ? node.get("title").asText() : "AI 분석 결과")
+                                                .stance(node.has("stance") ? node.get("stance").asText().toLowerCase() : "neutral")
+                                                .snippet(node.has("snippet") ? node.get("snippet").asText() : "")
+                                                .source("AI 분석")
+                                                .build();
+                                        evidence.add(e);
+                                        if (callback != null) {
+                                            callback.onEvidenceFound(e);
+                                        }
+                                    }
+                                    log.info("Generated {} AI fallback evidence items for topic: {}", evidence.size(), topic);
+                                    return evidence;
+                                } catch (Exception e) {
+                                    log.warn("Failed to parse AI response for topic {}: {}", topic, e.getMessage());
+                                }
                             }
                         }
-                        log.info("Generated {} AI fallback evidence items for topic: {}", evidence.size(), topic);
-                        return evidence;
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("AI fallback evidence generation failed: {}", e.getMessage());
-            }
+                        return createDefaultEvidence(topic, callback);
+                    })
+                    .onErrorResume(e -> {
+                        log.warn("AI fallback evidence generation failed: {}", e.getMessage());
+                        return Mono.just(createDefaultEvidence(topic, callback));
+                    });
         }
         
-        // AI도 실패할 경우 기본 메시지 반환
+        // AI가 비활성화된 경우 기본 메시지 반환
+        return Mono.just(createDefaultEvidence(topic, callback));
+    }
+    
+    /**
+     * Create default evidence when all methods fail
+     */
+    private List<EvidenceDto> createDefaultEvidence(String topic, CrawlProgressCallback callback) {
         log.warn("All evidence generation methods failed for topic: {}", topic);
         EvidenceDto defaultEvidence = EvidenceDto.builder()
                 .id(1L)
