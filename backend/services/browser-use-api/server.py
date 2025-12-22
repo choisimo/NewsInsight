@@ -17,7 +17,8 @@ from datetime import datetime
 from enum import Enum
 
 import httpx
-from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from collections import defaultdict
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -27,11 +28,243 @@ from browser_use.browser import BrowserSession, BrowserProfile, ProxySettings
 
 # Local modules for AIDove integration and intent analysis
 from aidove_chat import ChatAIDove
-from intent_analyzer import IntentAnalyzer, SearchGuarantee, ResultFusion
+from intent_analyzer import IntentAnalyzer, SearchGuarantee, ResultFusion, IntentType, APIProvider, PROVIDER_URLS
+from api_key_provisioner import ApiKeyProvisioner, ProvisioningRequest, ProvisioningResponse, create_provisioning_task
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# Rate Limiting for API Key Provisioning
+# ============================================
+
+
+class RateLimiter:
+	"""
+	Simple in-memory rate limiter for API key provisioning.
+
+	Uses a sliding window approach to limit requests per IP address.
+	"""
+
+	def __init__(self, requests_per_minute: int = 5, window_seconds: int = 60):
+		self.requests_per_minute = requests_per_minute
+		self.window_seconds = window_seconds
+		self._requests: dict[str, list[float]] = defaultdict(list)
+		self._lock = asyncio.Lock()
+
+	async def is_allowed(self, client_ip: str) -> tuple[bool, dict]:
+		"""
+		Check if a request from client_ip is allowed.
+
+		Returns:
+			tuple: (is_allowed, rate_limit_info)
+		"""
+		async with self._lock:
+			now = time.time()
+			window_start = now - self.window_seconds
+
+			# Clean old requests outside the window
+			self._requests[client_ip] = [ts for ts in self._requests[client_ip] if ts > window_start]
+
+			current_count = len(self._requests[client_ip])
+			remaining = max(0, self.requests_per_minute - current_count)
+
+			# Calculate retry-after if rate limited
+			if current_count >= self.requests_per_minute:
+				oldest_request = min(self._requests[client_ip])
+				retry_after = int(oldest_request + self.window_seconds - now) + 1
+				return False, {
+					'limit': self.requests_per_minute,
+					'remaining': 0,
+					'reset': int(oldest_request + self.window_seconds),
+					'retry_after': retry_after,
+				}
+
+			# Record this request
+			self._requests[client_ip].append(now)
+
+			return True, {
+				'limit': self.requests_per_minute,
+				'remaining': remaining - 1,  # After this request
+				'reset': int(now + self.window_seconds),
+			}
+
+	async def get_stats(self) -> dict:
+		"""Get current rate limiter statistics."""
+		async with self._lock:
+			now = time.time()
+			window_start = now - self.window_seconds
+
+			# Clean and count
+			active_ips = 0
+			total_requests = 0
+
+			for ip, timestamps in list(self._requests.items()):
+				valid = [ts for ts in timestamps if ts > window_start]
+				if valid:
+					self._requests[ip] = valid
+					active_ips += 1
+					total_requests += len(valid)
+				else:
+					del self._requests[ip]
+
+			return {
+				'active_ips': active_ips,
+				'total_requests_in_window': total_requests,
+				'window_seconds': self.window_seconds,
+				'max_requests_per_ip': self.requests_per_minute,
+			}
+
+
+# Rate limiter configuration from environment
+API_KEY_PROVISION_RATE_LIMIT = int(os.environ.get('API_KEY_PROVISION_RATE_LIMIT', '5'))
+api_key_rate_limiter = RateLimiter(requests_per_minute=API_KEY_PROVISION_RATE_LIMIT)
+
+
+def get_client_ip(request: Request) -> str:
+	"""Extract client IP from request, considering proxy headers."""
+	# Check for forwarded headers (behind reverse proxy)
+	forwarded = request.headers.get('X-Forwarded-For')
+	if forwarded:
+		# Take the first IP in the chain (original client)
+		return forwarded.split(',')[0].strip()
+
+	real_ip = request.headers.get('X-Real-IP')
+	if real_ip:
+		return real_ip.strip()
+
+	# Fall back to direct connection IP
+	if request.client:
+		return request.client.host
+
+	return 'unknown'
+
+
+# ============================================
+# Audit Logging for API Key Provisioning
+# ============================================
+
+
+class ProvisioningAuditLogger:
+	"""
+	Audit logger for API key provisioning events.
+
+	Logs to:
+	1. Local structured log file (JSONL format)
+	2. Optionally sends to admin-dashboard audit service via HTTP
+	"""
+
+	def __init__(
+		self,
+		log_file: str = '/var/log/newsinsight/api-key-provisioning.jsonl',
+		admin_dashboard_url: Optional[str] = None,
+	):
+		self.log_file = log_file
+		self.admin_dashboard_url = admin_dashboard_url
+		self._ensure_log_file()
+		self._client: Optional[httpx.AsyncClient] = None
+
+	def _ensure_log_file(self) -> None:
+		"""Ensure log directory and file exist."""
+		try:
+			import os
+
+			log_dir = os.path.dirname(self.log_file)
+			if log_dir:
+				os.makedirs(log_dir, exist_ok=True)
+			if not os.path.exists(self.log_file):
+				with open(self.log_file, 'w') as f:
+					pass  # Create empty file
+		except Exception as e:
+			logger.warning(f'Could not create audit log file {self.log_file}: {e}')
+
+	async def log_event(
+		self,
+		event_type: str,
+		provider: str,
+		client_ip: str,
+		job_id: str,
+		success: bool,
+		user_agent: Optional[str] = None,
+		details: Optional[dict] = None,
+		error_message: Optional[str] = None,
+	) -> None:
+		"""
+		Log an API key provisioning event.
+
+		Event types:
+		- provision_started: Provisioning job started
+		- provision_completed: API key successfully generated
+		- provision_failed: Provisioning failed
+		- rate_limited: Request was rate limited
+		- login_required: Human login intervention requested
+		- login_completed: Human completed login
+		- twofa_required: 2FA intervention requested
+		- twofa_completed: 2FA completed
+		"""
+		import json
+
+		log_entry = {
+			'id': f'audit-{uuid.uuid4().hex[:12]}',
+			'timestamp': datetime.utcnow().isoformat() + 'Z',
+			'event_type': event_type,
+			'resource_type': 'api_key_provisioning',
+			'provider': provider,
+			'job_id': job_id,
+			'client_ip': client_ip,
+			'user_agent': user_agent,
+			'success': success,
+			'error_message': error_message,
+			'details': details or {},
+		}
+
+		# Log locally
+		try:
+			with open(self.log_file, 'a') as f:
+				f.write(json.dumps(log_entry) + '\n')
+		except Exception as e:
+			logger.warning(f'Failed to write audit log: {e}')
+
+		# Log to console in structured format
+		log_msg = f'AUDIT: {event_type} | provider={provider} | job_id={job_id} | ip={client_ip} | success={success}'
+		if error_message:
+			log_msg += f' | error={error_message}'
+
+		if success:
+			logger.info(log_msg)
+		else:
+			logger.warning(log_msg)
+
+		# Optionally send to admin dashboard
+		if self.admin_dashboard_url:
+			try:
+				if self._client is None:
+					self._client = httpx.AsyncClient(timeout=5.0)
+
+				await self._client.post(
+					f'{self.admin_dashboard_url}/api/audit',
+					json=log_entry,
+				)
+			except Exception as e:
+				logger.debug(f'Failed to send audit log to admin dashboard: {e}')
+
+	async def close(self) -> None:
+		"""Clean up HTTP client."""
+		if self._client:
+			await self._client.aclose()
+			self._client = None
+
+
+# Audit logger configuration
+PROVISIONING_AUDIT_LOG_FILE = os.environ.get('PROVISIONING_AUDIT_LOG_FILE', '/var/log/newsinsight/api-key-provisioning.jsonl')
+ADMIN_DASHBOARD_URL = os.environ.get('ADMIN_DASHBOARD_URL')  # Optional
+
+provisioning_audit_logger = ProvisioningAuditLogger(
+	log_file=PROVISIONING_AUDIT_LOG_FILE,
+	admin_dashboard_url=ADMIN_DASHBOARD_URL,
+)
 
 
 @dataclass
@@ -620,7 +853,6 @@ async def execute_human_action(job: Job, action: HumanAction) -> bool:
 	except Exception as e:
 		logger.error(f'Job {job.id}: Failed to execute human action: {e}')
 		return False
-
 
 
 def _extract_agent_result_text(result: Any) -> str:
@@ -1466,6 +1698,440 @@ async def browse_sync(request: BrowseRequest):
 		started_at=job.started_at.isoformat() if job.started_at else None,
 		completed_at=job.completed_at.isoformat() if job.completed_at else None,
 	)
+
+
+# ============================================
+# API Key Provisioning Endpoints
+# ============================================
+
+
+class APIKeyProvisionRequest(BaseModel):
+	"""Request to provision an API key from a provider."""
+
+	provider: str = Field(
+		..., description='Provider name: openai, anthropic, google, openrouter, together_ai, perplexity, brave_search, tavily'
+	)
+	key_name: Optional[str] = Field('NewsInsight-AutoGenerated', description='Name for the generated API key')
+	auto_save: bool = Field(True, description='Automatically save the key to system settings')
+	timeout_seconds: int = Field(300, description='Timeout for provisioning process', ge=60, le=600)
+	headless: bool = Field(False, description='Run browser in headless mode (False recommended for login)')
+
+
+class APIKeyProvisionResponse(BaseModel):
+	"""Response from API key provisioning."""
+
+	job_id: str
+	status: str
+	provider: str
+	message: str
+	api_key_masked: Optional[str] = None
+	saved_to_settings: bool = False
+	error: Optional[str] = None
+	requires_intervention: bool = False
+	intervention_type: Optional[str] = None
+
+
+@app.get('/api-key/providers')
+async def list_supported_providers():
+	"""
+	List all supported API providers for auto-provisioning.
+
+	Returns provider names and their API key page URLs.
+	"""
+	providers = []
+	for provider in APIProvider:
+		if provider != APIProvider.UNKNOWN:
+			providers.append(
+				{
+					'name': provider.value,
+					'display_name': provider.value.replace('_', ' ').title(),
+					'api_keys_url': PROVIDER_URLS.get(provider, ''),
+				}
+			)
+	return {'providers': providers}
+
+
+@app.get('/api-key/rate-limit')
+async def get_api_key_rate_limit_info(http_request: Request):
+	"""
+	Get rate limit information for API key provisioning.
+
+	Returns current rate limit settings and remaining quota for the client.
+	"""
+	client_ip = get_client_ip(http_request)
+
+	# Peek at current status without consuming a request
+	stats = await api_key_rate_limiter.get_stats()
+
+	# Get remaining for this IP
+	now = time.time()
+	window_start = now - api_key_rate_limiter.window_seconds
+
+	async with api_key_rate_limiter._lock:
+		ip_requests = [ts for ts in api_key_rate_limiter._requests.get(client_ip, []) if ts > window_start]
+		remaining = max(0, api_key_rate_limiter.requests_per_minute - len(ip_requests))
+
+	return {
+		'limit': api_key_rate_limiter.requests_per_minute,
+		'remaining': remaining,
+		'window_seconds': api_key_rate_limiter.window_seconds,
+		'client_ip': client_ip,
+		'stats': stats,
+	}
+
+
+@app.post('/api-key/provision', response_model=APIKeyProvisionResponse)
+async def provision_api_key(
+	request: APIKeyProvisionRequest,
+	background_tasks: BackgroundTasks,
+	http_request: Request,
+):
+	"""
+	Start an API key provisioning task.
+
+	This will:
+	1. Launch a browser to the provider's API key page
+	2. Handle login with human intervention if needed
+	3. Generate a new API key
+	4. Extract and optionally save the key to system settings
+
+	Connect to WebSocket at /ws/{job_id} for real-time updates and
+	to provide human intervention (login, 2FA) when requested.
+
+	Rate Limited: {API_KEY_PROVISION_RATE_LIMIT} requests per minute per IP.
+	"""
+	# Check rate limit
+	client_ip = get_client_ip(http_request)
+	is_allowed, rate_info = await api_key_rate_limiter.is_allowed(client_ip)
+
+	if not is_allowed:
+		logger.warning(f'Rate limit exceeded for IP {client_ip} on API key provisioning')
+
+		# Audit log rate limit event
+		await provisioning_audit_logger.log_event(
+			event_type='rate_limited',
+			provider=request.provider,
+			client_ip=client_ip,
+			job_id='N/A',
+			success=False,
+			user_agent=http_request.headers.get('User-Agent'),
+			error_message=f'Rate limit exceeded: {rate_info["limit"]} requests per minute',
+		)
+
+		raise HTTPException(
+			status_code=429,
+			detail={
+				'error': 'Too Many Requests',
+				'message': f'Rate limit exceeded. Maximum {rate_info["limit"]} requests per minute.',
+				'retry_after': rate_info.get('retry_after', 60),
+			},
+			headers={
+				'Retry-After': str(rate_info.get('retry_after', 60)),
+				'X-RateLimit-Limit': str(rate_info['limit']),
+				'X-RateLimit-Remaining': '0',
+				'X-RateLimit-Reset': str(rate_info.get('reset', 0)),
+			},
+		)
+
+	logger.info(f'API key provisioning request from {client_ip} (remaining: {rate_info["remaining"]})')
+
+	# Validate provider
+	try:
+		provider = APIProvider(request.provider.lower())
+		if provider == APIProvider.UNKNOWN:
+			raise ValueError('Unknown provider')
+	except ValueError:
+		supported = [p.value for p in APIProvider if p != APIProvider.UNKNOWN]
+		raise HTTPException(
+			status_code=400,
+			detail=f'Unknown provider: {request.provider}. Supported providers: {supported}',
+		)
+
+	job_id = str(uuid.uuid4())[:8]
+
+	# Create job for tracking
+	job = Job(
+		id=job_id,
+		task=f'API Key Provisioning for {provider.value}',
+		url=PROVIDER_URLS.get(provider, ''),
+		session_id=f'provision-{job_id}',
+		max_steps=50,
+		timeout_seconds=request.timeout_seconds,
+		headless=request.headless,
+		enable_human_intervention=True,
+		auto_request_intervention=True,
+		use_proxy_rotation=False,  # Don't use proxy for provider sites
+	)
+
+	jobs[job_id] = job
+
+	# Get user agent for audit logging
+	user_agent = http_request.headers.get('User-Agent')
+
+	# Start provisioning in background
+	async def run_provisioning():
+		job.status = JobStatus.RUNNING
+		job.started_at = datetime.now()
+
+		# Audit log: provisioning started
+		await provisioning_audit_logger.log_event(
+			event_type='provision_started',
+			provider=provider.value,
+			client_ip=client_ip,
+			job_id=job_id,
+			success=True,
+			user_agent=user_agent,
+			details={
+				'key_name': request.key_name or 'NewsInsight-AutoGenerated',
+				'auto_save': request.auto_save,
+				'headless': request.headless,
+			},
+		)
+
+		try:
+			# Initialize browser session
+			import os
+
+			is_docker = os.path.exists('/.dockerenv') or os.environ.get('DOCKER_CONTAINER', False)
+
+			profile = BrowserProfile(
+				headless=True if is_docker else request.headless,
+				disable_security=True,
+			)
+			job.browser_session = BrowserSession(browser_profile=profile)
+
+			# Initialize LLM
+			llm = ChatAIDove(session_id=f'provision-{job_id}', timeout=120.0, max_retries=3)
+
+			# Create provisioner with WebSocket broadcast
+			async def broadcast_to_job(message: dict):
+				message['job_id'] = job_id
+				await manager.broadcast(job_id, message)
+
+			provisioner = ApiKeyProvisioner(
+				browser_session=job.browser_session,
+				llm=llm,
+				websocket_broadcast=broadcast_to_job,
+			)
+
+			# Run provisioning
+			result = await provisioner.provision(
+				provider=provider,
+				key_name=request.key_name or 'NewsInsight-AutoGenerated',
+				auto_save=request.auto_save,
+				timeout_seconds=request.timeout_seconds,
+			)
+
+			# Update job based on result
+			if result.get('status') == 'completed':
+				job.status = JobStatus.COMPLETED
+				job.result = result.get('message', 'API key provisioned successfully')
+
+				# Audit log: provisioning completed
+				await provisioning_audit_logger.log_event(
+					event_type='provision_completed',
+					provider=provider.value,
+					client_ip=client_ip,
+					job_id=job_id,
+					success=True,
+					user_agent=user_agent,
+					details={
+						'saved_to_settings': result.get('saved_to_settings', False),
+						'key_masked': result.get('api_key_masked'),
+					},
+				)
+
+			elif result.get('requires_intervention'):
+				job.status = JobStatus.WAITING_HUMAN
+				job.intervention.requested = True
+				job.intervention.type = InterventionType.LOGIN
+				job.intervention.reason = result.get('message', 'Human intervention required')
+
+				# Audit log: login required
+				await provisioning_audit_logger.log_event(
+					event_type='login_required',
+					provider=provider.value,
+					client_ip=client_ip,
+					job_id=job_id,
+					success=True,
+					user_agent=user_agent,
+					details={'reason': result.get('message')},
+				)
+
+			else:
+				job.status = JobStatus.FAILED
+				job.error = result.get('error', 'Unknown error')
+
+				# Audit log: provisioning failed
+				await provisioning_audit_logger.log_event(
+					event_type='provision_failed',
+					provider=provider.value,
+					client_ip=client_ip,
+					job_id=job_id,
+					success=False,
+					user_agent=user_agent,
+					error_message=result.get('error', 'Unknown error'),
+				)
+
+			# Broadcast final status
+			await manager.broadcast(
+				job_id,
+				{
+					'type': 'provisioning_complete' if result.get('status') == 'completed' else 'provisioning_update',
+					'job_id': job_id,
+					'status': result.get('status'),
+					'provider': provider.value,
+					'api_key_masked': result.get('api_key_masked'),
+					'saved_to_settings': result.get('saved_to_settings', False),
+					'error': result.get('error'),
+					'message': result.get('message'),
+				},
+			)
+
+		except Exception as e:
+			logger.exception(f'Provisioning job {job_id} failed: {e}')
+			job.status = JobStatus.FAILED
+			job.error = str(e)
+
+			# Audit log: exception during provisioning
+			await provisioning_audit_logger.log_event(
+				event_type='provision_failed',
+				provider=provider.value,
+				client_ip=client_ip,
+				job_id=job_id,
+				success=False,
+				user_agent=user_agent,
+				error_message=str(e),
+				details={'exception_type': type(e).__name__},
+			)
+
+			await manager.broadcast(
+				job_id,
+				{
+					'type': 'provisioning_failed',
+					'job_id': job_id,
+					'error': str(e),
+				},
+			)
+
+		finally:
+			job.completed_at = datetime.now()
+			if job.browser_session:
+				try:
+					await job.browser_session.stop()
+				except Exception as e:
+					logger.warning(f'Error closing browser session: {e}')
+				job.browser_session = None
+
+	background_tasks.add_task(run_provisioning)
+
+	logger.info(f'Started API key provisioning job {job_id} for {provider.value}')
+
+	return APIKeyProvisionResponse(
+		job_id=job_id,
+		status='pending',
+		provider=provider.value,
+		message=f'API key provisioning started for {provider.value}. Connect to /ws/{job_id} for real-time updates.',
+		requires_intervention=False,
+	)
+
+
+@app.post('/api-key/provision/{job_id}/login-complete')
+async def notify_login_complete(job_id: str, http_request: Request):
+	"""
+	Notify that login has been completed for a provisioning job.
+
+	Call this after completing login in the browser to continue
+	the API key generation process.
+	"""
+	if job_id not in jobs:
+		raise HTTPException(status_code=404, detail=f'Job {job_id} not found')
+
+	job = jobs[job_id]
+
+	if job.status != JobStatus.WAITING_HUMAN:
+		raise HTTPException(status_code=400, detail=f'Job is not waiting for login. Current status: {job.status.value}')
+
+	# Signal that login is complete
+	job.intervention.response = HumanAction(
+		action_type='login_complete',
+		message='Login completed by user',
+	)
+	job.intervention.response_event.set()
+	job.intervention.requested = False
+	job.status = JobStatus.RUNNING
+
+	# Audit log: login completed
+	client_ip = get_client_ip(http_request)
+	provider = job.task.replace('API Key Provisioning for ', '') if job.task else 'unknown'
+	await provisioning_audit_logger.log_event(
+		event_type='login_completed',
+		provider=provider,
+		client_ip=client_ip,
+		job_id=job_id,
+		success=True,
+		user_agent=http_request.headers.get('User-Agent'),
+	)
+
+	await manager.broadcast(
+		job_id,
+		{
+			'type': 'login_complete',
+			'job_id': job_id,
+			'message': 'Login completed, continuing with API key generation...',
+		},
+	)
+
+	return {'message': 'Login completion acknowledged', 'job_id': job_id}
+
+
+@app.post('/api-key/provision/{job_id}/submit-2fa')
+async def submit_2fa_code(job_id: str, code: str, http_request: Request):
+	"""
+	Submit a 2FA code for a provisioning job.
+
+	Provide the verification code received via SMS or authenticator app.
+	"""
+	if job_id not in jobs:
+		raise HTTPException(status_code=404, detail=f'Job {job_id} not found')
+
+	job = jobs[job_id]
+
+	if job.status != JobStatus.WAITING_HUMAN:
+		raise HTTPException(status_code=400, detail=f'Job is not waiting for 2FA. Current status: {job.status.value}')
+
+	# Provide 2FA code
+	job.intervention.response = HumanAction(
+		action_type='type',
+		value=code,
+		message='2FA code provided by user',
+	)
+	job.intervention.response_event.set()
+	job.intervention.requested = False
+	job.status = JobStatus.RUNNING
+
+	# Audit log: 2FA completed
+	client_ip = get_client_ip(http_request)
+	provider = job.task.replace('API Key Provisioning for ', '') if job.task else 'unknown'
+	await provisioning_audit_logger.log_event(
+		event_type='twofa_completed',
+		provider=provider,
+		client_ip=client_ip,
+		job_id=job_id,
+		success=True,
+		user_agent=http_request.headers.get('User-Agent'),
+	)
+
+	await manager.broadcast(
+		job_id,
+		{
+			'type': '2fa_submitted',
+			'job_id': job_id,
+			'message': '2FA code submitted, continuing...',
+		},
+	)
+
+	return {'message': '2FA code submitted', 'job_id': job_id}
 
 
 if __name__ == '__main__':

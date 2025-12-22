@@ -118,6 +118,7 @@ class CustomRESTAPIClient:
 
         # For browser-use compatibility
         self.provider = "custom"
+        self.model_name = model or "custom"  # Required by browser-use telemetry
 
     def _build_headers(self) -> dict[str, str]:
         """Build HTTP headers for the request."""
@@ -143,11 +144,25 @@ class CustomRESTAPIClient:
 
     def _build_request_body(self, prompt: str) -> dict[str, Any]:
         """Build request body from template or default format."""
+        # Ensure prompt is a string
+        if not isinstance(prompt, str):
+            if isinstance(prompt, list):
+                # Join list items into a single string
+                prompt = "\n".join(str(item) for item in prompt)
+            else:
+                prompt = str(prompt)
+
         if self.request_format:
             try:
+                # Escape special characters for JSON string embedding
+                # This handles quotes, newlines, backslashes, etc.
+                escaped_prompt = json.dumps(prompt)[
+                    1:-1
+                ]  # Remove surrounding quotes from json.dumps
+
                 # Parse the template and substitute placeholders
                 template = self.request_format
-                template = template.replace("{prompt}", prompt)
+                template = template.replace("{prompt}", escaped_prompt)
                 template = template.replace("{session_id}", self._session_id)
                 template = template.replace("{model}", self.model)
                 template = template.replace("{temperature}", str(self.temperature))
@@ -193,12 +208,13 @@ class CustomRESTAPIClient:
 
         return str(current) if current is not None else ""
 
-    async def ainvoke(self, messages: list[dict[str, Any]], **kwargs) -> Any:
+    async def ainvoke(self, messages: list[dict[str, Any]], config: Any = None, **kwargs) -> Any:
         """
         Async invoke the custom API (compatible with LangChain interface).
 
         Args:
             messages: List of message dicts with 'role' and 'content' keys
+            config: Optional config object (ignored for custom API, for LangChain compatibility)
             **kwargs: Additional arguments (ignored for custom API)
 
         Returns:
@@ -257,10 +273,28 @@ class CustomRESTAPIClient:
                 content_length=len(content),
             )
 
-        # Return an object with 'content' attribute for browser-use compatibility
+        # Return an object with all attributes expected by browser-use/LangChain
         class Response:
+            """Response object compatible with LangChain/browser-use expectations."""
+
             def __init__(self, text: str):
                 self.content = text
+                # Usage as dict with all required fields for browser-use ChatInvokeUsage Pydantic model
+                self.usage = {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "prompt_cached_tokens": 0,
+                    "prompt_cache_creation_tokens": 0,
+                    "prompt_image_tokens": 0,
+                }
+                # Additional attributes expected by browser-use
+                self.response_metadata = {}
+                self.completion = text  # Some frameworks expect 'completion' instead of 'content'
+                self.text = text  # Alias for content
+                self.message = type("Message", (), {"content": text})()  # Mock message object
+                self.id = "custom-response"
+                self.model = "aidove"
 
         return Response(content)
 

@@ -507,9 +507,9 @@ public class UnifiedSearchService {
         
         try {
             LocalDateTime since = calculateSinceDate(window);
-            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
-                    Sort.by(Sort.Direction.DESC, "publishedDate")
-                            .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+            // Note: Native query already has ORDER BY clause, so use unsorted PageRequest
+            // to avoid duplicate ORDER BY causing SQL syntax error
+            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS, Sort.unsorted());
 
             Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(query, since, pageRequest);
 
@@ -663,9 +663,8 @@ public class UnifiedSearchService {
                         .build());
 
                 LocalDateTime since = calculateSinceDate(window);
-                PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
-                        Sort.by(Sort.Direction.DESC, "publishedDate")
-                                .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+                // Note: Native query already has ORDER BY clause, so use unsorted PageRequest
+                PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS, Sort.unsorted());
 
                 Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(
                         query, since, pageRequest);
@@ -1639,9 +1638,8 @@ public class UnifiedSearchService {
             LocalDateTime since = calculateSinceDate(window, startDate, endDate);
             LocalDateTime until = calculateEndDate(endDate);
             
-            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
-                    Sort.by(Sort.Direction.DESC, "publishedDate")
-                            .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+            // Note: Native query already has ORDER BY clause, so use unsorted PageRequest
+            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS, Sort.unsorted());
 
             // Use date range query if endDate is specified
             Page<CollectedData> page;
@@ -1782,9 +1780,8 @@ public class UnifiedSearchService {
             unifiedSearchEventService.publishStatusUpdate(jobId, "database", "저장된 뉴스에서 검색 중...");
             
             LocalDateTime since = calculateSinceDate(window);
-            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
-                    Sort.by(Sort.Direction.DESC, "publishedDate")
-                            .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+            // Note: Native query already has ORDER BY clause, so use unsorted PageRequest
+            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS, Sort.unsorted());
 
             Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(
                     query, since, pageRequest);

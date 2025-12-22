@@ -409,7 +409,8 @@ services:
       - BROWSER_IS_DOCKER_ENV=true
       # LLM configuration
       # Supported providers: openai, anthropic, openrouter, ollama, custom
-      - LLM_PROVIDER=${CRAWLER_LLM_PROVIDER:-openai}
+      # Default to 'custom' with AIDove webhook (no API key required)
+      - LLM_PROVIDER=${CRAWLER_LLM_PROVIDER:-custom}
       # OpenAI settings
       - LLM_OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LLM_OPENAI_MODEL=${CRAWLER_OPENAI_MODEL:-gpt-4o}
@@ -424,10 +425,12 @@ services:
       # Ollama settings (local LLM)
       - LLM_OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - LLM_OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
-      # Custom OpenAI-compatible API settings
+      # Custom API settings (default: AIDove webhook - no API key required)
       - LLM_CUSTOM_API_KEY=${CUSTOM_LLM_API_KEY:-}
-      - LLM_CUSTOM_BASE_URL=${CUSTOM_LLM_BASE_URL:-}
-      - LLM_CUSTOM_MODEL=${CUSTOM_LLM_MODEL:-}
+      - LLM_CUSTOM_BASE_URL=${CUSTOM_LLM_BASE_URL:-https://workflow.nodove.com/webhook/aidove}
+      - LLM_CUSTOM_MODEL=${CUSTOM_LLM_MODEL:-aidove}
+      - 'LLM_CUSTOM_REQUEST_FORMAT=${CUSTOM_LLM_REQUEST_FORMAT:-{"chatInput": "{prompt}"}}'
+      - LLM_CUSTOM_RESPONSE_PATH=${CUSTOM_LLM_RESPONSE_PATH:-reply}
       # Search API keys (loaded from Consul KV)
       - SEARCH_BRAVE_API_KEY=${SEARCH_BRAVE_API_KEY:-}
       - SEARCH_TAVILY_API_KEY=${SEARCH_TAVILY_API_KEY:-}

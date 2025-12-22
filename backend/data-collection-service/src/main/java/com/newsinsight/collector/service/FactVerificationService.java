@@ -815,7 +815,7 @@ public class FactVerificationService {
 
     /**
      * 모든 등록된 팩트체크 소스에서 병렬로 근거를 수집합니다.
-     * 실시간 데이터가 필요한 쿼리의 경우 RealtimeSearchSource를 우선 처리합니다.
+     * 실시간 데이터가 필요한 쿼리의 경우 RealtimeSearchSource와 뉴스를 우선 처리합니다.
      */
     private List<SourceEvidence> fetchAllSourceEvidence(String topic, String language) {
         List<SourceEvidence> allEvidence = new CopyOnWriteArrayList<>();
@@ -823,24 +823,41 @@ public class FactVerificationService {
         // 0. 실시간 검색이 필요한지 판단하고 우선 처리
         boolean needsRealtime = isRealtimeDataRequired(topic);
         if (needsRealtime) {
-            log.info("Topic '{}' requires realtime data, prioritizing realtime search", topic);
+            log.info("Topic '{}' requires realtime data, prioritizing realtime search and news", topic);
+            
+            // 실시간 검색 우선 처리
             List<SourceEvidence> realtimeEvidence = fetchRealtimeEvidence(topic, language);
             if (!realtimeEvidence.isEmpty()) {
-                // 실시간 데이터를 가장 앞에 배치 (우선순위 높음)
                 allEvidence.addAll(realtimeEvidence);
                 log.info("Fetched {} realtime evidence items", realtimeEvidence.size());
             }
+            
+            // 뉴스 소스 우선 처리 (최신 정보)
+            List<SourceEvidence> newsEvidence = fetchNewsEvidence(topic, language);
+            if (!newsEvidence.isEmpty()) {
+                allEvidence.addAll(newsEvidence);
+                log.info("Fetched {} news evidence items", newsEvidence.size());
+            }
         }
         
-        // 1. 기본 Wikipedia 정보 수집 (기존 로직 유지)
-        List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(topic);
-        allEvidence.addAll(wikiEvidence);
+        // 1. Wikipedia 정보 수집 (실시간 데이터가 아닌 경우 우선, 실시간인 경우 나중에)
+        if (!needsRealtime) {
+            List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(topic);
+            allEvidence.addAll(wikiEvidence);
+        }
         
-        // 2. 추가 팩트체크 소스에서 병렬 수집 (실시간 소스 제외 - 이미 처리됨)
+        // 2. 추가 팩트체크 소스에서 병렬 수집 (실시간 소스와 뉴스 제외 - 이미 처리됨)
         if (factCheckSources != null && !factCheckSources.isEmpty()) {
             List<Mono<List<SourceEvidence>>> sourceFetches = factCheckSources.stream()
                     .filter(FactCheckSource::isAvailable)
-                    .filter(source -> !needsRealtime || !"realtime_search".equals(source.getSourceId()))
+                    .filter(source -> {
+                        String sourceId = source.getSourceId();
+                        // 실시간 데이터 필요 시 이미 처리한 소스 제외
+                        if (needsRealtime && ("realtime_search".equals(sourceId) || "naver_news".equals(sourceId))) {
+                            return false;
+                        }
+                        return true;
+                    })
                     .map(source -> {
                         log.debug("Fetching evidence from source: {}", source.getSourceId());
                         return source.fetchEvidence(topic, language)
@@ -872,6 +889,12 @@ public class FactVerificationService {
                     log.warn("Error during parallel evidence fetch: {}", e.getMessage());
                 }
             }
+        }
+        
+        // 3. Wikipedia 정보 추가 (실시간 데이터인 경우 마지막에 추가)
+        if (needsRealtime) {
+            List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(topic);
+            allEvidence.addAll(wikiEvidence);
         }
         
         log.info("Collected total {} evidence items for topic: {}", allEvidence.size(), topic);
@@ -925,6 +948,30 @@ public class FactVerificationService {
                                 .block();
                     } catch (Exception e) {
                         log.warn("Failed to fetch realtime evidence: {}", e.getMessage());
+                        return List.<SourceEvidence>of();
+                    }
+                })
+                .orElse(List.of());
+    }
+    
+    /**
+     * 뉴스 소스에서 증거 수집
+     */
+    private List<SourceEvidence> fetchNewsEvidence(String topic, String language) {
+        if (factCheckSources == null) return List.of();
+        
+        return factCheckSources.stream()
+                .filter(source -> "naver_news".equals(source.getSourceId()))
+                .filter(FactCheckSource::isAvailable)
+                .findFirst()
+                .map(source -> {
+                    try {
+                        return source.fetchEvidence(topic, language)
+                                .collectList()
+                                .timeout(Duration.ofSeconds(timeoutSeconds))
+                                .block();
+                    } catch (Exception e) {
+                        log.warn("Failed to fetch news evidence: {}", e.getMessage());
                         return List.<SourceEvidence>of();
                     }
                 })

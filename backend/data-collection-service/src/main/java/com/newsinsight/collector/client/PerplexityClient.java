@@ -153,6 +153,19 @@ public class PerplexityClient {
                 .flatMap(this::extractTextFromChunk);
     }
 
+    /**
+     * Non-streaming search request that collects all chunks into a single response.
+     * Useful for simple queries where streaming is not needed.
+     *
+     * @param prompt The search prompt
+     * @return Mono with the complete response string
+     */
+    public reactor.core.publisher.Mono<String> search(String prompt) {
+        return streamCompletion(prompt)
+                .collectList()
+                .map(chunks -> String.join("", chunks));
+    }
+
     private Flux<String> extractTextFromChunk(String chunk) {
         if (chunk == null || chunk.isBlank()) {
             return Flux.empty();

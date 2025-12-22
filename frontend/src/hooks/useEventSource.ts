@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { PERSISTENCE_KEYS } from '@/lib/persistence';
 
 // Storage key for access token (matches AuthContext)
 const ACCESS_TOKEN_KEY = 'access_token';
@@ -7,12 +8,24 @@ const ACCESS_TOKEN_KEY = 'access_token';
  * Append authentication token to URL for SSE connections.
  * EventSource doesn't support custom headers, so we use query parameter.
  */
-function appendTokenToUrl(url: string): string {
+function appendTokenToUrl(url: string, lastEventId?: string): string {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-  if (!token) return url;
+  const params = new URLSearchParams();
+  
+  if (token) {
+    params.set('token', token);
+  }
+  
+  // SSE Last-Event-ID를 쿼리 파라미터로 전달 (재연결 시 놓친 이벤트 복구)
+  if (lastEventId) {
+    params.set('lastEventId', lastEventId);
+  }
+  
+  const queryString = params.toString();
+  if (!queryString) return url;
   
   const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
+  return `${url}${separator}${queryString}`;
 }
 
 export interface UseEventSourceOptions {
@@ -28,6 +41,10 @@ export interface UseEventSourceOptions {
   maxRetries?: number;
   /** 연결 활성화 여부, 기본값: true */
   enabled?: boolean;
+  /** 재연결 시 Last-Event-ID 사용 여부, 기본값: true */
+  persistLastEventId?: boolean;
+  /** 스토리지 키 접두사 (여러 SSE 스트림 구분용) */
+  storageKeyPrefix?: string;
 }
 
 export interface UseEventSourceReturn {
@@ -35,6 +52,8 @@ export interface UseEventSourceReturn {
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
   /** 재연결 시도 횟수 */
   retryCount: number;
+  /** 마지막 수신한 이벤트 ID */
+  lastEventId: string | null;
   /** 수동 연결 해제 */
   disconnect: () => void;
   /** 수동 재연결 */
@@ -70,15 +89,26 @@ export function useEventSource(
     reconnectInterval = 3000,
     maxRetries = 5,
     enabled = true,
+    persistLastEventId = true,
+    storageKeyPrefix = 'default',
   } = options;
 
   const [status, setStatus] = useState<UseEventSourceReturn['status']>('disconnected');
   const [retryCount, setRetryCount] = useState(0);
+  const [lastEventId, setLastEventId] = useState<string | null>(() => {
+    if (!persistLastEventId) return null;
+    try {
+      return sessionStorage.getItem(`${PERSISTENCE_KEYS.SSE_LAST_EVENT_ID}_${storageKeyPrefix}`);
+    } catch {
+      return null;
+    }
+  });
 
   const sourceRef = useRef<EventSource | null>(null);
   const retriesRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const lastEventIdRef = useRef(lastEventId);
 
   // 콜백 refs로 최신 값 유지
   const onMessageRef = useRef(onMessage);
@@ -90,6 +120,18 @@ export function useEventSource(
     onErrorRef.current = onError;
     onOpenRef.current = onOpen;
   }, [onMessage, onError, onOpen]);
+
+  // lastEventId 변경 시 저장
+  useEffect(() => {
+    lastEventIdRef.current = lastEventId;
+    if (persistLastEventId && lastEventId) {
+      try {
+        sessionStorage.setItem(`${PERSISTENCE_KEYS.SSE_LAST_EVENT_ID}_${storageKeyPrefix}`, lastEventId);
+      } catch {
+        // sessionStorage 사용 불가
+      }
+    }
+  }, [lastEventId, persistLastEventId, storageKeyPrefix]);
 
   const clearReconnectTimeout = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -125,8 +167,8 @@ export function useEventSource(
       setStatus('connecting');
     }
 
-    // Append auth token to URL for SSE authentication
-    const authenticatedUrl = appendTokenToUrl(url);
+    // Append auth token and lastEventId to URL for SSE authentication and reconnection
+    const authenticatedUrl = appendTokenToUrl(url, lastEventIdRef.current || undefined);
     const eventSource = new EventSource(authenticatedUrl);
     sourceRef.current = eventSource;
 
@@ -140,6 +182,10 @@ export function useEventSource(
     };
 
     eventSource.onmessage = (event) => {
+      // SSE 이벤트 ID 저장 (재연결 시 복구용)
+      if (event.lastEventId) {
+        setLastEventId(event.lastEventId);
+      }
       onMessageRef.current(event.data, event);
     };
 
@@ -187,6 +233,7 @@ export function useEventSource(
   return {
     status,
     retryCount,
+    lastEventId,
     disconnect,
     reconnect,
   };

@@ -13,6 +13,8 @@ import {
   Shield,
   User,
   AlertCircle,
+  Key,
+  Wand2,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -55,6 +57,7 @@ import type {
   LlmProviderTypeInfo,
   LlmTestResult,
 } from '@/types/api';
+import { APIKeyWizard } from '@/components/APIKeyWizard';
 
 interface UserLlmSettingsProps {
   userId: string;
@@ -164,6 +167,9 @@ export const UserLlmSettings: React.FC<UserLlmSettingsProps> = ({ userId }) => {
     temperature: 0.7,
     timeoutMs: 60000,
   });
+
+  // API Key Wizard state
+  const [apiKeyWizardOpen, setApiKeyWizardOpen] = useState(false);
 
   // Load data
   const loadData = useCallback(async () => {
@@ -325,6 +331,16 @@ export const UserLlmSettings: React.FC<UserLlmSettingsProps> = ({ userId }) => {
     setShowApiKeys(prev => ({ ...prev, [provider]: !prev[provider] }));
   };
 
+  // Handle API Key Wizard success - reload settings after auto-provisioning
+  const handleApiKeyWizardSuccess = useCallback((provider: string, keyMasked: string) => {
+    toast({
+      title: 'API 키 자동 발급 완료',
+      description: `${provider} API 키가 성공적으로 발급되고 저장되었습니다: ${keyMasked}`,
+    });
+    // Reload settings to reflect the new API key
+    loadData();
+  }, [toast, loadData]);
+
   if (isLoading) {
     return (
       <Card>
@@ -351,6 +367,10 @@ export const UserLlmSettings: React.FC<UserLlmSettingsProps> = ({ userId }) => {
               </CardDescription>
             </div>
             <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setApiKeyWizardOpen(true)}>
+                <Wand2 className="h-4 w-4 mr-2" />
+                API 키 자동 발급
+              </Button>
               <Button variant="outline" onClick={loadData}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 새로고침
@@ -664,6 +684,13 @@ export const UserLlmSettings: React.FC<UserLlmSettingsProps> = ({ userId }) => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* API Key Auto-Provisioning Wizard */}
+      <APIKeyWizard
+        open={apiKeyWizardOpen}
+        onOpenChange={setApiKeyWizardOpen}
+        onSuccess={handleApiKeyWizardSuccess}
+      />
     </div>
   );
 };

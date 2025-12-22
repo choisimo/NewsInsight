@@ -2,10 +2,13 @@ package com.newsinsight.collector.service.search;
 
 import com.newsinsight.collector.service.search.HybridRankingService.QueryIntent;
 import com.newsinsight.collector.service.search.HybridRankingService.QueryIntent.IntentType;
+import com.newsinsight.collector.service.search.LlmIntentAnalyzer.IntentAnalysisResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -27,7 +30,15 @@ import java.util.regex.Pattern;
 @Slf4j
 public class QueryIntentAnalyzer {
 
-    // 의도별 키워드 패턴
+    private final LlmIntentAnalyzer llmIntentAnalyzer;
+
+    @Value("${collector.intent-analysis.use-llm:true}")
+    private boolean useLlm;
+
+    @Value("${collector.intent-analysis.llm-timeout-seconds:10}")
+    private int llmTimeoutSeconds;
+
+    // 의도별 키워드 패턴 (폴백용 - LLM 실패 시 사용)
     private static final Map<IntentType, List<String>> INTENT_KEYWORDS = Map.of(
             IntentType.FACT_CHECK, List.of(
                     "사실", "진짜", "가짜", "팩트체크", "팩트 체크", "검증",
@@ -63,6 +74,7 @@ public class QueryIntentAnalyzer {
 
     /**
      * 쿼리를 분석하여 의도를 파악합니다.
+     * LLM 기반 분석을 우선 시도하고, 실패 시 규칙 기반 분석으로 폴백합니다.
      *
      * @param query 사용자 쿼리
      * @return 분석된 쿼리 의도
@@ -76,6 +88,39 @@ public class QueryIntentAnalyzer {
                     .build();
         }
 
+        // LLM 기반 분석 시도
+        if (useLlm && llmIntentAnalyzer != null && llmIntentAnalyzer.isEnabled()) {
+            try {
+                IntentAnalysisResult llmResult = llmIntentAnalyzer
+                        .analyzeIntent(query)
+                        .block(Duration.ofSeconds(llmTimeoutSeconds));
+                
+                if (llmResult != null && llmResult.getConfidence() >= 0.5) {
+                    QueryIntent intent = llmIntentAnalyzer.convertToQueryIntent(llmResult);
+                    log.info("LLM intent analysis succeeded: query='{}', type={}, confidence={:.2f}", 
+                            query, intent.getType(), intent.getConfidence());
+                    return intent;
+                } else if (llmResult != null) {
+                    log.debug("LLM confidence too low ({:.2f}), using rule-based fallback", 
+                            llmResult.getConfidence());
+                }
+            } catch (Exception e) {
+                log.warn("LLM intent analysis failed for '{}', using rule-based fallback: {}", 
+                        query, e.getMessage());
+            }
+        }
+
+        // 폴백: 규칙 기반 분석
+        return analyzeIntentRuleBased(query);
+    }
+
+    /**
+     * 규칙 기반 의도 분석 (폴백용)
+     * 
+     * @param query 사용자 쿼리
+     * @return 분석된 쿼리 의도
+     */
+    private QueryIntent analyzeIntentRuleBased(String query) {
         String normalizedQuery = query.toLowerCase().trim();
         
         // 각 의도 유형별 점수 계산
@@ -122,7 +167,7 @@ public class QueryIntentAnalyzer {
         // 최소 점수 미달 시 일반 검색으로
         if (maxScore < 0.5) {
             bestIntent = IntentType.GENERAL;
-            confidence = 1.0 - (maxScore * 0.5); // 낮은 매칭일수록 일반 검색 신뢰도 높음
+            confidence = 1.0 - (maxScore * 0.5);
         }
 
         // 시간 범위 추출
@@ -138,7 +183,7 @@ public class QueryIntentAnalyzer {
                 .timeRange(timeRange)
                 .build();
 
-        log.debug("Query intent analyzed: query='{}', type={}, confidence={}, keywords={}", 
+        log.debug("Rule-based intent analysis: query='{}', type={}, confidence={}, keywords={}", 
                 query, bestIntent, String.format("%.2f", confidence), keywords);
 
         return intent;

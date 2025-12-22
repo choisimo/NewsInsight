@@ -48,6 +48,12 @@ public class MlAddonSeeder implements ApplicationRunner {
     @Value("${ml.addon.bias.port:8102}")
     private int biasPort;
 
+    @Value("${ml.addon.botdetector.host:bot-detector}")
+    private String botDetectorHost;
+
+    @Value("${ml.addon.botdetector.port:8041}")
+    private int botDetectorPort;
+
     @Value("${ml.addon.seed.enabled:true}")
     private boolean seedEnabled;
 
@@ -248,6 +254,35 @@ public class MlAddonSeeder implements ApplicationRunner {
                     "language", "ko",
                     "entity_types", List.of("PERSON", "ORGANIZATION", "LOCATION", "DATE", "QUANTITY"),
                     "link_entities", true
+                ))
+                .build(),
+
+            // ========== Bot Detector Add-on ==========
+            MlAddon.builder()
+                .addonKey("bot-detector-v1")
+                .name("봇/AI 생성 콘텐츠 탐지")
+                .description("뉴스 기사 또는 댓글이 봇이나 AI에 의해 생성되었는지 탐지합니다. " +
+                        "RoBERTa 기반 OpenAI detector 모델을 사용합니다.")
+                .category(AddonCategory.BOT_DETECTION)
+                .invokeType(AddonInvokeType.HTTP_SYNC)
+                .endpointUrl(String.format("http://%s:%d/analyze", botDetectorHost, botDetectorPort))
+                .healthCheckUrl(String.format("http://%s:%d/health", botDetectorHost, botDetectorPort))
+                .authType(AddonAuthType.NONE)
+                .inputSchemaVersion("1.0")
+                .outputSchemaVersion("1.0")
+                .timeoutMs(30000)
+                .maxQps(15)
+                .maxRetries(3)
+                .enabled(true)
+                .priority(25)
+                .healthStatus(AddonHealthStatus.UNKNOWN)
+                .owner("system")
+                .config(Map.of(
+                    "model", "roberta-base-openai-detector",
+                    "language", "multi",
+                    "threshold", 0.5,
+                    "detect_ai_generated", true,
+                    "detect_bot_patterns", true
                 ))
                 .build()
         );

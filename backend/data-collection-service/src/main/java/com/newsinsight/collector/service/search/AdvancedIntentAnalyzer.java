@@ -511,18 +511,41 @@ public class AdvancedIntentAnalyzer {
             variants.add(keywords.get(0) + " " + keywords.get(1) + " " + keywords.get(2));
         }
         
-        // 5. 언어별 검색 접미사 추가
+        // 5. 산업/시장 관련 동의어 확장
+        String lowerQuery = originalQuery.toLowerCase();
+        if (lowerQuery.contains("반도체") || lowerQuery.contains("메모리") || lowerQuery.contains("semiconductor")) {
+            variants.add("DRAM 가격");
+            variants.add("낸드플래시 시장");
+            variants.add("반도체 업황");
+            variants.add("메모리칩 시세");
+            if (lowerQuery.contains("가격") || lowerQuery.contains("상승") || lowerQuery.contains("하락")) {
+                variants.add("SK하이닉스 실적");
+                variants.add("삼성전자 반도체");
+                variants.add("메모리 반도체 시황");
+            }
+        }
+        
+        // 6. 언어별 검색 접미사 추가
         if ("ko".equals(language)) {
             for (String keyword : keywords.subList(0, Math.min(3, keywords.size()))) {
                 variants.add(keyword + " 뉴스");
                 variants.add(keyword + " 정보");
                 variants.add(keyword + " 최신");
+                // 시장/가격 관련 키워드면 추가 변형
+                if (keyword.contains("가격") || keyword.contains("시세") || keyword.contains("시장")) {
+                    variants.add(keyword + " 동향");
+                    variants.add(keyword + " 전망");
+                }
             }
         } else {
             for (String keyword : keywords.subList(0, Math.min(3, keywords.size()))) {
                 variants.add(keyword + " news");
                 variants.add(keyword + " information");
                 variants.add("about " + keyword);
+                if (keyword.contains("price") || keyword.contains("market")) {
+                    variants.add(keyword + " trend");
+                    variants.add(keyword + " outlook");
+                }
             }
         }
         
@@ -819,7 +842,19 @@ public class AdvancedIntentAnalyzer {
                 Map.entry("유로", "forex"), Map.entry("원화", "forex"),
                 Map.entry("dollar", "forex"), Map.entry("yen", "forex"),
                 Map.entry("euro", "forex"), Map.entry("usd", "forex"),
-                Map.entry("krw", "forex"), Map.entry("jpy", "forex")
+                Map.entry("krw", "forex"), Map.entry("jpy", "forex"),
+                // 반도체 및 IT 산업
+                Map.entry("반도체", "semiconductor"), Map.entry("메모리", "semiconductor"),
+                Map.entry("dram", "semiconductor"), Map.entry("낸드", "semiconductor"),
+                Map.entry("nand", "semiconductor"), Map.entry("ssd", "semiconductor"),
+                Map.entry("파운드리", "semiconductor"), Map.entry("웨이퍼", "semiconductor"),
+                Map.entry("칩", "semiconductor"), Map.entry("chip", "semiconductor"),
+                Map.entry("semiconductor", "semiconductor"),
+                // 기업
+                Map.entry("삼성전자", "stock"), Map.entry("sk하이닉스", "stock"),
+                Map.entry("마이크론", "stock"), Map.entry("인텔", "stock"),
+                Map.entry("tsmc", "stock"), Map.entry("nvidia", "stock"),
+                Map.entry("엔비디아", "stock"), Map.entry("amd", "stock")
         );
 
         // 통계/지표 키워드
@@ -933,12 +968,22 @@ public class AdvancedIntentAnalyzer {
 
         // 패턴 5: 급등/급락, 상승/하락 등 시장 동향
         Pattern marketTrendPattern = Pattern.compile(
-                "(?:급등|급락|폭등|폭락|상승|하락|오르|내리|surge|crash|rise|fall|up|down)"
+                "(?:급등|급락|폭등|폭락|상승|하락|오르|내리|올라|내려|증가|감소|surge|crash|rise|fall|up|down|increase|decrease)"
         );
         if (marketTrendPattern.matcher(lower).find()) {
             confidence = Math.max(confidence, 0.75);
             if ("unknown".equals(dataType)) dataType = "market_trend";
             reason.append("market_trend_pattern ");
+        }
+        
+        // 패턴 6: 산업/시장 관련 뉴스 패턴 (반도체, 자동차, 에너지 등)
+        Pattern industryNewsPattern = Pattern.compile(
+                "(?:반도체|메모리|dram|낸드|nand|자동차|배터리|에너지|석유|철강|화학|제약|바이오).*(?:가격|시장|산업|업계|전망|동향|뉴스)"
+        );
+        if (industryNewsPattern.matcher(lower).find()) {
+            confidence = Math.max(confidence, 0.8);
+            if ("unknown".equals(dataType)) dataType = "industry_news";
+            reason.append("industry_news_pattern ");
         }
 
         return RealtimeAnalysisResult.builder()

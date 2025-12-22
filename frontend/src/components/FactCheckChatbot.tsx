@@ -106,15 +106,7 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
           setStreamingMessage(null);
         }
         
-        // 완료 메시지도 추가
-        setMessages((prev) => [...prev, {
-          id: `${Date.now()}-${Math.random()}`,
-          role: event.role as 'user' | 'assistant' | 'system',
-          content: event.content || '',
-          timestamp: event.timestamp || Date.now(),
-          type: eventType,
-          phase: event.phase,
-        }]);
+        // 완료 메시지는 UI에 표시하지 않으므로 messages에 추가하지 않음
         return;
       }
       
@@ -772,7 +764,11 @@ const MessageBubble = ({ message, isFirst = false, compact = false }: MessageBub
   }
 
   // AI 합성 메시지 (스트리밍) - 개선된 디자인
+  // 빈 content인 경우 스트리밍 중이 아니면 렌더링하지 않음
   if (message.type === 'ai_synthesis') {
+    if (!message.content && !message.isStreaming) {
+      return null;
+    }
     return (
       <div className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
         <div className="flex-shrink-0">
@@ -782,10 +778,17 @@ const MessageBubble = ({ message, isFirst = false, compact = false }: MessageBub
         </div>
         <div className="flex-1 min-w-0">
           <div className="bg-gradient-to-br from-violet-50 to-purple-50 dark:from-violet-950/30 dark:to-purple-950/30 rounded-xl p-4 border border-violet-200/50 dark:border-violet-800/30">
-            <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-              <MarkdownRenderer content={message.content} isStreaming={message.isStreaming} />
-            </div>
-            {message.isStreaming && (
+            {message.content ? (
+              <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+                <MarkdownRenderer content={message.content} isStreaming={message.isStreaming} />
+              </div>
+            ) : message.isStreaming ? (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">AI 분석 결과 생성 중...</span>
+              </div>
+            ) : null}
+            {message.isStreaming && message.content && (
               <span className="inline-block w-2 h-4 ml-1 bg-violet-500 animate-pulse rounded-sm" />
             )}
           </div>
@@ -794,16 +797,9 @@ const MessageBubble = ({ message, isFirst = false, compact = false }: MessageBub
     );
   }
 
-  // 완료 메시지
+  // 완료 메시지 - 숨김 처리 (결과를 가리지 않도록)
   if (message.type === 'complete') {
-    return (
-      <div className="flex justify-center py-2 animate-in fade-in duration-300">
-        <div className="flex items-center gap-2 bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 px-4 py-2 rounded-full text-sm border border-green-200/50 dark:border-green-800/30">
-          <CheckCircle2 className="h-4 w-4" />
-          <span>분석 완료</span>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   // 에러 메시지
@@ -842,7 +838,11 @@ const MessageBubble = ({ message, isFirst = false, compact = false }: MessageBub
     );
   }
 
-  // 일반 어시스턴트 메시지
+  // 일반 어시스턴트 메시지 - 빈 content는 렌더링하지 않음
+  if (!message.content || !message.content.trim()) {
+    return null;
+  }
+  
   return (
     <div className="flex gap-3 animate-in fade-in slide-in-from-left-2 duration-300">
       <div className="flex-shrink-0">

@@ -90,9 +90,8 @@ public class AnalysisService {
 
     public ArticlesResponseDto searchArticles(String query, int limit) {
         int pageSize = limit > 0 ? limit : 50;
-        PageRequest pageRequest = PageRequest.of(0, pageSize,
-                Sort.by(Sort.Direction.DESC, "publishedDate")
-                        .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+        // Note: Native query already has ORDER BY clause, so use unsorted PageRequest
+        PageRequest pageRequest = PageRequest.of(0, pageSize, Sort.unsorted());
         String normalizedQuery = (query != null && !query.isBlank()) ? query : null;
         Page<CollectedData> page = collectedDataRepository.searchByQuery(normalizedQuery, pageRequest);
 

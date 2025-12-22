@@ -770,22 +770,43 @@ export default function SmartSearch() {
     },
   });
 
-  // Sync SSE result to deepResults state (fallback if onComplete doesn't fire)
+  // Sync SSE result to deepResults state - always sync when sseResult changes
   useEffect(() => {
     if (sseResult) {
-      // Only sync if we don't have evidence yet or sseResult has more evidence
-      const hasNoEvidence = !deepResults || !deepResults.evidence || deepResults.evidence.length === 0;
-      const sseHasMoreEvidence = sseResult.evidence && 
-        (!deepResults?.evidence || sseResult.evidence.length > deepResults.evidence.length);
-      
-      if (hasNoEvidence || sseHasMoreEvidence) {
-        console.log('[SmartSearch] Syncing sseResult to deepResults:', sseResult);
-        setDeepResults(sseResult);
+      console.log('[SmartSearch] Syncing sseResult to deepResults:', sseResult);
+      setDeepResults(sseResult);
+      // Mark as done only when job status is COMPLETED
+      if (sseResult.status === 'COMPLETED') {
         setDeepLoading(false);
         setDeepProgress(100);
       }
     }
-  }, [sseResult, deepResults]);
+  }, [sseResult]);
+
+  // Sync SSE error to deepError state
+  useEffect(() => {
+    if (sseError && !deepError) {
+      console.log('[SmartSearch] Syncing sseError to deepError:', sseError);
+      setDeepError(sseError);
+      setDeepLoading(false);
+    }
+  }, [sseError, deepError]);
+
+  // Sync SSE progress to deepProgress state
+  useEffect(() => {
+    if (sseProgress > 0 && sseProgress > deepProgress) {
+      setDeepProgress(sseProgress);
+    }
+  }, [sseProgress, deepProgress]);
+
+  // Sync SSE job status to loading state
+  useEffect(() => {
+    if (deepJobStatus === 'COMPLETED' || deepJobStatus === 'FAILED' || deepJobStatus === 'CANCELLED' || deepJobStatus === 'TIMEOUT') {
+      setDeepLoading(false);
+    } else if (deepJobStatus === 'IN_PROGRESS') {
+      setDeepLoading(true);
+    }
+  }, [deepJobStatus]);
 
   // Load templates from server based on filter and search query
   useEffect(() => {

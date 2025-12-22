@@ -320,6 +320,13 @@ services:
       WORKSPACE_MAX_FILE_SIZE: ${WORKSPACE_MAX_FILE_SIZE:-104857600}
       WORKSPACE_MAX_FILES_PER_SESSION: ${WORKSPACE_MAX_FILES_PER_SESSION:-100}
       WORKSPACE_SESSION_FILE_TTL_HOURS: ${WORKSPACE_SESSION_FILE_TTL_HOURS:-24}
+      # API Key Encryption Configuration
+      # IMPORTANT: Set strong values in production .env file!
+      NEWSINSIGHT_ENCRYPTION_SECRET: ${NEWSINSIGHT_ENCRYPTION_SECRET}
+      NEWSINSIGHT_ENCRYPTION_SALT: ${NEWSINSIGHT_ENCRYPTION_SALT}
+      # Enable migration on first run to encrypt existing plain text API keys
+      # Set to true once, then set back to false after migration completes
+      NEWSINSIGHT_ENCRYPTION_MIGRATE: ${NEWSINSIGHT_ENCRYPTION_MIGRATE:-false}
       # JVM settings
       JAVA_OPTS: "-Xms256m -Xmx512m"
     volumes:

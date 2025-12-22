@@ -174,6 +174,12 @@ const navConfig: NavItem[] = [
         description: '앱 설정'
       },
       {
+        to: '/admin',
+        icon: <Shield className="h-4 w-4" />,
+        label: '관리자 대시보드',
+        description: 'ML 학습 및 시스템 관리'
+      },
+      {
         to: '/admin/sources',
         icon: <Newspaper className="h-4 w-4" />,
         label: '소스 관리',

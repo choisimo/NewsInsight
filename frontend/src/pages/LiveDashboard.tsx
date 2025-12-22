@@ -77,7 +77,7 @@ export default function LiveDashboard() {
             <LayoutDashboard className="h-6 w-6 text-primary" />
             Live Dashboard
           </h1>
-          <p className="text-muted-foreground text-sm flex items-center gap-2 mt-1">
+          <div className="text-muted-foreground text-sm flex items-center gap-2 mt-1">
             <Calendar className="h-3 w-3" />
             {today}
             <Badge 
@@ -101,7 +101,7 @@ export default function LiveDashboard() {
                 </>
               )}
             </Badge>
-          </p>
+          </div>
         </div>
         <div className="flex gap-2">
           {!isConnected && (

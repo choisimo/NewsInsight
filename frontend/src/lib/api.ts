@@ -893,6 +893,106 @@ export const getBrowserWSUrl = (jobId: string): string => {
 
 
 // ============================================
+// API Key Provisioning API
+// ============================================
+
+/**
+ * Supported API providers for auto-provisioning
+ */
+export type APIProvider = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'together_ai' | 'perplexity' | 'brave_search' | 'tavily';
+
+/**
+ * API Key provision request
+ */
+export interface APIKeyProvisionRequest {
+  provider: APIProvider;
+  key_name?: string;
+  auto_save?: boolean;
+  timeout_seconds?: number;
+  headless?: boolean;
+}
+
+/**
+ * API Key provision response
+ */
+export interface APIKeyProvisionResponse {
+  job_id: string;
+  status: string;
+  provider: string;
+  message: string;
+  api_key_masked?: string;
+  saved_to_settings?: boolean;
+  error?: string;
+  requires_intervention?: boolean;
+  intervention_type?: string;
+}
+
+/**
+ * Provider info for display
+ */
+export interface ProviderInfo {
+  name: string;
+  display_name: string;
+  api_keys_url: string;
+}
+
+/**
+ * Get list of supported API providers
+ */
+export const getAPIKeyProviders = async (): Promise<{ providers: ProviderInfo[] }> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/api-key/providers`);
+  if (!response.ok) {
+    throw new Error('Failed to get providers list');
+  }
+  return response.json();
+};
+
+/**
+ * Start API key provisioning task
+ */
+export const startAPIKeyProvisioning = async (request: APIKeyProvisionRequest): Promise<APIKeyProvisionResponse> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/api-key/provision`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to start API key provisioning');
+  }
+  return response.json();
+};
+
+/**
+ * Notify that login has been completed for provisioning job
+ */
+export const notifyLoginComplete = async (jobId: string): Promise<{ message: string }> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/api-key/provision/${jobId}/login-complete`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to notify login completion');
+  }
+  return response.json();
+};
+
+/**
+ * Submit 2FA code for provisioning job
+ */
+export const submitProvision2FA = async (jobId: string, code: string): Promise<{ message: string }> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/api-key/provision/${jobId}/submit-2fa?code=${encodeURIComponent(code)}`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to submit 2FA code');
+  }
+  return response.json();
+};
+
+
+// ============================================
 // Unified Search API (Parallel Search + Deep Analysis)
 // ============================================
 
@@ -2823,7 +2923,7 @@ export const KOREAN_DATASETS: HuggingFaceDataset[] = [
     language: 'ko',
   },
   {
-    id: 'klue',
+    id: 'klue/nli',
     name: 'KLUE NLI',
     description: '한국어 자연어 추론 데이터셋 (config: nli)',
     size: '28K',
@@ -2832,7 +2932,7 @@ export const KOREAN_DATASETS: HuggingFaceDataset[] = [
     language: 'ko',
   },
   {
-    id: 'klue',
+    id: 'klue/ner',
     name: 'KLUE NER',
     description: '한국어 개체명 인식 데이터셋 (config: ner)',
     size: '26K',
@@ -2841,7 +2941,7 @@ export const KOREAN_DATASETS: HuggingFaceDataset[] = [
     language: 'ko',
   },
   {
-    id: 'klue',
+    id: 'klue/ynat',
     name: 'KLUE YNAT',
     description: '연합뉴스 주제 분류 데이터셋 (config: ynat)',
     size: '55K',

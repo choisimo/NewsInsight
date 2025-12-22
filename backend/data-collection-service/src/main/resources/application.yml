@@ -11,8 +11,13 @@ spring:
       acks: ${KAFKA_PRODUCER_ACKS:all}
       retries: ${KAFKA_PRODUCER_RETRIES:3}
       retry-backoff-ms: ${KAFKA_PRODUCER_RETRY_BACKOFF_MS:1000}
-      delivery-timeout-ms: ${KAFKA_PRODUCER_DELIVERY_TIMEOUT_MS:120000}
+      delivery-timeout-ms: ${KAFKA_PRODUCER_DELIVERY_TIMEOUT_MS:30000}
       enable-idempotence: ${KAFKA_PRODUCER_ENABLE_IDEMPOTENCE:true}
+      properties:
+        # Fast-fail settings to avoid long blocking on Kafka unavailability
+        max.block.ms: ${KAFKA_PRODUCER_MAX_BLOCK_MS:5000}
+        request.timeout.ms: ${KAFKA_PRODUCER_REQUEST_TIMEOUT_MS:10000}
+        metadata.max.age.ms: ${KAFKA_PRODUCER_METADATA_MAX_AGE_MS:60000}
     # Consumer reliability settings
     consumer:
       max-retry-attempts: ${KAFKA_CONSUMER_MAX_RETRY_ATTEMPTS:3}
@@ -310,6 +315,32 @@ collector:
       max-results: ${COLLECTOR_RRF_MAX_RESULTS:50}
       # 최소 관련성 점수 (이 점수 이하의 결과는 필터링)
       min-relevance: ${COLLECTOR_RRF_MIN_RELEVANCE:0.1}
+      # URL 실존 여부 검증 활성화 (LLM 환각, 죽은 링크 필터링)
+      url-validation-enabled: ${COLLECTOR_RRF_URL_VALIDATION_ENABLED:true}
+  
+  # ============================================
+  # URL Validation Configuration (실존 여부 검증)
+  # ============================================
+  # URL이 실제로 접근 가능한지, LLM 환각인지, 삭제된 페이지인지 검증합니다.
+  url-validation:
+    # URL 검증 활성화
+    enabled: ${COLLECTOR_URL_VALIDATION_ENABLED:true}
+    # HTTP HEAD/GET 요청 타임아웃 (초)
+    timeout-seconds: ${COLLECTOR_URL_VALIDATION_TIMEOUT_SECONDS:5}
+    # 검증 결과 캐시 TTL (분)
+    cache-ttl-minutes: ${COLLECTOR_URL_VALIDATION_CACHE_TTL_MINUTES:30}
+  
+  # ============================================
+  # Evidence Validation Configuration (증거 품질 검증)
+  # ============================================
+  # 수집된 증거의 품질을 검증하여 불량 데이터를 필터링합니다.
+  evidence-validation:
+    # 증거 검증 활성화
+    enabled: ${COLLECTOR_EVIDENCE_VALIDATION_ENABLED:true}
+    # Strict 모드 (URL과 콘텐츠 모두 유효해야 함)
+    strict-mode: ${COLLECTOR_EVIDENCE_VALIDATION_STRICT_MODE:false}
+    # 최소 콘텐츠 길이 (이하인 경우 삭제된 페이지로 간주)
+    min-content-length: ${COLLECTOR_EVIDENCE_VALIDATION_MIN_CONTENT_LENGTH:50}
 
   # ============================================
   # IP Rotation Configuration (for rate limit bypass)
@@ -530,3 +561,19 @@ workspace:
     cron: ${WORKSPACE_CLEANUP_CRON:0 30 3 * * *}
     # Hours before orphaned session files are marked for deletion
     orphan-hours: ${WORKSPACE_ORPHAN_HOURS:48}
+
+# ============================================
+# API Key Encryption Configuration
+# ============================================
+# AES-256-GCM encryption for secure API key storage.
+# IMPORTANT: Change these values in production!
+newsinsight:
+  encryption:
+    # Secret key for encryption (must be at least 32 characters for AES-256)
+    # In production, use a strong random string and store securely
+    secret: ${NEWSINSIGHT_ENCRYPTION_SECRET:defaultSecretKeyForDevelopmentOnly32}
+    # Salt for key derivation (must be at least 16 characters)
+    salt: ${NEWSINSIGHT_ENCRYPTION_SALT:defaultSaltValue16ch}
+    # Enable migration on startup to encrypt existing plain text API keys
+    # Set to true once to migrate, then set back to false
+    migrate-on-startup: ${NEWSINSIGHT_ENCRYPTION_MIGRATE:false}

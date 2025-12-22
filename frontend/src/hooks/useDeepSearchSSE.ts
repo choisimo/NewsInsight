@@ -87,6 +87,25 @@ const resolveBaseUrl = (): string => {
   return '';
 };
 
+/**
+ * Calculate stance distribution from evidence array
+ */
+const calculateStanceDistribution = (evidence: Evidence[]): DeepSearchResult['stanceDistribution'] => {
+  const total = evidence.length;
+  const pro = evidence.filter(e => e.stance === 'pro').length;
+  const con = evidence.filter(e => e.stance === 'con').length;
+  const neutral = evidence.filter(e => e.stance === 'neutral').length;
+  
+  return {
+    pro,
+    con,
+    neutral,
+    proRatio: total > 0 ? pro / total : 0,
+    conRatio: total > 0 ? con / total : 0,
+    neutralRatio: total > 0 ? neutral / total : 0,
+  };
+};
+
 // ============================================
 // Hook
 // ============================================
@@ -119,6 +138,9 @@ export function useDeepSearchSSE(options: UseDeepSearchSSEOptions): UseDeepSearc
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  
+  // Ref to accumulate evidence items as they arrive
+  const accumulatedEvidenceRef = useRef<Evidence[]>([]);
 
   // Refs for callbacks to avoid reconnection on callback changes
   const onStatusUpdateRef = useRef(onStatusUpdate);
@@ -195,6 +217,9 @@ export function useDeepSearchSSE(options: UseDeepSearchSSEOptions): UseDeepSearc
       eventSourceRef.current.close();
     }
     clearTimeouts();
+    
+    // Reset accumulated evidence for new connection
+    accumulatedEvidenceRef.current = [];
 
     if (mountedRef.current) {
       setConnectionStatus('connecting');
@@ -279,6 +304,27 @@ export function useDeepSearchSSE(options: UseDeepSearchSSEOptions): UseDeepSearc
             const count = data.evidenceCount as number;
             setEvidenceCount(count);
             onEvidenceRef.current?.(evidence, count);
+            
+            // Accumulate evidence and update result progressively
+            // Check if evidence already exists to avoid duplicates
+            const existingIndex = accumulatedEvidenceRef.current.findIndex(e => e.url === evidence.url);
+            if (existingIndex === -1) {
+              accumulatedEvidenceRef.current.push(evidence);
+            } else {
+              accumulatedEvidenceRef.current[existingIndex] = evidence;
+            }
+            
+            // Update result with accumulated evidence for real-time display
+            setResult(prev => ({
+              ...prev,
+              jobId: jobId,
+              topic: topic || prev?.topic || '',
+              status: 'IN_PROGRESS' as const,
+              evidence: [...accumulatedEvidenceRef.current],
+              evidenceCount: accumulatedEvidenceRef.current.length,
+              stanceDistribution: calculateStanceDistribution(accumulatedEvidenceRef.current),
+              createdAt: prev?.createdAt || new Date().toISOString(),
+            }));
             
             updateTask(jobId, { evidenceCount: count });
           }

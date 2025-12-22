@@ -7,7 +7,9 @@ import com.itextpdf.kernel.colors.DeviceRgb;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.PageSize;
+import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.borders.Border;
@@ -632,24 +634,46 @@ public class PdfExportService {
 
     private void addPageNumbers(PdfDocument pdf, PdfFont font) {
         int numberOfPages = pdf.getNumberOfPages();
+        if (numberOfPages <= 0) {
+            log.warn("No pages in PDF document, skipping page numbers");
+            return;
+        }
+        
         for (int i = 1; i <= numberOfPages; i++) {
             // 페이지 번호는 표지를 제외하고 시작
             if (i == 1) continue;
             
-            Document doc = new Document(pdf.getPage(i).getDocument());
-            Paragraph pageNumber = new Paragraph(String.format("%d / %d", i, numberOfPages))
-                    .setFont(font)
-                    .setFontSize(10)
-                    .setFontColor(NEUTRAL_COLOR);
-            
-            // 하단 중앙에 추가
-            doc.showTextAligned(pageNumber,
-                    pdf.getPage(i).getPageSize().getWidth() / 2,
-                    30,
-                    i,
-                    TextAlignment.CENTER,
-                    VerticalAlignment.BOTTOM,
-                    0);
+            try {
+                PdfPage page = pdf.getPage(i);
+                if (page == null) {
+                    log.warn("Page {} is null, skipping page number", i);
+                    continue;
+                }
+                
+                // Get page size with null safety
+                Rectangle pageSize = page.getPageSize();
+                if (pageSize == null) {
+                    log.warn("Page {} has no size defined, skipping page number", i);
+                    continue;
+                }
+                
+                Document doc = new Document(pdf);
+                Paragraph pageNumber = new Paragraph(String.format("%d / %d", i, numberOfPages))
+                        .setFont(font)
+                        .setFontSize(10)
+                        .setFontColor(NEUTRAL_COLOR);
+                
+                // 하단 중앙에 추가
+                doc.showTextAligned(pageNumber,
+                        pageSize.getWidth() / 2,
+                        30,
+                        i,
+                        TextAlignment.CENTER,
+                        VerticalAlignment.BOTTOM,
+                        0);
+            } catch (Exception e) {
+                log.warn("Failed to add page number to page {}: {}", i, e.getMessage());
+            }
         }
     }
 

@@ -40,7 +40,7 @@ public interface MlAddonRepository extends JpaRepository<MlAddon, Long> {
     @Query("UPDATE MlAddon a SET a.enabled = false WHERE a.id = :id")
     void disableAddon(@Param("id") Long id);
 
-    @Query("SELECT a FROM MlAddon a WHERE a.healthCheckUrl IS NOT NULL AND " +
+    @Query("SELECT a FROM MlAddon a WHERE a.enabled = true AND a.healthCheckUrl IS NOT NULL AND " +
            "(a.lastHealthCheck IS NULL OR a.lastHealthCheck < :cutoff)")
     List<MlAddon> findAddonsNeedingHealthCheck(@Param("cutoff") LocalDateTime cutoff);
 

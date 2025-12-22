@@ -4,6 +4,8 @@ import com.newsinsight.collector.service.FactVerificationService.SourceEvidence;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.AnalyzedQuery;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.FallbackStrategy;
+import com.newsinsight.collector.service.search.VectorSearchService;
+import com.newsinsight.collector.service.validation.EvidenceValidator;
 import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -39,6 +41,11 @@ public class RRFEvidenceFusionService {
 
     private final List<FactCheckSource> factCheckSources;
     private final AdvancedIntentAnalyzer intentAnalyzer;
+    private final StatisticalWeightCalculator weightCalculator;
+    private final EvidenceValidator evidenceValidator;
+    private final LlmQueryExpansionService llmQueryExpansionService;
+    private final VectorSearchService vectorSearchService;
+    private final SemanticRelevanceFilter semanticRelevanceFilter;
 
     @Value("${collector.fact-check.timeout-seconds:15}")
     private int timeoutSeconds;
@@ -54,6 +61,15 @@ public class RRFEvidenceFusionService {
 
     @Value("${collector.fact-check.rrf.min-relevance:0.1}")
     private double minRelevance; // 최소 관련성 점수 (이하 결과는 제외)
+
+    @Value("${collector.fact-check.rrf.url-validation-enabled:true}")
+    private boolean urlValidationEnabled; // URL 실존 여부 검증 활성화
+
+    @Value("${collector.fact-check.rrf.llm-expansion-enabled:true}")
+    private boolean llmExpansionEnabled; // LLM 기반 쿼리 확장 활성화
+    
+    @Value("${collector.fact-check.rrf.semantic-filter-enabled:true}")
+    private boolean semanticFilterEnabled; // 시맨틱 필터링 활성화
 
     /**
      * 주어진 주제에 대해 다중 쿼리 병렬 검색 및 RRF 융합 수행
@@ -92,26 +108,66 @@ public class RRFEvidenceFusionService {
         // 4. 병렬 검색 실행
         return executeParallelSearch(searchQueries, activeSources, language)
                 .collectList()
-                .map(allResults -> {
+                .flatMap(allResults -> {
                     // 5. RRF 융합
                     List<SourceEvidence> fused = fuseWithRRF(allResults, searchQueries.size());
                     
                     log.info("RRF fusion completed: {} queries × {} sources → {} unique evidences",
                             searchQueries.size(), activeSources.size(), fused.size());
                     
-                    return FusionResult.builder()
-                            .topic(topic)
-                            .analyzedQuery(analyzedQuery)
-                            .evidences(fused)
-                            .queryCount(searchQueries.size())
-                            .sourceCount(activeSources.size())
-                            .fusionMethod("RRF (k=" + rrfK + ")")
-                            .build();
+                    // 6. 시맨틱 필터링 (의미적으로 관련 없는 결과 제거)
+                    Mono<List<SourceEvidence>> filteredMono;
+                    if (semanticFilterEnabled && semanticRelevanceFilter != null && semanticRelevanceFilter.isEnabled()) {
+                        filteredMono = semanticRelevanceFilter.filterBySemanticRelevance(topic, fused)
+                                .doOnNext(filtered -> {
+                                    int removed = fused.size() - filtered.size();
+                                    if (removed > 0) {
+                                        log.info("Semantic filter removed {} irrelevant evidences", removed);
+                                    }
+                                });
+                    } else {
+                        filteredMono = Mono.just(fused);
+                    }
+                    
+                    // 7. URL 실존 여부 검증 및 필터링
+                    return filteredMono.flatMap(semanticFiltered -> {
+                        if (urlValidationEnabled && evidenceValidator != null) {
+                            return evidenceValidator.filterValidEvidences(semanticFiltered)
+                                    .map(validatedEvidences -> {
+                                        int filtered = semanticFiltered.size() - validatedEvidences.size();
+                                        if (filtered > 0) {
+                                            log.info("URL validation filtered out {} invalid evidences (hallucinations, dead links, etc.)",
+                                                    filtered);
+                                        }
+                                        return FusionResult.builder()
+                                                .topic(topic)
+                                                .analyzedQuery(analyzedQuery)
+                                                .evidences(validatedEvidences)
+                                                .queryCount(searchQueries.size())
+                                                .sourceCount(activeSources.size())
+                                                .fusionMethod("RRF (k=" + rrfK + ") + Semantic Filter + URL Validation")
+                                                .build();
+                                    });
+                        }
+                        
+                        String method = semanticFilterEnabled && semanticRelevanceFilter != null && semanticRelevanceFilter.isEnabled()
+                                ? "RRF (k=" + rrfK + ") + Semantic Filter"
+                                : "RRF (k=" + rrfK + ")";
+                        
+                        return Mono.just(FusionResult.builder()
+                                .topic(topic)
+                                .analyzedQuery(analyzedQuery)
+                                .evidences(semanticFiltered)
+                                .queryCount(searchQueries.size())
+                                .sourceCount(activeSources.size())
+                                .fusionMethod(method)
+                                .build());
+                    });
                 });
     }
 
     /**
-     * 검색 쿼리 목록 생성
+     * 검색 쿼리 목록 생성 (LLM 기반 동적 확장)
      */
     private List<SearchQuery> buildSearchQueries(AnalyzedQuery analyzed, String originalTopic) {
         List<SearchQuery> queries = new ArrayList<>();
@@ -125,26 +181,45 @@ public class RRFEvidenceFusionService {
                 .build());
         seenQueries.add(originalTopic.toLowerCase().trim());
         
-        // 2. 한국어 → 영어 학술 쿼리 변환 (학술 DB 검색용)
-        String academicQuery = convertToAcademicQuery(originalTopic, analyzed.getKeywords());
-        if (academicQuery != null && !seenQueries.contains(academicQuery.toLowerCase().trim())) {
-            queries.add(SearchQuery.builder()
-                    .query(academicQuery)
-                    .weight(0.95)
-                    .strategyType("ACADEMIC_ENGLISH")
-                    .build());
-            seenQueries.add(academicQuery.toLowerCase().trim());
-            log.info("Generated English academic query from Korean: '{}' -> '{}'", originalTopic, academicQuery);
+        // 2. LLM 기반 학술 쿼리 확장 (하드코딩 사전 대체)
+        if (llmExpansionEnabled && llmQueryExpansionService != null) {
+            try {
+                List<String> academicQueries = llmQueryExpansionService
+                        .expandForAcademicSearch(originalTopic, analyzed.getKeywords(), analyzed.getLanguage())
+                        .block(Duration.ofSeconds(30));
+                
+                if (academicQueries != null && !academicQueries.isEmpty()) {
+                    log.info("LLM expanded '{}' into {} academic queries", originalTopic, academicQueries.size());
+                    
+                    double weight = 0.95;
+                    for (String academicQuery : academicQueries) {
+                        String normalized = academicQuery.toLowerCase().trim();
+                        if (!seenQueries.contains(normalized) && !academicQuery.isBlank()) {
+                            queries.add(SearchQuery.builder()
+                                    .query(academicQuery)
+                                    .weight(weight)
+                                    .strategyType("LLM_ACADEMIC")
+                                    .build());
+                            seenQueries.add(normalized);
+                            weight -= 0.05; // 점진적 가중치 감소
+                        }
+                        
+                        if (queries.size() >= maxQueries) break;
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("LLM query expansion failed, falling back to rule-based: {}", e.getMessage());
+                // LLM 실패 시 폴백 전략 사용
+            }
         }
         
-        // 3. 폴백 전략에서 쿼리 추출
-        if (analyzed.getFallbackStrategies() != null) {
+        // 3. 폴백 전략에서 쿼리 추출 (LLM 실패 시 또는 추가 쿼리)
+        if (analyzed.getFallbackStrategies() != null && queries.size() < maxQueries) {
             for (FallbackStrategy strategy : analyzed.getFallbackStrategies()) {
                 String query = strategy.getQuery();
                 String normalizedQuery = query.toLowerCase().trim();
                 
                 if (!seenQueries.contains(normalizedQuery) && !query.isBlank()) {
-                    // 우선순위에 따른 가중치 계산
                     double weight = Math.max(0.5, 1.0 - (strategy.getPriority() - 1) * 0.1);
                     
                     queries.add(SearchQuery.builder()
@@ -177,9 +252,10 @@ public class RRFEvidenceFusionService {
             }
         }
         
-        // 5. 주요 키워드 단독 검색 추가 (없는 경우)
+        // 5. 주요 키워드 단독 검색 추가
         if (analyzed.getPrimaryKeyword() != null && 
-            !seenQueries.contains(analyzed.getPrimaryKeyword().toLowerCase().trim())) {
+            !seenQueries.contains(analyzed.getPrimaryKeyword().toLowerCase().trim()) &&
+            queries.size() < maxQueries) {
             queries.add(SearchQuery.builder()
                     .query(analyzed.getPrimaryKeyword())
                     .weight(0.7)
@@ -190,127 +266,6 @@ public class RRFEvidenceFusionService {
         return queries;
     }
 
-    /**
-     * 한국어 질문을 학술 DB 검색에 적합한 영어 쿼리로 변환
-     */
-    private String convertToAcademicQuery(String koreanQuery, List<String> keywords) {
-        // 한국어 → 영어 키워드 매핑 (동물, 과학 관련)
-        Map<String, String> korToEngMap = new LinkedHashMap<>();
-        
-        // 동물
-        korToEngMap.put("코끼리", "elephant");
-        korToEngMap.put("두더지", "mole");
-        korToEngMap.put("쥐", "mouse");
-        korToEngMap.put("생쥐", "mouse");
-        korToEngMap.put("뱀", "snake");
-        korToEngMap.put("개", "dog");
-        korToEngMap.put("고양이", "cat");
-        korToEngMap.put("사자", "lion");
-        korToEngMap.put("호랑이", "tiger");
-        korToEngMap.put("곰", "bear");
-        korToEngMap.put("원숭이", "monkey");
-        korToEngMap.put("새", "bird");
-        korToEngMap.put("물고기", "fish");
-        korToEngMap.put("상어", "shark");
-        korToEngMap.put("고래", "whale");
-        korToEngMap.put("돌고래", "dolphin");
-        korToEngMap.put("박쥐", "bat");
-        korToEngMap.put("거미", "spider");
-        korToEngMap.put("벌", "bee");
-        korToEngMap.put("개미", "ant");
-        korToEngMap.put("나비", "butterfly");
-        
-        // 행동/감정
-        korToEngMap.put("무서워하", "fear");
-        korToEngMap.put("무서워한다", "fear");
-        korToEngMap.put("두려워하", "fear");
-        korToEngMap.put("두려워한다", "fear");
-        korToEngMap.put("좋아하", "like");
-        korToEngMap.put("싫어하", "dislike");
-        korToEngMap.put("공격하", "attack");
-        korToEngMap.put("피하", "avoid");
-        korToEngMap.put("도망가", "flee");
-        korToEngMap.put("도망친다", "flee");
-        
-        // 과학 용어
-        korToEngMap.put("행동", "behavior");
-        korToEngMap.put("습성", "behavior");
-        korToEngMap.put("본능", "instinct");
-        korToEngMap.put("진화", "evolution");
-        korToEngMap.put("유전자", "gene");
-        korToEngMap.put("뇌", "brain");
-        korToEngMap.put("신경", "nerve");
-        korToEngMap.put("연구", "study");
-        korToEngMap.put("실험", "experiment");
-        
-        // 건강/의학
-        korToEngMap.put("암", "cancer");
-        korToEngMap.put("당뇨", "diabetes");
-        korToEngMap.put("고혈압", "hypertension");
-        korToEngMap.put("비만", "obesity");
-        korToEngMap.put("바이러스", "virus");
-        korToEngMap.put("세균", "bacteria");
-        korToEngMap.put("면역", "immunity");
-        korToEngMap.put("백신", "vaccine");
-        korToEngMap.put("치료", "treatment");
-        korToEngMap.put("약", "drug");
-        korToEngMap.put("부작용", "side effect");
-        
-        // 환경/지구과학
-        korToEngMap.put("지구온난화", "global warming");
-        korToEngMap.put("기후변화", "climate change");
-        korToEngMap.put("오존층", "ozone layer");
-        korToEngMap.put("미세먼지", "fine dust PM2.5");
-        korToEngMap.put("환경오염", "environmental pollution");
-        korToEngMap.put("방사능", "radiation");
-        korToEngMap.put("핵", "nuclear");
-        korToEngMap.put("지진", "earthquake");
-        korToEngMap.put("화산", "volcano");
-        korToEngMap.put("태풍", "typhoon");
-        korToEngMap.put("홍수", "flood");
-        
-        // 음식/영양
-        korToEngMap.put("커피", "coffee");
-        korToEngMap.put("차", "tea");
-        korToEngMap.put("술", "alcohol");
-        korToEngMap.put("설탕", "sugar");
-        korToEngMap.put("소금", "salt");
-        korToEngMap.put("비타민", "vitamin");
-        korToEngMap.put("단백질", "protein");
-        korToEngMap.put("지방", "fat");
-        korToEngMap.put("탄수화물", "carbohydrate");
-        
-        // 변환 실행
-        List<String> englishTerms = new ArrayList<>();
-        String lowerQuery = koreanQuery.toLowerCase();
-        
-        for (Map.Entry<String, String> entry : korToEngMap.entrySet()) {
-            if (lowerQuery.contains(entry.getKey())) {
-                if (!englishTerms.contains(entry.getValue())) {
-                    englishTerms.add(entry.getValue());
-                }
-            }
-        }
-        
-        // 키워드에서도 변환 시도
-        for (String keyword : keywords) {
-            String lowerKeyword = keyword.toLowerCase();
-            for (Map.Entry<String, String> entry : korToEngMap.entrySet()) {
-                if (lowerKeyword.contains(entry.getKey())) {
-                    if (!englishTerms.contains(entry.getValue())) {
-                        englishTerms.add(entry.getValue());
-                    }
-                }
-            }
-        }
-        
-        if (englishTerms.isEmpty()) {
-            return null;
-        }
-        
-        // 학술 검색용 쿼리 생성
-        return String.join(" ", englishTerms);
-    }
 
     /**
      * 병렬 검색 실행
@@ -374,21 +329,42 @@ public class RRFEvidenceFusionService {
     /**
      * RRF(Reciprocal Rank Fusion) 알고리즘으로 결과 융합
      * 
-     * RRF Score = Σ (query_weight / (k + rank))
+     * 통계적 가중치 기반 RRF Score = Σ (query_weight × source_weight / (k + rank))
+     * + 시맨틱 필터링으로 의미적으로 관련 없는 결과 제거
      */
     private List<SourceEvidence> fuseWithRRF(List<RankedResultSet> allResults, int queryCount) {
-        // URL 또는 제목 기반으로 증거 그룹화
+        // 1. 소스별 증거 그룹화 (통계적 가중치 계산용)
+        Map<String, List<SourceEvidence>> evidencesBySource = new HashMap<>();
+        for (RankedResultSet resultSet : allResults) {
+            String sourceId = resultSet.getSourceId();
+            List<SourceEvidence> sourceEvidences = resultSet.getResults().stream()
+                    .map(RankedEvidence::getEvidence)
+                    .toList();
+            
+            evidencesBySource.computeIfAbsent(sourceId, k -> new ArrayList<>())
+                    .addAll(sourceEvidences);
+        }
+        
+        // 2. 통계적 가중치 계산 (동적 가중치)
+        Map<String, Double> sourceWeights = weightCalculator.calculateSourceWeights(evidencesBySource);
+        
+        log.info("Applied statistical weights for {} sources", sourceWeights.size());
+        
+        // 3. URL 또는 제목 기반으로 증거 그룹화 및 RRF 점수 계산
         Map<String, EvidenceScore> evidenceScores = new ConcurrentHashMap<>();
         
         for (RankedResultSet resultSet : allResults) {
+            String sourceId = resultSet.getSourceId();
+            double sourceWeight = sourceWeights.getOrDefault(sourceId, 1.0);
+            
             for (RankedEvidence ranked : resultSet.getResults()) {
                 SourceEvidence evidence = ranked.getEvidence();
                 
                 // 고유 키 생성 (URL 우선, 없으면 제목 해시)
                 String key = generateEvidenceKey(evidence);
                 
-                // RRF 점수 계산: weight / (k + rank)
-                double rrfScore = ranked.getQueryWeight() / (rrfK + ranked.getRank());
+                // 통계적 가중치 기반 RRF 점수 계산: query_weight × source_weight / (k + rank)
+                double rrfScore = ranked.getQueryWeight() * sourceWeight / (rrfK + ranked.getRank());
                 
                 evidenceScores.compute(key, (k, existing) -> {
                     if (existing == null) {

@@ -6,6 +6,7 @@ import com.newsinsight.collector.dto.llm.LlmTestResult;
 import com.newsinsight.collector.entity.settings.LlmProviderSettings;
 import com.newsinsight.collector.entity.settings.LlmProviderType;
 import com.newsinsight.collector.repository.LlmProviderSettingsRepository;
+import com.newsinsight.collector.util.ApiKeyEncryptor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
@@ -30,6 +31,7 @@ public class LlmProviderSettingsService {
 
     private final LlmProviderSettingsRepository repository;
     private final RestTemplate restTemplate;
+    private final ApiKeyEncryptor apiKeyEncryptor;
 
     // ========== 전역(관리자) 설정 관리 ==========
 
@@ -193,12 +195,14 @@ public class LlmProviderSettingsService {
 
     /**
      * 전역 설정에서 API 키 직접 조회 (실시간 검색 등 내부 서비스용)
+     * API 키는 복호화하여 반환합니다.
      */
     @Transactional(readOnly = true)
     public Optional<String> getGlobalApiKey(LlmProviderType providerType) {
         return repository.findGlobalByProviderType(providerType)
                 .filter(LlmProviderSettings::getEnabled)
-                .map(LlmProviderSettings::getApiKey);
+                .map(LlmProviderSettings::getApiKey)
+                .map(apiKeyEncryptor::decrypt);
     }
 
     /**
@@ -297,15 +301,17 @@ public class LlmProviderSettingsService {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         if (settings.getApiKey() != null && !settings.getApiKey().isBlank()) {
+            // Decrypt the API key before using it in headers
+            String decryptedApiKey = apiKeyEncryptor.decrypt(settings.getApiKey());
             switch (settings.getProviderType()) {
-                case OPENAI, OPENROUTER -> headers.setBearerAuth(settings.getApiKey());
+                case OPENAI, OPENROUTER -> headers.setBearerAuth(decryptedApiKey);
                 case ANTHROPIC -> {
-                    headers.set("x-api-key", settings.getApiKey());
+                    headers.set("x-api-key", decryptedApiKey);
                     headers.set("anthropic-version", "2023-06-01");
                 }
-                case GOOGLE -> headers.set("x-goog-api-key", settings.getApiKey());
-                case AZURE_OPENAI -> headers.set("api-key", settings.getApiKey());
-                default -> headers.setBearerAuth(settings.getApiKey());
+                case GOOGLE -> headers.set("x-goog-api-key", decryptedApiKey);
+                case AZURE_OPENAI -> headers.set("api-key", decryptedApiKey);
+                default -> headers.setBearerAuth(decryptedApiKey);
             }
         }
 
@@ -329,7 +335,7 @@ public class LlmProviderSettingsService {
                 .providerDisplayName(entity.getProviderType().getDisplayName())
                 .userId(entity.getUserId())
                 .isGlobal(entity.isGlobal())
-                .apiKeyMasked(entity.getMaskedApiKey())
+                .apiKeyMasked(apiKeyEncryptor.getMaskedKey(entity.getApiKey()))
                 .hasApiKey(entity.getApiKey() != null && !entity.getApiKey().isBlank())
                 .defaultModel(entity.getDefaultModel())
                 .baseUrl(entity.getBaseUrl())
@@ -350,7 +356,10 @@ public class LlmProviderSettingsService {
 
     private void updateSettingsFromRequest(LlmProviderSettings settings, LlmProviderSettingsRequest request) {
         if (request.getApiKey() != null) {
-            settings.setApiKey(request.getApiKey());
+            // Encrypt the API key before storing
+            String encryptedApiKey = apiKeyEncryptor.encrypt(request.getApiKey());
+            settings.setApiKey(encryptedApiKey);
+            log.debug("API key encrypted and stored for provider: {}", settings.getProviderType());
         }
         if (request.getDefaultModel() != null) {
             settings.setDefaultModel(request.getDefaultModel());

@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   Power,
   PowerOff,
+  Wand2,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -65,6 +66,7 @@ import type {
   LlmProviderTypeInfo,
   LlmTestResult,
 } from '@/types/api';
+import { APIKeyWizard } from '@/components/APIKeyWizard';
 
 const DEFAULT_MODELS: Record<LlmProviderType, string[]> = {
   // OpenAI - 2025년 12월 최신 (GPT-5 시리즈 출시)
@@ -163,6 +165,9 @@ export default function AdminLlmProviders() {
     baseUrl: '',
     enabled: true,
   });
+
+  // API Key Wizard state
+  const [apiKeyWizardOpen, setApiKeyWizardOpen] = useState(false);
 
   // Role check
   const isAdmin = user?.role === 'admin';
@@ -369,6 +374,16 @@ export default function AdminLlmProviders() {
     return key.slice(0, 4) + '••••••••' + key.slice(-4);
   };
 
+  // Handle API Key Wizard success - reload settings after auto-provisioning
+  const handleApiKeyWizardSuccess = useCallback((provider: string, keyMasked: string) => {
+    toast({
+      title: 'API 키 자동 발급 완료',
+      description: `${provider} API 키가 성공적으로 발급되고 저장되었습니다: ${keyMasked}`,
+    });
+    // Reload settings to reflect the new API key
+    loadData();
+  }, [toast, loadData]);
+
   // Access denied for non-admins
   if (!isAdmin) {
     return (
@@ -405,6 +420,10 @@ export default function AdminLlmProviders() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setApiKeyWizardOpen(true)}>
+            <Wand2 className="w-4 h-4 mr-2" />
+            API 키 자동 발급
+          </Button>
           <Button variant="outline" onClick={loadData}>
             <RefreshCw className="w-4 h-4 mr-2" />
             새로고침
@@ -689,6 +708,13 @@ export default function AdminLlmProviders() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* API Key Auto-Provisioning Wizard */}
+      <APIKeyWizard
+        open={apiKeyWizardOpen}
+        onOpenChange={setApiKeyWizardOpen}
+        onSuccess={handleApiKeyWizardSuccess}
+      />
     </div>
   );
 }
