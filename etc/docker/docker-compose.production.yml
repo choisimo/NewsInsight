@@ -22,6 +22,8 @@ volumes:
   ip_rotation_data:
   maigret_reports:
   workspace_data:
+  ml_trainer_models:
+  ml_trainer_data:
 
 services:
   # ============================================================================
@@ -244,6 +246,7 @@ services:
       AUTONOMOUS_CRAWLER_API_URL: http://autonomous-crawler:8030
       ADMIN_DASHBOARD_URL: http://admin-dashboard:8888
       ML_ADDON_BOT_DETECTOR_URL: http://bot-detector:8041
+      ML_TRAINER_URL: http://ml-trainer:8090
       # Frontend config
       FRONTEND_API_BASE_URL: https://newsinsight.nodove.com
       # JVM settings
@@ -990,6 +993,52 @@ services:
         ipv4_address: 172.20.0.74
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8041/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # ML Trainer Service - Model Training and Management
+  # ============================================================================
+  ml-trainer:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/ml-trainer:${TAG:-latest}
+    build:
+      context: ../../backend/ml-addons/ml-trainer
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-ml-trainer
+    restart: unless-stopped
+    environment:
+      PORT: "8090"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsinsight}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-newsinsight}
+      MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/5
+      HF_TOKEN: ${HF_TOKEN:-}
+      KAGGLE_USERNAME: ${KAGGLE_USERNAME:-}
+      KAGGLE_KEY: ${KAGGLE_KEY:-}
+      ROBOFLOW_API_KEY: ${ROBOFLOW_API_KEY:-}
+      MODEL_STORAGE_PATH: /app/models
+      TRAINING_DATA_PATH: /app/data
+    volumes:
+      - ml_trainer_models:/app/models
+      - ml_trainer_data:/app/data
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.75
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8090/health"]
       interval: 30s
       timeout: 10s
       retries: 3

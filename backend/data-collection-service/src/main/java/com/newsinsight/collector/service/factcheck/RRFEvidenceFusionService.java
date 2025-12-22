@@ -81,15 +81,10 @@ public class RRFEvidenceFusionService {
     public Mono<FusionResult> searchAndFuse(String topic, String language) {
         log.info("Starting RRF-based multi-query search for topic: {}", topic);
         
-        // 1. 의도 분석 및 쿼리 확장
+        // 1. 의도 분석 및 쿼리 확장 (동기 - 빠름)
         AnalyzedQuery analyzedQuery = intentAnalyzer.analyzeQuery(topic);
         
-        // 2. 검색 쿼리 목록 생성
-        List<SearchQuery> searchQueries = buildSearchQueries(analyzedQuery, topic);
-        
-        log.info("Generated {} search queries for parallel execution", searchQueries.size());
-        
-        // 3. 활성화된 소스 목록
+        // 2. 활성화된 소스 목록 (동기 - 빠름)
         List<FactCheckSource> activeSources = factCheckSources.stream()
                 .filter(FactCheckSource::isAvailable)
                 .toList();
@@ -104,11 +99,21 @@ public class RRFEvidenceFusionService {
                     .fusionMethod("RRF")
                     .build());
         }
-
-        // 4. 병렬 검색 실행
-        return executeParallelSearch(searchQueries, activeSources, language)
-                .collectList()
-                .flatMap(allResults -> {
+        
+        // 3. 검색 쿼리 목록 생성 (비동기 - LLM 호출 포함)
+        return buildSearchQueriesAsync(analyzedQuery, topic)
+                .timeout(Duration.ofSeconds(35)) // LLM timeout + margin
+                .onErrorResume(e -> {
+                    log.warn("Async query building failed, using fallback: {}", e.getMessage());
+                    return Mono.just(buildSearchQueriesFallback(analyzedQuery, topic));
+                })
+                .flatMap(searchQueries -> {
+                    log.info("Generated {} search queries for parallel execution", searchQueries.size());
+                    
+                    // 4. 병렬 검색 실행
+                    return executeParallelSearch(searchQueries, activeSources, language)
+                            .collectList()
+                            .flatMap(allResults -> {
                     // 5. RRF 융합
                     List<SourceEvidence> fused = fuseWithRRF(allResults, searchQueries.size());
                     
@@ -164,10 +169,140 @@ public class RRFEvidenceFusionService {
                                 .build());
                     });
                 });
+                });
+    }
+    
+    /**
+     * 비동기 검색 쿼리 목록 생성 (LLM 기반 동적 확장)
+     * .block() 호출을 피하고 완전한 리액티브 체인을 사용합니다.
+     */
+    private Mono<List<SearchQuery>> buildSearchQueriesAsync(AnalyzedQuery analyzed, String originalTopic) {
+        List<SearchQuery> queries = new ArrayList<>();
+        Set<String> seenQueries = new HashSet<>();
+        
+        // 1. 원본 쿼리 (최고 우선순위)
+        queries.add(SearchQuery.builder()
+                .query(originalTopic)
+                .weight(1.0)
+                .strategyType("ORIGINAL")
+                .build());
+        seenQueries.add(originalTopic.toLowerCase().trim());
+        
+        // 2. LLM 기반 학술 쿼리 확장 (비동기)
+        if (llmExpansionEnabled && llmQueryExpansionService != null) {
+            return llmQueryExpansionService
+                    .expandForAcademicSearch(originalTopic, analyzed.getKeywords(), analyzed.getLanguage())
+                    .map(academicQueries -> {
+                        if (academicQueries != null && !academicQueries.isEmpty()) {
+                            log.info("LLM expanded '{}' into {} academic queries", originalTopic, academicQueries.size());
+                            
+                            double weight = 0.95;
+                            for (String academicQuery : academicQueries) {
+                                String normalized = academicQuery.toLowerCase().trim();
+                                if (!seenQueries.contains(normalized) && !academicQuery.isBlank()) {
+                                    queries.add(SearchQuery.builder()
+                                            .query(academicQuery)
+                                            .weight(weight)
+                                            .strategyType("LLM_ACADEMIC")
+                                            .build());
+                                    seenQueries.add(normalized);
+                                    weight -= 0.05;
+                                }
+                                if (queries.size() >= maxQueries) break;
+                            }
+                        }
+                        // 폴백 전략 추가
+                        addFallbackQueries(analyzed, queries, seenQueries);
+                        return queries;
+                    })
+                    .onErrorResume(e -> {
+                        log.warn("LLM query expansion failed, using fallback: {}", e.getMessage());
+                        return Mono.just(buildSearchQueriesFallback(analyzed, originalTopic));
+                    });
+        }
+        
+        // LLM 비활성화 시 폴백 전략만 사용
+        addFallbackQueries(analyzed, queries, seenQueries);
+        return Mono.just(queries);
+    }
+    
+    /**
+     * 폴백 검색 쿼리 목록 생성 (동기 - LLM 없이)
+     */
+    private List<SearchQuery> buildSearchQueriesFallback(AnalyzedQuery analyzed, String originalTopic) {
+        List<SearchQuery> queries = new ArrayList<>();
+        Set<String> seenQueries = new HashSet<>();
+        
+        // 원본 쿼리
+        queries.add(SearchQuery.builder()
+                .query(originalTopic)
+                .weight(1.0)
+                .strategyType("ORIGINAL")
+                .build());
+        seenQueries.add(originalTopic.toLowerCase().trim());
+        
+        // 폴백 전략 추가
+        addFallbackQueries(analyzed, queries, seenQueries);
+        return queries;
+    }
+    
+    /**
+     * 폴백 전략에서 쿼리 추출하여 추가
+     */
+    private void addFallbackQueries(AnalyzedQuery analyzed, List<SearchQuery> queries, Set<String> seenQueries) {
+        if (analyzed.getFallbackStrategies() != null && queries.size() < maxQueries) {
+            for (FallbackStrategy strategy : analyzed.getFallbackStrategies()) {
+                String query = strategy.getQuery();
+                String normalizedQuery = query.toLowerCase().trim();
+                
+                if (!seenQueries.contains(normalizedQuery) && !query.isBlank()) {
+                    double weight = Math.max(0.5, 1.0 - (strategy.getPriority() - 1) * 0.1);
+                    
+                    queries.add(SearchQuery.builder()
+                            .query(query)
+                            .weight(weight)
+                            .strategyType(strategy.getStrategyType())
+                            .build());
+                    seenQueries.add(normalizedQuery);
+                }
+                
+                if (queries.size() >= maxQueries) break;
+            }
+        }
+        
+        // 확장 쿼리 추가
+        if (queries.size() < maxQueries && analyzed.getExpandedQueries() != null) {
+            for (String expanded : analyzed.getExpandedQueries()) {
+                String normalizedQuery = expanded.toLowerCase().trim();
+                
+                if (!seenQueries.contains(normalizedQuery) && !expanded.isBlank()) {
+                    queries.add(SearchQuery.builder()
+                            .query(expanded)
+                            .weight(0.6)
+                            .strategyType("EXPANDED")
+                            .build());
+                    seenQueries.add(normalizedQuery);
+                }
+                
+                if (queries.size() >= maxQueries) break;
+            }
+        }
+        
+        // 주요 키워드 단독 검색 추가
+        if (analyzed.getPrimaryKeyword() != null && 
+            !seenQueries.contains(analyzed.getPrimaryKeyword().toLowerCase().trim()) &&
+            queries.size() < maxQueries) {
+            queries.add(SearchQuery.builder()
+                    .query(analyzed.getPrimaryKeyword())
+                    .weight(0.7)
+                    .strategyType("PRIMARY_KEYWORD")
+                    .build());
+        }
     }
 
     /**
-     * 검색 쿼리 목록 생성 (LLM 기반 동적 확장)
+     * @deprecated Use buildSearchQueriesAsync instead - this method has blocking calls.
+     * Kept for reference only.
      */
     private List<SearchQuery> buildSearchQueries(AnalyzedQuery analyzed, String originalTopic) {
         List<SearchQuery> queries = new ArrayList<>();

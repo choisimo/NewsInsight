@@ -332,134 +332,147 @@ public class FactVerificationService {
                     .build());
 
             // 병렬로 모든 신뢰할 수 있는 소스에서 정보 수집 (폴백 전략 포함)
-            List<SourceEvidence> allEvidence = fetchAllSourceEvidenceWithFallback(analyzedTopic, language);
+            // Run on bounded elastic scheduler to avoid blocking the reactive stream
+            Mono.fromCallable(() -> fetchAllSourceEvidenceWithFallback(analyzedTopic, language))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .doOnNext(allEvidence -> {
+                        // Claim 정보가 있다면, claim과의 유사도 기반으로 근거를 1차 필터링
+                        List<SourceEvidence> filteredEvidence = filterEvidenceForClaims(allEvidence, claims);
 
-            // Claim 정보가 있다면, claim과의 유사도 기반으로 근거를 1차 필터링
-            List<SourceEvidence> filteredEvidence = filterEvidenceForClaims(allEvidence, claims);
-
-            if (!filteredEvidence.isEmpty()) {
-                // 소스별 통계 생성
-                var sourceStats = filteredEvidence.stream()
-                        .collect(Collectors.groupingBy(
-                                SourceEvidence::getSourceType,
-                                Collectors.counting()));
-                String statsMessage = sourceStats.entrySet().stream()
-                        .map(e -> e.getKey() + ": " + e.getValue() + "개")
-                        .collect(Collectors.joining(", "));
-                
-                sink.next(DeepAnalysisEvent.builder()
-                        .eventType("evidence")
-                        .phase("concepts")
-                        .message("신뢰할 수 있는 출처에서 " + filteredEvidence.size() + "개의 유의미한 근거를 수집했습니다. (" + statsMessage + ")")
-                        .evidence(filteredEvidence)
-                        .build());
-            } else {
-                // 결과가 없을 때 도움말 메시지
-                String noResultMessage = advancedIntentAnalyzer.buildNoResultMessage(analyzedTopic);
-                sink.next(DeepAnalysisEvent.builder()
-                        .eventType("status")
-                        .phase("concepts")
-                        .message("관련 근거를 찾기 어려웠습니다.\n" + noResultMessage)
-                        .build());
-            }
-
-            // 3. 각 주장에 대한 검증 (향상된 키워드 매칭)
-            final List<VerificationResult> verificationResults = new ArrayList<>();
-            final CredibilityAssessment[] credibilityHolder = new CredibilityAssessment[1];
-            
-            if (claims != null && !claims.isEmpty()) {
-                sink.next(DeepAnalysisEvent.builder()
-                        .eventType("status")
-                        .phase("verification")
-                        .message(claims.size() + "개의 주장을 검증하고 있습니다...")
-                        .build());
-                
-                for (int i = 0; i < claims.size(); i++) {
-                    String claim = claims.get(i);
-                    // 향상된 claim 검증
-                    VerificationResult result = verifyClaimWithIntentAnalysis(claim, filteredEvidence);
-                    verificationResults.add(result);
-
-                    sink.next(DeepAnalysisEvent.builder()
-                            .eventType("verification")
-                            .phase("verification")
-                            .message("주장 " + (i + 1) + "/" + claims.size() + " 검증 완료")
-                            .verificationResult(result)
-                            .build());
-                }
-
-                // 4. 신뢰도 평가
-                credibilityHolder[0] = assessCredibility(verificationResults);
-                
-                sink.next(DeepAnalysisEvent.builder()
-                        .eventType("assessment")
-                        .phase("assessment")
-                        .message("신뢰도 평가 완료")
-                        .credibility(credibilityHolder[0])
-                        .build());
-            }
-
-            // 5. AI 기반 종합 분석 (Fallback Chain)
-            int evidenceCount = filteredEvidence.size();
-            
-            // 증거 수에 따른 경고 메시지 생성
-            String synthesisStatusMessage;
-            if (evidenceCount == 0) {
-                synthesisStatusMessage = "⚠️ 신뢰할 수 있는 출처에서 관련 정보를 찾지 못했습니다. 제한된 분석을 진행합니다...";
-                log.warn("No evidence found for topic: {}. AI may refuse to generate content.", topic);
-            } else if (evidenceCount < 3) {
-                synthesisStatusMessage = "⚠️ 수집된 정보가 제한적입니다 (" + evidenceCount + "개). 제한된 분석을 진행합니다...";
-                log.info("Limited evidence ({}) found for topic: {}", evidenceCount, topic);
-            } else {
-                synthesisStatusMessage = "AI가 수집된 " + evidenceCount + "개의 정보를 종합 분석하고 있습니다...";
-            }
-            
-            sink.next(DeepAnalysisEvent.builder()
-                    .eventType("status")
-                    .phase("synthesis")
-                    .message(synthesisStatusMessage)
-                    .build());
-
-            // Build provider chain and try each in sequence
-            String synthesisPrompt = buildSynthesisPrompt(topic, filteredEvidence, claims);
-            StringBuilder aiResponse = new StringBuilder();
-
-            // Try AI providers in order of preference
-            Flux<String> aiStream = getAiStreamWithFallback(synthesisPrompt);
-            
-            aiStream
-                    .doOnNext(chunk -> {
-                        aiResponse.append(chunk);
-                        sink.next(DeepAnalysisEvent.builder()
-                                .eventType("ai_synthesis")
-                                .phase("synthesis")
-                                .message(chunk)
-                                .build());
-                    })
-                    .doOnComplete(() -> {
-                        String conclusion = aiResponse.toString();
-                        if (conclusion.isBlank()) {
-                            conclusion = buildFallbackConclusion(topic, verificationResults, credibilityHolder[0]);
+                        if (!filteredEvidence.isEmpty()) {
+                            // 소스별 통계 생성
+                            var sourceStats = filteredEvidence.stream()
+                                    .collect(Collectors.groupingBy(
+                                            SourceEvidence::getSourceType,
+                                            Collectors.counting()));
+                            String statsMessage = sourceStats.entrySet().stream()
+                                    .map(e -> e.getKey() + ": " + e.getValue() + "개")
+                                    .collect(Collectors.joining(", "));
+                            
+                            sink.next(DeepAnalysisEvent.builder()
+                                    .eventType("evidence")
+                                    .phase("concepts")
+                                    .message("신뢰할 수 있는 출처에서 " + filteredEvidence.size() + "개의 유의미한 근거를 수집했습니다. (" + statsMessage + ")")
+                                    .evidence(filteredEvidence)
+                                    .build());
+                        } else {
+                            // 결과가 없을 때 도움말 메시지
+                            String noResultMessage = advancedIntentAnalyzer.buildNoResultMessage(analyzedTopic);
+                            sink.next(DeepAnalysisEvent.builder()
+                                    .eventType("status")
+                                    .phase("concepts")
+                                    .message("관련 근거를 찾기 어려웠습니다.\n" + noResultMessage)
+                                    .build());
                         }
+
+                        // 3. 각 주장에 대한 검증 (향상된 키워드 매칭)
+                        final List<VerificationResult> verificationResults = new ArrayList<>();
+                        final CredibilityAssessment[] credibilityHolder = new CredibilityAssessment[1];
+                        
+                        if (claims != null && !claims.isEmpty()) {
+                            sink.next(DeepAnalysisEvent.builder()
+                                    .eventType("status")
+                                    .phase("verification")
+                                    .message(claims.size() + "개의 주장을 검증하고 있습니다...")
+                                    .build());
+                            
+                            for (int i = 0; i < claims.size(); i++) {
+                                String claim = claims.get(i);
+                                // 향상된 claim 검증
+                                VerificationResult result = verifyClaimWithIntentAnalysis(claim, filteredEvidence);
+                                verificationResults.add(result);
+
+                                sink.next(DeepAnalysisEvent.builder()
+                                        .eventType("verification")
+                                        .phase("verification")
+                                        .message("주장 " + (i + 1) + "/" + claims.size() + " 검증 완료")
+                                        .verificationResult(result)
+                                        .build());
+                            }
+
+                            // 4. 신뢰도 평가
+                            credibilityHolder[0] = assessCredibility(verificationResults);
+                            
+                            sink.next(DeepAnalysisEvent.builder()
+                                    .eventType("assessment")
+                                    .phase("assessment")
+                                    .message("신뢰도 평가 완료")
+                                    .credibility(credibilityHolder[0])
+                                    .build());
+                        }
+
+                        // 5. AI 기반 종합 분석 (Fallback Chain)
+                        int evidenceCount = filteredEvidence.size();
+                        
+                        // 증거 수에 따른 경고 메시지 생성
+                        String synthesisStatusMessage;
+                        if (evidenceCount == 0) {
+                            synthesisStatusMessage = "⚠️ 신뢰할 수 있는 출처에서 관련 정보를 찾지 못했습니다. 제한된 분석을 진행합니다...";
+                            log.warn("No evidence found for topic: {}. AI may refuse to generate content.", topic);
+                        } else if (evidenceCount < 3) {
+                            synthesisStatusMessage = "⚠️ 수집된 정보가 제한적입니다 (" + evidenceCount + "개). 제한된 분석을 진행합니다...";
+                            log.info("Limited evidence ({}) found for topic: {}", evidenceCount, topic);
+                        } else {
+                            synthesisStatusMessage = "AI가 수집된 " + evidenceCount + "개의 정보를 종합 분석하고 있습니다...";
+                        }
+                        
                         sink.next(DeepAnalysisEvent.builder()
-                                .eventType("complete")
-                                .phase("complete")
-                                .message("심층 분석이 완료되었습니다.")
-                                .finalConclusion(conclusion)
+                                .eventType("status")
+                                .phase("synthesis")
+                                .message(synthesisStatusMessage)
                                 .build());
-                        sink.complete();
+
+                        // Build provider chain and try each in sequence
+                        String synthesisPrompt = buildSynthesisPrompt(topic, filteredEvidence, claims);
+                        StringBuilder aiResponse = new StringBuilder();
+
+                        // Try AI providers in order of preference
+                        Flux<String> aiStream = getAiStreamWithFallback(synthesisPrompt);
+                        
+                        aiStream
+                                .doOnNext(chunk -> {
+                                    aiResponse.append(chunk);
+                                    sink.next(DeepAnalysisEvent.builder()
+                                            .eventType("ai_synthesis")
+                                            .phase("synthesis")
+                                            .message(chunk)
+                                            .build());
+                                })
+                                .doOnComplete(() -> {
+                                    String conclusion = aiResponse.toString();
+                                    if (conclusion.isBlank()) {
+                                        conclusion = buildFallbackConclusion(topic, verificationResults, credibilityHolder[0]);
+                                    }
+                                    sink.next(DeepAnalysisEvent.builder()
+                                            .eventType("complete")
+                                            .phase("complete")
+                                            .message("심층 분석이 완료되었습니다.")
+                                            .finalConclusion(conclusion)
+                                            .build());
+                                    sink.complete();
+                                })
+                                .doOnError(e -> {
+                                    log.error("All AI providers failed: {}", e.getMessage());
+                                    // Generate fallback conclusion without AI
+                                    String fallbackConclusion = buildFallbackConclusion(topic, verificationResults, credibilityHolder[0]);
+                                    sink.next(DeepAnalysisEvent.builder()
+                                            .eventType("complete")
+                                            .phase("complete")
+                                            .message("분석이 완료되었습니다.")
+                                            .finalConclusion(fallbackConclusion)
+                                            .build());
+                                    sink.complete();
+                                })
+                                .subscribe();
                     })
                     .doOnError(e -> {
-                        log.error("All AI providers failed: {}", e.getMessage());
-                        // Generate fallback conclusion without AI
-                        String fallbackConclusion = buildFallbackConclusion(topic, verificationResults, credibilityHolder[0]);
+                        log.error("Evidence collection failed: {}", e.getMessage());
                         sink.next(DeepAnalysisEvent.builder()
-                                .eventType("complete")
-                                .phase("complete")
-                                .message("분석이 완료되었습니다.")
-                                .finalConclusion(fallbackConclusion)
+                                .eventType("error")
+                                .phase("concepts")
+                                .message("증거 수집 중 오류가 발생했습니다: " + e.getMessage())
                                 .build());
-                        sink.complete();
+                        sink.error(e);
                     })
                     .subscribe();
         });
