@@ -19,6 +19,7 @@ from ..models.schemas import (
 from ..dependencies import (
     get_audit_service,
     get_current_user,
+    get_current_user_optional,
     get_environment_service,
     get_script_service,
     require_role,
@@ -32,9 +33,9 @@ async def list_scripts(
     environment: Optional[str] = Query(None, description="환경 이름으로 필터"),
     tag: Optional[str] = Query(None, description="태그로 필터"),
     script_service=Depends(get_script_service),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_optional),
 ):
-    """스크립트 목록 조회 (사용자 권한에 따라 필터링)"""
+    """스크립트 목록 조회 (사용자 권한에 따라 필터링) - 인증 선택적"""
     return script_service.list_scripts(
         environment=environment,
         tag=tag,
@@ -42,13 +43,76 @@ async def list_scripts(
     )
 
 
+# NOTE: /executions 라우트는 /{script_id} 보다 먼저 정의되어야 함 (FastAPI 라우트 매칭 순서)
+@router.get("/executions", response_model=list[TaskExecution])
+async def list_executions(
+    script_id: Optional[str] = Query(None, description="스크립트 ID로 필터"),
+    environment_id: Optional[str] = Query(None, description="환경 ID로 필터"),
+    status: Optional[TaskStatus] = Query(None, description="상태로 필터"),
+    limit: int = Query(50, ge=1, le=200, description="조회 개수"),
+    script_service=Depends(get_script_service),
+    current_user=Depends(get_current_user_optional),
+):
+    """실행 이력 조회 - 인증 선택적"""
+    return script_service.list_executions(
+        script_id=script_id,
+        environment_id=environment_id,
+        status=status,
+        limit=limit,
+    )
+
+
+@router.get("/executions/{execution_id}", response_model=TaskExecution)
+async def get_execution(
+    execution_id: str,
+    script_service=Depends(get_script_service),
+    current_user=Depends(get_current_user_optional),
+):
+    """실행 상세 조회 - 인증 선택적"""
+    execution = script_service.get_execution(execution_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    return execution
+
+
+@router.post("/executions/{execution_id}/cancel")
+async def cancel_execution(
+    execution_id: str,
+    script_service=Depends(get_script_service),
+    audit_service=Depends(get_audit_service),
+    current_user=Depends(require_role(UserRole.OPERATOR)),
+):
+    """실행 중인 작업 취소"""
+    execution = script_service.get_execution(execution_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    if execution.status != TaskStatus.RUNNING:
+        raise HTTPException(status_code=400, detail="Execution is not running")
+
+    if not script_service.cancel_execution(execution_id):
+        raise HTTPException(status_code=500, detail="Failed to cancel execution")
+
+    # 감사 로그
+    audit_service.log(
+        user_id=current_user.id,
+        username=current_user.username,
+        action=AuditAction.EXECUTE,
+        resource_type="execution",
+        resource_id=execution_id,
+        details={"action": "cancel"},
+    )
+
+    return {"success": True, "message": "Execution cancelled"}
+
+
 @router.get("/{script_id}", response_model=Script)
 async def get_script(
     script_id: str,
     script_service=Depends(get_script_service),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_optional),
 ):
-    """스크립트 상세 조회"""
+    """스크립트 상세 조회 - 인증 선택적"""
     script = script_service.get_script(script_id)
     if not script:
         raise HTTPException(status_code=404, detail="Script not found")
@@ -266,63 +330,4 @@ async def execute_script_stream(
     )
 
 
-@router.get("/executions", response_model=list[TaskExecution])
-async def list_executions(
-    script_id: Optional[str] = Query(None, description="스크립트 ID로 필터"),
-    environment_id: Optional[str] = Query(None, description="환경 ID로 필터"),
-    status: Optional[TaskStatus] = Query(None, description="상태로 필터"),
-    limit: int = Query(50, ge=1, le=200, description="조회 개수"),
-    script_service=Depends(get_script_service),
-    current_user=Depends(get_current_user),
-):
-    """실행 이력 조회"""
-    return script_service.list_executions(
-        script_id=script_id,
-        environment_id=environment_id,
-        status=status,
-        limit=limit,
-    )
-
-
-@router.get("/executions/{execution_id}", response_model=TaskExecution)
-async def get_execution(
-    execution_id: str,
-    script_service=Depends(get_script_service),
-    current_user=Depends(get_current_user),
-):
-    """실행 상세 조회"""
-    execution = script_service.get_execution(execution_id)
-    if not execution:
-        raise HTTPException(status_code=404, detail="Execution not found")
-    return execution
-
-
-@router.post("/executions/{execution_id}/cancel")
-async def cancel_execution(
-    execution_id: str,
-    script_service=Depends(get_script_service),
-    audit_service=Depends(get_audit_service),
-    current_user=Depends(require_role(UserRole.OPERATOR)),
-):
-    """실행 중인 작업 취소"""
-    execution = script_service.get_execution(execution_id)
-    if not execution:
-        raise HTTPException(status_code=404, detail="Execution not found")
-
-    if execution.status != TaskStatus.RUNNING:
-        raise HTTPException(status_code=400, detail="Execution is not running")
-
-    if not script_service.cancel_execution(execution_id):
-        raise HTTPException(status_code=500, detail="Failed to cancel execution")
-
-    # 감사 로그
-    audit_service.log(
-        user_id=current_user.id,
-        username=current_user.username,
-        action=AuditAction.EXECUTE,
-        resource_type="execution",
-        resource_id=execution_id,
-        details={"action": "cancel"},
-    )
-
-    return {"success": True, "message": "Execution cancelled"}
+# NOTE: /executions 라우트들은 위로 이동됨 (/{script_id} 보다 먼저 매칭되어야 함)

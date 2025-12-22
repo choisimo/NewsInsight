@@ -17,6 +17,32 @@
       "environment": {
         "GOOGLE_APPLICATION_CREDENTIALS": "{env:GOOGLE_APPLICATION_CREDENTIALS}"
       }
+    },
+    "aws-core": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "awslabs.aws-documentation-mcp-server@latest"
+      ],
+      "enabled": true,
+      "environment": {
+        "AWS_PROFILE": "{env:AWS_PROFILE}",
+        "AWS_REGION": "{env:AWS_REGION}",
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
+    },
+    "aws-cdk": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "awslabs.cdk-mcp-server@latest"
+      ],
+      "enabled": true,
+      "environment": {
+        "AWS_PROFILE": "{env:AWS_PROFILE}",
+        "AWS_REGION": "{env:AWS_REGION}",
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
     }
   }
 }

@@ -18,6 +18,7 @@ from ..models.schemas import (
 from ..dependencies import (
     get_audit_service,
     get_current_user,
+    get_current_user_optional,
     require_role,
 )
 
@@ -204,17 +205,20 @@ async def call_collector_service(
 
 @router.get("/types", response_model=list[LlmProviderTypeInfo])
 async def list_provider_types(
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_optional),
 ):
-    """LLM Provider 타입 목록 조회"""
+    """LLM Provider 타입 목록 조회 - 인증 선택적"""
     return LLM_PROVIDER_TYPES
 
 
 @router.get("/global", response_model=list[LlmProviderSettings])
 async def list_global_settings(
-    current_user=Depends(require_role(UserRole.ADMIN)),
+    current_user=Depends(get_current_user_optional),
 ):
-    """전역 LLM 설정 목록 조회 (Admin 권한 필요)"""
+    """전역 LLM 설정 목록 조회 - 비인증 사용자는 빈 목록 반환"""
+    # 비인증 사용자 또는 ADMIN이 아닌 경우 빈 목록 반환
+    if current_user.id == "anonymous" or current_user.role != UserRole.ADMIN:
+        return []
     result = await call_collector_service("GET", "/api/v1/admin/llm-providers")
     return result
 
@@ -312,9 +316,9 @@ async def test_connection(
 @router.get("/effective", response_model=list[LlmProviderSettings])
 async def get_effective_settings(
     user_id: Optional[str] = Query(None, description="사용자 ID (없으면 전역만)"),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_optional),
 ):
-    """유효 LLM 설정 조회 (사용자 설정 + 전역 fallback)"""
+    """유효 LLM 설정 조회 (사용자 설정 + 전역 fallback) - 인증 선택적"""
     params = {}
     if user_id:
         params["userId"] = user_id
@@ -328,9 +332,9 @@ async def get_effective_settings(
 @router.get("/enabled", response_model=list[LlmProviderSettings])
 async def get_enabled_providers(
     user_id: Optional[str] = Query(None, description="사용자 ID"),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_optional),
 ):
-    """활성화된 LLM Provider 목록 조회"""
+    """활성화된 LLM Provider 목록 조회 - 인증 선택적"""
     params = {}
     if user_id:
         params["userId"] = user_id

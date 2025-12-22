@@ -152,7 +152,11 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/workspace/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/workspace/files/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/admin/llm-providers/**").hasRole("ADMIN")
+                        // LLM Provider 설정 - 읽기 엔드포인트는 공개
                         .requestMatchers("/api/v1/llm-providers/types").permitAll()
+                        .requestMatchers("/api/v1/llm-providers/effective").permitAll()
+                        .requestMatchers("/api/v1/llm-providers/enabled").permitAll()
+                        .requestMatchers("/api/v1/llm-providers/config/**").permitAll()
                         .requestMatchers("/api/v1/llm-providers/**").hasAnyRole("ADMIN", "OPERATOR")
                         
                         // ========================================
@@ -161,8 +165,9 @@ public class SecurityConfig {
                         // Search API - 루트 경로와 하위 경로 모두 허용
                         .requestMatchers("/api/v1/search").permitAll()
                         .requestMatchers("/api/v1/search/**").permitAll()
-                        .requestMatchers("/api/v1/search-history/**").authenticated()
-                        .requestMatchers("/api/v1/search-templates/**").authenticated()
+                        // Search History & Templates - 익명 사용자도 허용 (프론트엔드 대시보드)
+                        .requestMatchers("/api/v1/search-history/**").permitAll()
+                        .requestMatchers("/api/v1/search-templates/**").permitAll()
                         
                         // Data & Collections
                         .requestMatchers("/api/v1/data/**").permitAll()

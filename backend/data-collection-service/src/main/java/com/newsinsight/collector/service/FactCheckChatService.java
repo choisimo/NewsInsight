@@ -63,6 +63,9 @@ public class FactCheckChatService {
     // 진행 중인 세션 트래킹 (동시성 제어)
     private final ConcurrentHashMap<String, Boolean> processingSessions = new ConcurrentHashMap<>();
 
+    // MongoDB 연결 실패 시 인메모리 fallback 세션 저장소
+    private final ConcurrentHashMap<String, FactCheckChatSession> inMemorySessions = new ConcurrentHashMap<>();
+
     public FactCheckChatService(
             FactVerificationService factVerificationService,
             FactCheckChatSessionRepository sessionRepository,
@@ -109,6 +112,7 @@ public class FactCheckChatService {
     /**
      * 세션 생성 또는 조회
      * 캐시를 수동으로 관리하여 proxy 문제 회피
+     * MongoDB 연결 실패 시 인메모리 fallback 사용
      */
     @Timed(value = "factcheck.chat.session.get", description = "Time to get or create session")
     public FactCheckChatSession getOrCreateSession(String sessionId) {
@@ -119,31 +123,64 @@ public class FactCheckChatService {
             return cached;
         }
 
-        // 2. MongoDB에서 조회
-        return sessionRepository.findBySessionId(sessionId)
-                .map(session -> {
-                    putSessionToCache(session);
-                    return session;
-                })
-                .orElseGet(() -> {
-                    // 3. 새 세션 생성
-                    FactCheckChatSession session = FactCheckChatSession.builder()
-                            .sessionId(sessionId)
-                            .startedAt(LocalDateTime.now())
-                            .lastActivityAt(LocalDateTime.now())
-                            .status(FactCheckChatSession.SessionStatus.ACTIVE)
-                            .messages(new ArrayList<>())
-                            .build();
-                    FactCheckChatSession saved = sessionRepository.save(session);
-                    
-                    // 메트릭 업데이트
-                    sessionCreatedCounter.increment();
-                    activeSessionsGauge.incrementAndGet();
-                    
-                    putSessionToCache(saved);
-                    log.info("Created new chat session: {}", sessionId);
-                    return saved;
-                });
+        // 2. 인메모리 fallback에서 조회
+        FactCheckChatSession inMemory = inMemorySessions.get(sessionId);
+        if (inMemory != null) {
+            log.debug("Session {} found in in-memory fallback", sessionId);
+            return inMemory;
+        }
+
+        try {
+            // 3. MongoDB에서 조회
+            return sessionRepository.findBySessionId(sessionId)
+                    .map(session -> {
+                        putSessionToCache(session);
+                        return session;
+                    })
+                    .orElseGet(() -> {
+                        // 4. 새 세션 생성 (MongoDB)
+                        FactCheckChatSession session = FactCheckChatSession.builder()
+                                .sessionId(sessionId)
+                                .startedAt(LocalDateTime.now())
+                                .lastActivityAt(LocalDateTime.now())
+                                .status(FactCheckChatSession.SessionStatus.ACTIVE)
+                                .messages(new ArrayList<>())
+                                .build();
+                        FactCheckChatSession saved = sessionRepository.save(session);
+                        
+                        // 메트릭 업데이트
+                        sessionCreatedCounter.increment();
+                        activeSessionsGauge.incrementAndGet();
+                        
+                        putSessionToCache(saved);
+                        log.info("Created new chat session: {}", sessionId);
+                        return saved;
+                    });
+        } catch (Exception e) {
+            // MongoDB 연결 실패 시 인메모리 fallback 사용
+            log.warn("MongoDB connection failed, using in-memory fallback for session {}: {}", sessionId, e.getMessage());
+            return createInMemorySession(sessionId);
+        }
+    }
+
+    /**
+     * 인메모리 세션 생성 (MongoDB 연결 실패 시 fallback)
+     */
+    private FactCheckChatSession createInMemorySession(String sessionId) {
+        FactCheckChatSession session = FactCheckChatSession.builder()
+                .sessionId(sessionId)
+                .startedAt(LocalDateTime.now())
+                .lastActivityAt(LocalDateTime.now())
+                .status(FactCheckChatSession.SessionStatus.ACTIVE)
+                .messages(new ArrayList<>())
+                .build();
+        
+        inMemorySessions.put(sessionId, session);
+        sessionCreatedCounter.increment();
+        activeSessionsGauge.incrementAndGet();
+        
+        log.info("Created in-memory chat session: {}", sessionId);
+        return session;
     }
 
     /**
@@ -367,19 +404,29 @@ public class FactCheckChatService {
 
     /**
      * 세션 저장 (MongoDB + Redis 캐시 갱신)
+     * MongoDB 연결 실패 시 인메모리에 저장
      */
     private FactCheckChatSession saveSession(FactCheckChatSession session) {
         session.setLastActivityAt(LocalDateTime.now());
-        FactCheckChatSession saved = sessionRepository.save(session);
         
-        // 캐시 업데이트
-        putSessionToCache(saved);
-        evictMessagesCache(session.getSessionId());
-        
-        // 백그라운드 동기화 트리거
-        chatSyncService.scheduleSyncIfNeeded(saved);
-        
-        return saved;
+        try {
+            FactCheckChatSession saved = sessionRepository.save(session);
+            
+            // 캐시 업데이트
+            putSessionToCache(saved);
+            evictMessagesCache(session.getSessionId());
+            
+            // 백그라운드 동기화 트리거
+            chatSyncService.scheduleSyncIfNeeded(saved);
+            
+            return saved;
+        } catch (Exception e) {
+            // MongoDB 연결 실패 시 인메모리에 저장
+            log.warn("MongoDB save failed, using in-memory fallback for session {}: {}", 
+                    session.getSessionId(), e.getMessage());
+            inMemorySessions.put(session.getSessionId(), session);
+            return session;
+        }
     }
 
     /**

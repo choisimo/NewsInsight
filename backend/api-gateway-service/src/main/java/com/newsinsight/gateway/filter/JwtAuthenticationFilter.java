@@ -58,6 +58,10 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         "/api/v1/admin",         // Admin Dashboard (자체 인증 처리)
         "/api/v1/crawler",       // Autonomous Crawler API
         "/api/v1/autocrawl",     // AutoCrawl API (자동 크롤링 관리)
+        "/api/v1/factcheck-chat", // Fact Check Chat API (익명 세션 지원)
+        "/api/v1/reports",       // PDF Report Export (익명 세션에서도 다운로드 허용)
+        "/api/v1/ai",
+        "/api/v1/*",
         "/api/browser-use",      // Browser-Use API (gateway path)
         "/api/ml-addons",        // ML Add-ons API (sentiment, factcheck, bias)
         "/browse",               // Browser-Use API (direct path - legacy)
