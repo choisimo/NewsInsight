@@ -69,4 +69,4 @@ opencode
 
 !.env.example
 **.env
-**.env.*
+**.env.*aws/**
