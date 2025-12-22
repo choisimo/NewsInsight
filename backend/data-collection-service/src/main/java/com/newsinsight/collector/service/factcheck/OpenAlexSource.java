@@ -172,8 +172,14 @@ public class OpenAlexSource implements FactCheckSource {
 
                         String url = doi.isBlank() ? work.path("id").asText("") : doi;
 
-                        // 관련성 점수 정규화
-                        double normalizedRelevance = Math.min(1.0, Math.max(0.3, relevanceScore / 100.0));
+                        // 관련성 점수 계산: API 점수 + 키워드 매칭
+                        double apiScore = Math.min(1.0, relevanceScore / 100.0);
+                        double keywordScore = calculateKeywordRelevance(query, title, abstractText);
+                        
+                        // 키워드 매칭이 전혀 없으면 0으로 설정 (필터링됨)
+                        double normalizedRelevance = keywordScore > 0 
+                                ? (apiScore * 0.4 + keywordScore * 0.6) 
+                                : 0.0;
 
                         evidenceList.add(SourceEvidence.builder()
                                 .sourceType("academic")
@@ -254,5 +260,44 @@ public class OpenAlexSource implements FactCheckSource {
         if (text == null) return "";
         if (text.length() <= maxLength) return text;
         return text.substring(0, maxLength) + "...";
+    }
+
+    /**
+     * 쿼리 키워드와 제목/초록의 관련성 점수 계산
+     */
+    private double calculateKeywordRelevance(String query, String title, String abstractText) {
+        if (query == null || query.isBlank()) return 0.0;
+        
+        String lowerQuery = query.toLowerCase();
+        String lowerTitle = title.toLowerCase();
+        String lowerAbstract = abstractText.toLowerCase();
+        
+        // 한국어 조사 제거 후 키워드 추출
+        String[] queryWords = lowerQuery
+                .replaceAll("[은는이가을를의에에서로으로와과도만]", " ")
+                .split("\\s+");
+        
+        int significantWords = 0;
+        int titleMatches = 0;
+        int abstractMatches = 0;
+        
+        for (String word : queryWords) {
+            boolean isKorean = word.matches(".*[가-힣].*");
+            int minLength = isKorean ? 2 : 3;
+            
+            if (word.length() >= minLength) {
+                significantWords++;
+                if (lowerTitle.contains(word)) titleMatches++;
+                if (lowerAbstract.contains(word)) abstractMatches++;
+            }
+        }
+        
+        if (significantWords == 0) return 0.0;
+        if (titleMatches == 0 && abstractMatches == 0) return 0.0;
+        
+        double titleScore = (double) titleMatches / significantWords;
+        double abstractScore = (double) abstractMatches / significantWords;
+        
+        return titleScore * 0.6 + abstractScore * 0.4;
     }
 }

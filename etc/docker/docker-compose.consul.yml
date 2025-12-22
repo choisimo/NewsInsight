@@ -9,10 +9,13 @@ services:
       # Optional: advertise container hostname in logs
       - CONSUL_BIND_INTERFACE=eth0
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8500/v1/status/leader"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8500/v1/status/leader 2>/dev/null | grep -q '\"'"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    networks:
+      - default
 
   # Init container to seed Consul KV with configuration and register services
   consul-seed:
@@ -29,9 +32,20 @@ services:
     command: >
       sh -c "
         apk add --no-cache curl bash jq &&
+        echo 'Waiting for Consul to be fully ready...' &&
+        for i in 1 2 3 4 5; do
+          if curl -sf http://consul:8500/v1/status/leader > /dev/null 2>&1; then
+            echo 'Consul is ready, starting seed...';
+            break;
+          fi;
+          echo \"Attempt $$i: Consul not ready, waiting 2s...\";
+          sleep 2;
+        done &&
         /scripts/consul_seed.sh ${ENVIRONMENT:-development} --json
       "
     restart: "no"
+    networks:
+      - default
 
   # Admin Dashboard API - 관리자 인증/환경 관리
   admin-dashboard:

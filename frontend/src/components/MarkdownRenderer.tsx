@@ -23,7 +23,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
     <div
       className={cn(
         // Base prose styles
-        "prose prose-sm dark:prose-invert max-w-none",
+        "prose prose-sm dark:prose-invert max-w-none break-words overflow-hidden",
         // Headings
         "prose-headings:font-semibold prose-headings:text-foreground",
         "prose-h1:text-xl prose-h1:mt-4 prose-h1:mb-2",

@@ -7,6 +7,8 @@ import com.newsinsight.collector.client.OpenAICompatibleClient;
 import com.newsinsight.collector.client.AIDoveClient;
 import com.newsinsight.collector.config.TrustScoreConfig;
 import com.newsinsight.collector.service.factcheck.FactCheckSource;
+import com.newsinsight.collector.service.factcheck.RRFEvidenceFusionService;
+import com.newsinsight.collector.service.factcheck.RRFEvidenceFusionService.FusionResult;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.AnalyzedQuery;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.FallbackStrategy;
@@ -26,6 +28,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Matcher;
@@ -51,6 +54,10 @@ public class FactVerificationService {
     private final TrustScoreConfig trustScoreConfig;
     private final List<TrustedSource> trustedSources;
     private final AdvancedIntentAnalyzer advancedIntentAnalyzer;
+    private final RRFEvidenceFusionService rrfFusionService;
+    
+    @Value("${collector.fact-check.rrf.enabled:true}")
+    private boolean rrfEnabled;
 
     public FactVerificationService(
             WebClient webClient,
@@ -60,7 +67,8 @@ public class FactVerificationService {
             AIDoveClient aiDoveClient,
             List<FactCheckSource> factCheckSources,
             TrustScoreConfig trustScoreConfig,
-            AdvancedIntentAnalyzer advancedIntentAnalyzer) {
+            AdvancedIntentAnalyzer advancedIntentAnalyzer,
+            RRFEvidenceFusionService rrfFusionService) {
         this.webClient = webClient;
         this.objectMapper = objectMapper;
         this.perplexityClient = perplexityClient;
@@ -69,6 +77,7 @@ public class FactVerificationService {
         this.factCheckSources = factCheckSources;
         this.trustScoreConfig = trustScoreConfig;
         this.advancedIntentAnalyzer = advancedIntentAnalyzer;
+        this.rrfFusionService = rrfFusionService;
         
         // Initialize trusted sources with externalized scores
         this.trustedSources = initializeTrustedSources();
@@ -205,7 +214,12 @@ public class FactVerificationService {
 
     /**
      * Claim 목록을 하나로 합쳐서 기준 텍스트를 만들고,
-     * evidence.excerpt 와의 자카드 유사도를 이용해 의미 있는 근거만 남긴다.
+     * evidence.excerpt 와의 향상된 유사도를 이용해 의미 있는 근거만 남긴다.
+     * 
+     * 개선사항:
+     * - 더 낮은 임계값으로 더 많은 근거 수집
+     * - 학술 소스에 대해서는 더 관대한 필터링
+     * - 키워드 매칭 기반의 추가 필터링
      */
     private List<SourceEvidence> filterEvidenceForClaims(List<SourceEvidence> allEvidence, List<String> claims) {
         if (allEvidence == null || allEvidence.isEmpty()) {
@@ -223,23 +237,66 @@ public class FactVerificationService {
             return new ArrayList<>(allEvidence);
         }
 
+        // 주장에서 핵심 키워드 추출
+        List<String> claimKeywords = extractKeywords(combinedClaims);
+
         List<SourceEvidence> filtered = new ArrayList<>();
         for (SourceEvidence evidence : allEvidence) {
             if (evidence == null || evidence.getExcerpt() == null || evidence.getExcerpt().isBlank()) {
                 continue;
             }
+            
+            // 자카드 유사도 계산
             double sim = calculateSimilarity(combinedClaims, evidence.getExcerpt());
-            // 너무 낮은 유사도는 제거 (기본 0.1 기준)
-            if (sim >= 0.1) {
+            
+            // 키워드 매칭 점수 계산
+            double keywordScore = calculateKeywordMatchScore(claimKeywords, evidence.getExcerpt());
+            
+            // 학술 소스는 더 관대하게 필터링 (학술 DB는 기본적으로 신뢰할 수 있음)
+            double threshold = "academic".equals(evidence.getSourceType()) ? 0.05 : 0.08;
+            
+            // 유사도 또는 키워드 매칭 중 하나라도 임계값 이상이면 포함
+            if (sim >= threshold || keywordScore >= 0.2) {
+                // 종합 점수로 relevanceScore 업데이트
+                double combinedScore = Math.max(sim, keywordScore);
+                if (evidence.getRelevanceScore() == null || evidence.getRelevanceScore() < combinedScore) {
+                    evidence.setRelevanceScore(combinedScore);
+                }
                 filtered.add(evidence);
             }
         }
 
-        // 너무 많을 경우 상위 N개만 사용 (기본 50개)
-        if (filtered.size() > 50) {
-            return filtered.subList(0, 50);
+        // 관련성 점수로 정렬
+        filtered.sort((a, b) -> Double.compare(
+                b.getRelevanceScore() != null ? b.getRelevanceScore() : 0,
+                a.getRelevanceScore() != null ? a.getRelevanceScore() : 0
+        ));
+
+        // 상위 결과만 사용 (최대 60개)
+        if (filtered.size() > 60) {
+            return filtered.subList(0, 60);
         }
         return filtered;
+    }
+    
+    /**
+     * 키워드 매칭 점수 계산
+     */
+    private double calculateKeywordMatchScore(List<String> keywords, String text) {
+        if (keywords == null || keywords.isEmpty() || text == null || text.isBlank()) {
+            return 0.0;
+        }
+        
+        String lowerText = text.toLowerCase();
+        int matchCount = 0;
+        
+        for (String keyword : keywords) {
+            if (lowerText.contains(keyword.toLowerCase())) {
+                matchCount++;
+            }
+        }
+        
+        return (double) matchCount / keywords.size();
     }
 
     /**
@@ -565,9 +622,59 @@ public class FactVerificationService {
     // ============================================
 
     /**
-     * 폴백 전략을 사용하여 모든 소스에서 근거 수집
+     * RRF 기반 다중 쿼리 병렬 검색으로 근거 수집
+     * 
+     * 의도 분석을 통해 생성된 여러 검색 쿼리를 병렬로 실행하고,
+     * RRF 알고리즘을 사용하여 결과를 융합합니다.
      */
     private List<SourceEvidence> fetchAllSourceEvidenceWithFallback(AnalyzedQuery analyzedQuery, String language) {
+        List<SourceEvidence> allEvidence = new CopyOnWriteArrayList<>();
+        
+        // RRF 기반 다중 쿼리 병렬 검색 사용
+        if (rrfEnabled && rrfFusionService != null) {
+            try {
+                log.info("Using RRF-based multi-query parallel search for: {}", analyzedQuery.getOriginalQuery());
+                
+                FusionResult fusionResult = rrfFusionService
+                        .searchAndFuse(analyzedQuery.getOriginalQuery(), language)
+                        .block(Duration.ofSeconds(timeoutSeconds * 2));
+                
+                if (fusionResult != null && fusionResult.getEvidences() != null) {
+                    allEvidence.addAll(fusionResult.getEvidences());
+                    log.info("RRF search completed: {} queries × {} sources → {} evidences (method: {})",
+                            fusionResult.getQueryCount(),
+                            fusionResult.getSourceCount(),
+                            fusionResult.getEvidences().size(),
+                            fusionResult.getFusionMethod());
+                }
+            } catch (Exception e) {
+                log.warn("RRF search failed, falling back to sequential search: {}", e.getMessage());
+                // RRF 실패 시 기존 방식으로 폴백
+                allEvidence.addAll(fetchAllSourceEvidenceSequential(analyzedQuery, language));
+            }
+        } else {
+            // RRF 비활성화 시 기존 방식 사용
+            allEvidence.addAll(fetchAllSourceEvidenceSequential(analyzedQuery, language));
+        }
+        
+        // Wikipedia 정보 추가 (항상 포함)
+        List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(analyzedQuery.getOriginalQuery());
+        for (SourceEvidence wiki : wikiEvidence) {
+            boolean isDuplicate = allEvidence.stream()
+                    .anyMatch(e -> e.getUrl() != null && e.getUrl().equals(wiki.getUrl()));
+            if (!isDuplicate) {
+                allEvidence.add(wiki);
+            }
+        }
+        
+        log.info("Total evidence collected: {} items", allEvidence.size());
+        return new ArrayList<>(allEvidence);
+    }
+    
+    /**
+     * 기존 순차적 폴백 검색 방식 (RRF 비활성화 시 또는 폴백용)
+     */
+    private List<SourceEvidence> fetchAllSourceEvidenceSequential(AnalyzedQuery analyzedQuery, String language) {
         List<SourceEvidence> allEvidence = new CopyOnWriteArrayList<>();
         
         // 원본 쿼리로 먼저 시도
@@ -596,7 +703,6 @@ public class FactVerificationService {
             }
         }
         
-        log.info("Total evidence collected with fallback: {} items", allEvidence.size());
         return new ArrayList<>(allEvidence);
     }
 
@@ -953,21 +1059,56 @@ public class FactVerificationService {
     }
 
     private List<String> extractKeywords(String text) {
-        // 간단한 키워드 추출 (명사 추출)
+        // 개선된 키워드 추출 - 명사 및 중요 단어 추출
         List<String> keywords = new ArrayList<>();
-        String[] words = text.split("[\\s,\\.\\?!]+");
+        String[] words = text.split("[\\s,\\.\\?!\\(\\)\\[\\]\"']+");
+        
         for (String word : words) {
-            if (word.length() > 2 && !isStopWord(word)) {
-                keywords.add(word.toLowerCase());
+            String cleaned = word.trim().toLowerCase();
+            // 최소 2글자 이상, 불용어 제외, 숫자만 있는 것 제외
+            if (cleaned.length() >= 2 && !isStopWord(cleaned) && !cleaned.matches("^\\d+$")) {
+                keywords.add(cleaned);
             }
         }
-        return keywords.stream().distinct().limit(5).toList();
+        
+        // 중복 제거 및 우선순위 정렬 (긴 단어가 더 의미있을 가능성)
+        return keywords.stream()
+                .distinct()
+                .sorted((a, b) -> Integer.compare(b.length(), a.length()))
+                .limit(8)
+                .toList();
     }
 
     private boolean isStopWord(String word) {
-        return List.of("the", "a", "an", "is", "are", "was", "were", "이", "그", "저", 
-                "는", "은", "가", "이", "를", "을", "에", "의").contains(word.toLowerCase());
+        return STOPWORDS.contains(word.toLowerCase());
     }
+    
+    // 확장된 불용어 목록
+    private static final Set<String> STOPWORDS = Set.of(
+            // 영어 불용어
+            "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+            "have", "has", "had", "do", "does", "did", "will", "would", "could",
+            "should", "may", "might", "must", "shall", "can", "need", "dare",
+            "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
+            "from", "as", "into", "through", "during", "before", "after", "above",
+            "below", "between", "under", "again", "further", "then", "once",
+            "here", "there", "when", "where", "why", "how", "all", "each", "few",
+            "more", "most", "other", "some", "such", "no", "nor", "not", "only",
+            "own", "same", "so", "than", "too", "very", "just", "also", "now",
+            "and", "but", "or", "if", "because", "until", "while", "about",
+            "this", "that", "these", "those", "what", "which", "who", "whom",
+            "it", "its", "they", "them", "their", "we", "us", "our", "you", "your",
+            "he", "him", "his", "she", "her", "i", "me", "my",
+            // 한국어 불용어
+            "이", "그", "저", "는", "은", "가", "를", "을", "에", "의", "와", "과",
+            "도", "만", "로", "으로", "에서", "까지", "부터", "에게", "한테",
+            "것", "수", "등", "들", "및", "더", "덜", "뭐", "어디", "언제",
+            "어떻게", "왜", "누구", "있다", "없다", "하다", "되다", "이다",
+            "그리고", "그러나", "하지만", "그래서", "때문에", "대해", "대한",
+            "관련", "관한", "통해", "위해", "따라", "인해", "있는", "없는",
+            "하는", "되는", "아주", "매우", "정말", "너무", "조금", "약간",
+            "진짜", "가짜", "사실", "인가요", "인가", "입니까", "일까", "나요"
+    );
 
     private double calculateSimilarity(String text1, String text2) {
         if (text1 == null || text2 == null) return 0;

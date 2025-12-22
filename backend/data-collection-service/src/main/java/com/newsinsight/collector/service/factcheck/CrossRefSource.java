@@ -187,23 +187,47 @@ public class CrossRefSource implements FactCheckSource {
     }
 
     private double calculateRelevance(String query, String title, String abstractText) {
-        if (query == null || query.isBlank()) return 0.5;
+        if (query == null || query.isBlank()) return 0.0;
         
         String lowerQuery = query.toLowerCase();
         String lowerTitle = title.toLowerCase();
         String lowerAbstract = abstractText.toLowerCase();
         
-        String[] queryWords = lowerQuery.split("\\s+");
-        int matches = 0;
+        // 한국어 키워드 추출 (조사 제거)
+        String[] queryWords = lowerQuery
+                .replaceAll("[은는이가을를의에에서로으로와과도만]", " ")
+                .split("\\s+");
+        
+        int significantWords = 0;
+        int titleMatches = 0;
+        int abstractMatches = 0;
         
         for (String word : queryWords) {
-            if (word.length() > 2) {
-                if (lowerTitle.contains(word)) matches += 2;
-                if (lowerAbstract.contains(word)) matches++;
+            // 의미있는 단어만 카운트 (한글 2자 이상, 영어 3자 이상)
+            boolean isKorean = word.matches(".*[가-힣].*");
+            int minLength = isKorean ? 2 : 3;
+            
+            if (word.length() >= minLength) {
+                significantWords++;
+                if (lowerTitle.contains(word)) titleMatches++;
+                if (lowerAbstract.contains(word)) abstractMatches++;
             }
         }
         
-        double score = Math.min(1.0, matches / (double)(queryWords.length * 3));
-        return Math.max(0.3, score); // 최소 0.3
+        if (significantWords == 0) return 0.0;
+        
+        // 제목 매칭은 높은 가중치, 초록은 낮은 가중치
+        double titleScore = (double) titleMatches / significantWords;
+        double abstractScore = (double) abstractMatches / significantWords;
+        
+        // 최종 점수: 제목 60% + 초록 40%
+        double score = titleScore * 0.6 + abstractScore * 0.4;
+        
+        // 전혀 매칭이 없으면 0 반환 (관련 없는 결과 필터링)
+        if (titleMatches == 0 && abstractMatches == 0) {
+            return 0.0;
+        }
+        
+        return score;
     }
 }

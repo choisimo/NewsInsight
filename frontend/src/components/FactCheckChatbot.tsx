@@ -1,5 +1,9 @@
-import { useState, useRef, useEffect, useImperativeHandle, forwardRef, useCallback } from 'react';
-import { Send, Loader2, Bot, User, AlertCircle, CheckCircle2, XCircle, Scale, Shield, Download, Copy, Check, FileText, FileCode, RefreshCw } from 'lucide-react';
+import { useState, useRef, useEffect, useImperativeHandle, forwardRef, useCallback, useMemo } from 'react';
+import { 
+  Send, Loader2, Bot, User, AlertCircle, CheckCircle2, XCircle, Scale, Shield, 
+  Download, Copy, Check, FileText, FileCode, RefreshCw, Sparkles, Search,
+  ExternalLink, BookOpen, TrendingUp, MessageSquare, Zap
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +12,8 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { useFactCheckChat } from '@/hooks/useFactCheckChat';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Progress } from '@/components/ui/progress';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 interface Message {
   id: string;
@@ -390,279 +397,398 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
   // Determine height class
   const containerHeightClass = heightClass || (compact ? 'h-[500px]' : 'h-[calc(100vh-12rem)]');
 
-  return (
-    <div className={`flex flex-col ${containerHeightClass} ${compact ? '' : 'max-w-5xl mx-auto'}`}>
-      <Card className="flex-1 flex flex-col">
-        {!hideHeader && (
-          <CardHeader className={`border-b ${compact ? 'py-3' : ''}`}>
-            <div className="flex items-center gap-3">
-              <div className={`${compact ? 'p-1.5' : 'p-2'} bg-primary/10 rounded-lg`}>
-                <Shield className={`${compact ? 'h-5 w-5' : 'h-6 w-6'} text-primary`} />
-              </div>
-              <div>
-                <CardTitle className={compact ? 'text-base' : ''}>팩트체크 챗봇</CardTitle>
-                {!compact && (
-                  <p className="text-sm text-muted-foreground mt-1">
-                    궁금한 주장이나 뉴스를 입력하면 실시간으로 팩트체크 결과를 제공합니다
-                  </p>
-                )}
-              </div>
-              <div className="ml-auto flex items-center gap-2">
-                {/* Export Menu */}
-                {messages.length > 0 && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size={compact ? 'sm' : 'default'}>
-                        <Download className="h-4 w-4 mr-1" />
-                        내보내기
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuLabel>내보내기 형식</DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={exportToMarkdown}>
-                        <FileCode className="h-4 w-4 mr-2 text-blue-600" />
-                        Markdown (.md)
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={exportToText}>
-                        <FileText className="h-4 w-4 mr-2 text-gray-600" />
-                        텍스트 (.txt)
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={exportToJson}>
-                        <FileText className="h-4 w-4 mr-2 text-yellow-600" />
-                        JSON (.json)
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={copyToClipboard}>
-                        {copied ? (
-                          <Check className="h-4 w-4 mr-2 text-green-600" />
-                        ) : (
-                          <Copy className="h-4 w-4 mr-2" />
-                        )}
-                        클립보드 복사
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-                {isConnected && (
-                  <Badge variant="outline">
-                    <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse" />
-                    연결됨
-                  </Badge>
-                )}
-              </div>
-            </div>
-          </CardHeader>
-        )}
+  // 예시 질문들
+  const exampleQuestions = useMemo(() => [
+    { icon: TrendingUp, text: '메모리 반도체 가격이 상승하고 있다는 뉴스가 사실인가요?', label: '경제 뉴스' },
+    { icon: BookOpen, text: '커피를 많이 마시면 건강에 해롭다는 말이 사실인가요?', label: '건강 상식' },
+    { icon: Zap, text: '전기차 배터리 수명이 5년 이상 가지 않는다는게 사실인가요?', label: '기술 정보' },
+  ], []);
 
-        <CardContent className="flex-1 flex flex-col p-0 min-h-0 overflow-hidden">
-          {/* 메시지 영역 */}
-          <ScrollArea ref={scrollRef} className="flex-1 p-4 overflow-y-auto">
-            {/* 연결 오류 상태 */}
-            {!isConnected && messages.length === 0 ? (
-              <div className={`flex flex-col items-center justify-center h-full text-center ${compact ? 'p-4' : 'p-8'}`}>
-                <AlertCircle className={`${compact ? 'h-12 w-12' : 'h-16 w-16'} text-destructive mb-4`} />
-                <h3 className={`${compact ? 'text-base' : 'text-lg'} font-semibold mb-2`}>
-                  세션 연결 중...
-                </h3>
-                <p className={`text-muted-foreground ${compact ? 'text-sm' : ''} max-w-md mb-4`}>
-                  팩트체크 서버에 연결하고 있습니다. 잠시만 기다려주세요.
-                </p>
-                <Button onClick={handleReconnect} variant="outline" size="sm">
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  다시 연결
-                </Button>
-              </div>
-            ) : messages.length === 0 ? (
-              <div className={`flex flex-col items-center justify-center h-full text-center ${compact ? 'p-4' : 'p-8'}`}>
-                <Bot className={`${compact ? 'h-12 w-12' : 'h-16 w-16'} text-muted-foreground mb-4`} />
-                <h3 className={`${compact ? 'text-base' : 'text-lg'} font-semibold mb-2`}>
-                  {compact ? '팩트체크를 시작하세요' : '팩트체크 챗봇에 오신 것을 환영합니다!'}
-                </h3>
-                <p className={`text-muted-foreground ${compact ? 'text-sm' : ''} max-w-md`}>
-                  검증하고 싶은 주장이나 뉴스를 입력해주세요. 
-                  {!compact && '신뢰할 수 있는 출처를 기반으로 실시간 팩트체크를 수행합니다.'}
-                </p>
-                <div className={`${compact ? 'mt-4' : 'mt-6'} grid grid-cols-1 gap-2 w-full max-w-md`}>
-                  <Button
-                    variant="outline"
-                    className="justify-start"
-                    onClick={() => setInput('메모리 반도체 가격이 상승하고 있다는 뉴스가 사실인가요?')}
-                  >
-                    💡 메모리 반도체 가격 상승 뉴스 검증
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="justify-start"
-                    onClick={() => setInput('최근 발표된 경제 성장률 통계가 정확한가요?')}
-                  >
-                    📊 경제 통계 검증
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="justify-start"
-                    onClick={() => setInput('이 정치인의 발언이 사실에 부합하나요?')}
-                  >
-                    🎤 정치인 발언 검증
-                  </Button>
+  return (
+    <TooltipProvider>
+      <div className={cn(
+        "flex flex-col",
+        containerHeightClass,
+        !compact && "max-w-4xl mx-auto"
+      )}>
+        <Card className="flex-1 flex flex-col overflow-hidden border-0 shadow-xl bg-gradient-to-b from-background to-muted/20">
+          {/* 헤더 */}
+          {!hideHeader && (
+            <CardHeader className={cn(
+              "border-b bg-background/80 backdrop-blur-sm",
+              compact ? "py-3 px-4" : "py-4 px-6"
+            )}>
+              <div className="flex items-center gap-4">
+                {/* 로고 영역 */}
+                <div className={cn(
+                  "relative",
+                  compact ? "p-2" : "p-2.5"
+                )}>
+                  <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl opacity-20 blur-sm" />
+                  <div className="relative bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl p-2">
+                    <Shield className={cn("text-white", compact ? "h-5 w-5" : "h-6 w-6")} />
+                  </div>
+                </div>
+                
+                {/* 타이틀 */}
+                <div className="flex-1 min-w-0">
+                  <CardTitle className={cn(
+                    "flex items-center gap-2",
+                    compact ? "text-base" : "text-lg"
+                  )}>
+                    팩트체크 AI
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-normal">
+                      Beta
+                    </Badge>
+                  </CardTitle>
+                  {!compact && (
+                    <p className="text-sm text-muted-foreground mt-0.5 truncate">
+                      신뢰할 수 있는 출처 기반 실시간 검증
+                    </p>
+                  )}
+                </div>
+                
+                {/* 액션 버튼들 */}
+                <div className="flex items-center gap-2">
+                  {messages.length > 0 && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-8 px-2">
+                          <Download className="h-4 w-4" />
+                          {!compact && <span className="ml-1.5">내보내기</span>}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-48">
+                        <DropdownMenuLabel className="text-xs text-muted-foreground">내보내기 형식</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={exportToMarkdown} className="gap-2">
+                          <FileCode className="h-4 w-4 text-blue-500" />
+                          Markdown
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={exportToText} className="gap-2">
+                          <FileText className="h-4 w-4 text-gray-500" />
+                          텍스트
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={exportToJson} className="gap-2">
+                          <FileText className="h-4 w-4 text-amber-500" />
+                          JSON
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={copyToClipboard} className="gap-2">
+                          {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                          복사
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                  
+                  {/* 연결 상태 */}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className={cn(
+                        "flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium transition-colors",
+                        isConnected 
+                          ? "bg-green-500/10 text-green-600 dark:text-green-400" 
+                          : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                      )}>
+                        <div className={cn(
+                          "w-1.5 h-1.5 rounded-full",
+                          isConnected ? "bg-green-500 animate-pulse" : "bg-amber-500"
+                        )} />
+                        {!compact && (isConnected ? "연결됨" : "연결 중")}
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {isConnected ? "서버 연결 활성화" : "서버에 연결 중..."}
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
-            ) : (
-              <div className="space-y-4">
-                {messages.map((message) => (
-                  <MessageBubble key={message.id} message={message} />
-                ))}
-                {/* 스트리밍 중인 메시지 표시 */}
-                {streamingMessage && (
-                  <MessageBubble key={streamingMessage.id} message={streamingMessage} />
-                )}
-                {/* 스트리밍 메시지가 없고 isStreaming일 때만 로딩 표시 */}
-                {isStreaming && !streamingMessage && (
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span className="text-sm">분석 중...</span>
+            </CardHeader>
+          )}
+
+          <CardContent className="flex-1 flex flex-col p-0 min-h-0 overflow-hidden">
+            {/* 메시지 영역 */}
+            <ScrollArea ref={scrollRef} className="flex-1 overflow-y-auto">
+              <div className={cn("min-h-full", compact ? "p-3" : "p-4 md:p-6")}>
+                {/* 연결 중 상태 */}
+                {!isConnected && messages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center">
+                    <div className="relative mb-6">
+                      <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full opacity-20 blur-xl animate-pulse" />
+                      <div className="relative bg-muted/50 rounded-full p-6">
+                        <Loader2 className="h-10 w-10 text-muted-foreground animate-spin" />
+                      </div>
+                    </div>
+                    <h3 className="text-lg font-semibold mb-2">서버에 연결 중...</h3>
+                    <p className="text-muted-foreground text-sm max-w-sm mb-4">
+                      팩트체크 서비스에 연결하고 있습니다
+                    </p>
+                    <Button onClick={handleReconnect} variant="outline" size="sm" className="gap-2">
+                      <RefreshCw className="h-4 w-4" />
+                      다시 연결
+                    </Button>
+                  </div>
+                ) : messages.length === 0 ? (
+                  /* 웰컴 화면 */
+                  <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center">
+                    <div className="relative mb-6">
+                      <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full opacity-20 blur-xl" />
+                      <div className="relative bg-gradient-to-br from-blue-500/10 to-purple-600/10 rounded-full p-6 border border-primary/10">
+                        <Sparkles className={cn("text-primary", compact ? "h-8 w-8" : "h-10 w-10")} />
+                      </div>
+                    </div>
+                    
+                    <h3 className={cn("font-semibold mb-2", compact ? "text-lg" : "text-xl")}>
+                      무엇을 검증해 드릴까요?
+                    </h3>
+                    <p className="text-muted-foreground text-sm max-w-md mb-6">
+                      뉴스, 주장, 상식 등 궁금한 내용을 입력하면{!compact && <br />}
+                      학술 자료와 신뢰할 수 있는 출처를 기반으로 검증해 드립니다
+                    </p>
+                    
+                    {/* 예시 질문들 */}
+                    <div className="w-full max-w-md space-y-2">
+                      <p className="text-xs text-muted-foreground mb-3">예시 질문</p>
+                      {exampleQuestions.map((q, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => setInput(q.text)}
+                          className={cn(
+                            "w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all",
+                            "bg-muted/50 hover:bg-muted border border-transparent hover:border-primary/20",
+                            "group"
+                          )}
+                        >
+                          <div className="flex-shrink-0 p-2 rounded-lg bg-primary/10 text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                            <q.icon className="h-4 w-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm truncate">{q.text}</p>
+                            <p className="text-xs text-muted-foreground">{q.label}</p>
+                          </div>
+                          <Search className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  /* 메시지 목록 */
+                  <div className="space-y-4">
+                    {messages.map((message, idx) => (
+                      <MessageBubble 
+                        key={message.id} 
+                        message={message} 
+                        isFirst={idx === 0}
+                        compact={compact}
+                      />
+                    ))}
+                    {streamingMessage && (
+                      <MessageBubble 
+                        key={streamingMessage.id} 
+                        message={streamingMessage}
+                        compact={compact}
+                      />
+                    )}
+                    {isStreaming && !streamingMessage && (
+                      <div className="flex items-center gap-3 py-2">
+                        <div className="flex-shrink-0">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+                            <Bot className="h-4 w-4 text-white" />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 text-muted-foreground bg-muted/50 rounded-full px-4 py-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span className="text-sm">분석 중...</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-          </ScrollArea>
+            </ScrollArea>
 
-          {/* 입력 영역 */}
-          <div className="border-t p-4">
-            <div className="flex gap-2">
-              <Input
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="팩트체크할 내용을 입력하세요..."
-                disabled={isStreaming}
-                className="flex-1"
-              />
-              <Button
-                onClick={handleSend}
-                disabled={!input.trim() || isStreaming}
-                size="icon"
-              >
-                {isStreaming ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
-              </Button>
+            {/* 입력 영역 */}
+            <div className={cn(
+              "border-t bg-background/80 backdrop-blur-sm",
+              compact ? "p-3" : "p-4"
+            )}>
+              <div className="flex gap-2 items-end">
+                <div className="flex-1 relative">
+                  <Input
+                    ref={inputRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    placeholder="검증하고 싶은 내용을 입력하세요..."
+                    disabled={isStreaming}
+                    className={cn(
+                      "pr-4 bg-muted/50 border-muted-foreground/20 focus-visible:ring-primary/30",
+                      compact ? "h-10" : "h-11"
+                    )}
+                  />
+                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={handleSend}
+                      disabled={!input.trim() || isStreaming}
+                      size={compact ? "default" : "lg"}
+                      className={cn(
+                        "bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700",
+                        "shadow-lg shadow-primary/25 transition-all",
+                        compact ? "h-10 w-10" : "h-11 w-11"
+                      )}
+                    >
+                      {isStreaming ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Enter로 전송</TooltipContent>
+                </Tooltip>
+              </div>
+              {!compact && (
+                <p className="text-[11px] text-muted-foreground mt-2 text-center">
+                  학술 DB, 뉴스, 백과사전 등 다양한 출처를 실시간으로 검색하여 검증합니다
+                </p>
+              )}
             </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Enter로 전송 • Shift+Enter로 줄바꿈
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+          </CardContent>
+        </Card>
+      </div>
+    </TooltipProvider>
   );
 });
 
 // 메시지 버블 컴포넌트
-const MessageBubble = ({ message }: { message: Message }) => {
+interface MessageBubbleProps {
+  message: Message;
+  isFirst?: boolean;
+  compact?: boolean;
+}
+
+const MessageBubble = ({ message, isFirst = false, compact = false }: MessageBubbleProps) => {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
 
-  // 시스템 메시지 (상태 업데이트)
+  // 시스템 메시지 (상태 업데이트) - 숨김
   if (isSystem && message.type === 'status') {
-    return (
-      <div className="flex justify-center">
-        <Badge variant="secondary" className="text-xs">
-          {message.content}
-        </Badge>
-      </div>
-    );
+    return null;
   }
 
-  // 증거 메시지
+  // 증거 메시지 - 개선된 카드 디자인
   if (message.type === 'evidence' && message.evidence) {
     return (
-      <div className="flex gap-3">
+      <div className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
         <div className="flex-shrink-0">
-          <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
-            <Shield className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <BookOpen className="h-4 w-4 text-white" />
           </div>
         </div>
-        <div className="flex-1">
-          <Alert>
-            <AlertDescription>
-              <p className="font-medium mb-2">{message.content}</p>
-              <div className="space-y-2 mt-3">
-                {message.evidence.slice(0, 3).map((ev: any, idx: number) => (
-                  <div key={idx} className="text-sm border-l-2 border-primary pl-3">
-                    <p className="font-medium">{ev.sourceName}</p>
-                    <p className="text-muted-foreground text-xs mt-1">{ev.excerpt}</p>
+        <div className="flex-1 min-w-0">
+          <div className="bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950/50 dark:to-cyan-950/50 rounded-xl p-4 border border-blue-200/50 dark:border-blue-800/50">
+            <div className="flex items-center gap-2 mb-3">
+              <Shield className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                수집된 출처 ({message.evidence.length}건)
+              </span>
+            </div>
+            <div className="space-y-2">
+              {message.evidence.slice(0, 4).map((ev: any, idx: number) => (
+                <div 
+                  key={idx} 
+                  className="bg-white/60 dark:bg-white/5 rounded-lg p-3 border border-blue-100 dark:border-blue-800/30"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-medium text-foreground">{ev.sourceName}</p>
+                    {ev.url && (
+                      <a 
+                        href={ev.url} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="flex-shrink-0 text-blue-500 hover:text-blue-600 transition-colors"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
                   </div>
-                ))}
-              </div>
-            </AlertDescription>
-          </Alert>
+                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{ev.excerpt}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
-  // 검증 결과 메시지
+  // 검증 결과 메시지 - 개선된 디자인
   if (message.type === 'verification' && message.verificationResult) {
     const result = message.verificationResult;
-    const statusIcon = getVerificationIcon(result.status);
+    const statusConfig = getVerificationConfig(result.status);
     
     return (
-      <div className="flex gap-3">
+      <div className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
         <div className="flex-shrink-0">
-          <div className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900 flex items-center justify-center">
-            {statusIcon}
+          <div className={cn(
+            "w-9 h-9 rounded-xl flex items-center justify-center shadow-lg",
+            statusConfig.bgGradient,
+            statusConfig.shadow
+          )}>
+            {statusConfig.icon}
           </div>
         </div>
-        <div className="flex-1">
-          <Card>
-            <CardContent className="pt-4">
-              <div className="flex items-start justify-between mb-2">
-                <p className="font-medium">{result.originalClaim}</p>
-                <Badge variant={getVerificationVariant(result.status)}>
-                  {getVerificationLabel(result.status)}
-                </Badge>
-              </div>
-              <p className="text-sm text-muted-foreground">{result.verificationSummary}</p>
-              {result.confidenceScore && (
-                <div className="mt-2">
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>신뢰도</span>
-                    <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-primary"
-                        style={{ width: `${result.confidenceScore * 100}%` }}
-                      />
-                    </div>
-                    <span>{Math.round(result.confidenceScore * 100)}%</span>
-                  </div>
+        <div className="flex-1 min-w-0">
+          <div className={cn(
+            "rounded-xl p-4 border",
+            statusConfig.cardBg,
+            statusConfig.border
+          )}>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <p className="text-sm font-medium flex-1">{result.originalClaim}</p>
+              <Badge className={cn("flex-shrink-0", statusConfig.badge)}>
+                {statusConfig.label}
+              </Badge>
+            </div>
+            <p className="text-sm text-muted-foreground mb-3">{result.verificationSummary}</p>
+            {result.confidenceScore !== undefined && (
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-muted-foreground">신뢰도</span>
+                <div className="flex-1">
+                  <Progress value={result.confidenceScore * 100} className="h-2" />
                 </div>
-              )}
-            </CardContent>
-          </Card>
+                <span className={cn("text-xs font-medium", statusConfig.textColor)}>
+                  {Math.round(result.confidenceScore * 100)}%
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
-  // AI 합성 메시지 (스트리밍)
+  // AI 합성 메시지 (스트리밍) - 개선된 디자인
   if (message.type === 'ai_synthesis') {
     return (
-      <div className="flex gap-3">
+      <div className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
         <div className="flex-shrink-0">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
-            <Bot className="h-4 w-4 text-white" />
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/20">
+            <Sparkles className="h-4 w-4 text-white" />
           </div>
         </div>
-        <div className="flex-1 bg-muted/50 rounded-lg p-4 max-h-[400px] overflow-y-auto">
-          <MarkdownRenderer content={message.content} isStreaming={message.isStreaming} />
-          {/* 스트리밍 중일 때 타이핑 커서 표시 */}
-          {message.isStreaming && (
-            <span className="inline-block w-2 h-4 ml-1 bg-primary animate-pulse rounded-sm" />
-          )}
+        <div className="flex-1 min-w-0">
+          <div className="bg-gradient-to-br from-violet-50 to-purple-50 dark:from-violet-950/30 dark:to-purple-950/30 rounded-xl p-4 border border-violet-200/50 dark:border-violet-800/30">
+            <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+              <MarkdownRenderer content={message.content} isStreaming={message.isStreaming} />
+            </div>
+            {message.isStreaming && (
+              <span className="inline-block w-2 h-4 ml-1 bg-violet-500 animate-pulse rounded-sm" />
+            )}
+          </div>
         </div>
       </div>
     );
@@ -671,11 +797,11 @@ const MessageBubble = ({ message }: { message: Message }) => {
   // 완료 메시지
   if (message.type === 'complete') {
     return (
-      <div className="flex justify-center">
-        <Alert className="max-w-md">
+      <div className="flex justify-center py-2 animate-in fade-in duration-300">
+        <div className="flex items-center gap-2 bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 px-4 py-2 rounded-full text-sm border border-green-200/50 dark:border-green-800/30">
           <CheckCircle2 className="h-4 w-4" />
-          <AlertDescription>{message.content}</AlertDescription>
-        </Alert>
+          <span>분석 완료</span>
+        </div>
       </div>
     );
   }
@@ -683,7 +809,7 @@ const MessageBubble = ({ message }: { message: Message }) => {
   // 에러 메시지
   if (message.type === 'error') {
     return (
-      <div className="flex justify-center">
+      <div className="flex justify-center py-2 animate-in fade-in duration-300">
         <Alert variant="destructive" className="max-w-md">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{message.content}</AlertDescription>
@@ -692,31 +818,49 @@ const MessageBubble = ({ message }: { message: Message }) => {
     );
   }
 
-  // 일반 사용자/어시스턴트 메시지
-  return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
-      <div className="flex-shrink-0">
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-          isUser 
-            ? 'bg-primary text-primary-foreground' 
-            : 'bg-muted'
-        }`}>
-          {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+  // 사용자 메시지
+  if (isUser) {
+    return (
+      <div className="flex gap-3 flex-row-reverse animate-in fade-in slide-in-from-right-2 duration-300">
+        <div className="flex-shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg shadow-primary/20">
+            <User className="h-4 w-4 text-white" />
+          </div>
+        </div>
+        <div className="flex-1 min-w-0 max-w-[85%] flex flex-col items-end">
+          <div className="bg-gradient-to-br from-blue-500 to-purple-600 text-white rounded-2xl rounded-tr-md px-4 py-3 shadow-lg shadow-primary/20">
+            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-1.5 mr-1">
+            {new Date(message.timestamp).toLocaleTimeString('ko-KR', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </p>
         </div>
       </div>
-      <div className={`flex-1 max-w-[80%] ${isUser ? 'text-right' : ''}`}>
-        <div className={`inline-block rounded-lg p-3 max-h-[300px] overflow-y-auto ${
-          isUser 
-            ? 'bg-primary text-primary-foreground' 
-            : 'bg-muted'
-        }`}>
+    );
+  }
+
+  // 일반 어시스턴트 메시지
+  return (
+    <div className="flex gap-3 animate-in fade-in slide-in-from-left-2 duration-300">
+      <div className="flex-shrink-0">
+        <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center">
+          <Bot className="h-4 w-4 text-muted-foreground" />
+        </div>
+      </div>
+      <div className="flex-1 min-w-0 max-w-[85%]">
+        <div className="bg-muted rounded-2xl rounded-tl-md px-4 py-3">
           {message.content.includes('\n') || message.content.length > 100 ? (
-            <MarkdownRenderer content={message.content} isStreaming={false} />
+            <div className="prose prose-sm dark:prose-invert max-w-none">
+              <MarkdownRenderer content={message.content} isStreaming={false} />
+            </div>
           ) : (
-            <p className="text-sm">{message.content}</p>
+            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
           )}
         </div>
-        <p className="text-xs text-muted-foreground mt-1">
+        <p className="text-[10px] text-muted-foreground mt-1.5 ml-1">
           {new Date(message.timestamp).toLocaleTimeString('ko-KR', {
             hour: '2-digit',
             minute: '2-digit',
@@ -728,45 +872,80 @@ const MessageBubble = ({ message }: { message: Message }) => {
 };
 
 // 헬퍼 함수들
-const getVerificationIcon = (status: string) => {
-  switch (status) {
-    case 'VERIFIED':
-      return <CheckCircle2 className="h-4 w-4 text-green-600" />;
-    case 'FALSE':
-      return <XCircle className="h-4 w-4 text-red-600" />;
-    case 'DISPUTED':
-      return <Scale className="h-4 w-4 text-orange-600" />;
-    default:
-      return <AlertCircle className="h-4 w-4 text-gray-600" />;
-  }
-};
+interface VerificationConfig {
+  icon: React.ReactNode;
+  label: string;
+  bgGradient: string;
+  shadow: string;
+  cardBg: string;
+  border: string;
+  badge: string;
+  textColor: string;
+}
 
-const getVerificationVariant = (status: string): 'default' | 'destructive' | 'outline' | 'secondary' => {
+const getVerificationConfig = (status: string): VerificationConfig => {
   switch (status) {
     case 'VERIFIED':
-      return 'default';
+      return {
+        icon: <CheckCircle2 className="h-4 w-4 text-white" />,
+        label: '검증됨',
+        bgGradient: 'bg-gradient-to-br from-green-500 to-emerald-600',
+        shadow: 'shadow-green-500/20',
+        cardBg: 'bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30',
+        border: 'border-green-200/50 dark:border-green-800/30',
+        badge: 'bg-green-500 hover:bg-green-600 text-white',
+        textColor: 'text-green-600 dark:text-green-400',
+      };
     case 'FALSE':
-      return 'destructive';
+      return {
+        icon: <XCircle className="h-4 w-4 text-white" />,
+        label: '거짓',
+        bgGradient: 'bg-gradient-to-br from-red-500 to-rose-600',
+        shadow: 'shadow-red-500/20',
+        cardBg: 'bg-gradient-to-br from-red-50 to-rose-50 dark:from-red-950/30 dark:to-rose-950/30',
+        border: 'border-red-200/50 dark:border-red-800/30',
+        badge: 'bg-red-500 hover:bg-red-600 text-white',
+        textColor: 'text-red-600 dark:text-red-400',
+      };
     case 'DISPUTED':
-      return 'secondary';
-    default:
-      return 'outline';
+      return {
+        icon: <Scale className="h-4 w-4 text-white" />,
+        label: '논쟁 중',
+        bgGradient: 'bg-gradient-to-br from-amber-500 to-orange-600',
+        shadow: 'shadow-amber-500/20',
+        cardBg: 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30',
+        border: 'border-amber-200/50 dark:border-amber-800/30',
+        badge: 'bg-amber-500 hover:bg-amber-600 text-white',
+        textColor: 'text-amber-600 dark:text-amber-400',
+      };
+    case 'PARTIALLY_VERIFIED':
+      return {
+        icon: <AlertCircle className="h-4 w-4 text-white" />,
+        label: '부분 확인',
+        bgGradient: 'bg-gradient-to-br from-blue-500 to-cyan-600',
+        shadow: 'shadow-blue-500/20',
+        cardBg: 'bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30',
+        border: 'border-blue-200/50 dark:border-blue-800/30',
+        badge: 'bg-blue-500 hover:bg-blue-600 text-white',
+        textColor: 'text-blue-600 dark:text-blue-400',
+      };
+    default: // UNVERIFIED
+      return {
+        icon: <AlertCircle className="h-4 w-4 text-white" />,
+        label: '검증 불가',
+        bgGradient: 'bg-gradient-to-br from-gray-400 to-slate-500',
+        shadow: 'shadow-gray-400/20',
+        cardBg: 'bg-gradient-to-br from-gray-50 to-slate-50 dark:from-gray-950/30 dark:to-slate-950/30',
+        border: 'border-gray-200/50 dark:border-gray-800/30',
+        badge: 'bg-gray-500 hover:bg-gray-600 text-white',
+        textColor: 'text-gray-600 dark:text-gray-400',
+      };
   }
 };
 
 const getVerificationLabel = (status: string) => {
-  switch (status) {
-    case 'VERIFIED':
-      return '검증됨';
-    case 'FALSE':
-      return '거짓';
-    case 'DISPUTED':
-      return '논쟁 중';
-    case 'UNVERIFIED':
-      return '검증 불가';
-    default:
-      return status;
-  }
+  const config = getVerificationConfig(status);
+  return config.label;
 };
 
 // Set displayName for forwardRef
