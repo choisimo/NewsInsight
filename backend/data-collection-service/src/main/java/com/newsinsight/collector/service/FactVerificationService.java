@@ -7,6 +7,8 @@ import com.newsinsight.collector.client.OpenAICompatibleClient;
 import com.newsinsight.collector.client.AIDoveClient;
 import com.newsinsight.collector.config.TrustScoreConfig;
 import com.newsinsight.collector.service.factcheck.FactCheckSource;
+import com.newsinsight.collector.service.factcheck.RRFEvidenceFusionService;
+import com.newsinsight.collector.service.factcheck.RRFEvidenceFusionService.FusionResult;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.AnalyzedQuery;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.FallbackStrategy;
@@ -26,6 +28,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Matcher;
@@ -51,6 +54,10 @@ public class FactVerificationService {
     private final TrustScoreConfig trustScoreConfig;
     private final List<TrustedSource> trustedSources;
     private final AdvancedIntentAnalyzer advancedIntentAnalyzer;
+    private final RRFEvidenceFusionService rrfFusionService;
+    
+    @Value("${collector.fact-check.rrf.enabled:true}")
+    private boolean rrfEnabled;
 
     public FactVerificationService(
             WebClient webClient,
@@ -60,7 +67,8 @@ public class FactVerificationService {
             AIDoveClient aiDoveClient,
             List<FactCheckSource> factCheckSources,
             TrustScoreConfig trustScoreConfig,
-            AdvancedIntentAnalyzer advancedIntentAnalyzer) {
+            AdvancedIntentAnalyzer advancedIntentAnalyzer,
+            RRFEvidenceFusionService rrfFusionService) {
         this.webClient = webClient;
         this.objectMapper = objectMapper;
         this.perplexityClient = perplexityClient;
@@ -69,6 +77,7 @@ public class FactVerificationService {
         this.factCheckSources = factCheckSources;
         this.trustScoreConfig = trustScoreConfig;
         this.advancedIntentAnalyzer = advancedIntentAnalyzer;
+        this.rrfFusionService = rrfFusionService;
         
         // Initialize trusted sources with externalized scores
         this.trustedSources = initializeTrustedSources();
@@ -205,7 +214,12 @@ public class FactVerificationService {
 
     /**
      * Claim 목록을 하나로 합쳐서 기준 텍스트를 만들고,
-     * evidence.excerpt 와의 자카드 유사도를 이용해 의미 있는 근거만 남긴다.
+     * evidence.excerpt 와의 향상된 유사도를 이용해 의미 있는 근거만 남긴다.
+     * 
+     * 개선사항:
+     * - 더 낮은 임계값으로 더 많은 근거 수집
+     * - 학술 소스에 대해서는 더 관대한 필터링
+     * - 키워드 매칭 기반의 추가 필터링
      */
     private List<SourceEvidence> filterEvidenceForClaims(List<SourceEvidence> allEvidence, List<String> claims) {
         if (allEvidence == null || allEvidence.isEmpty()) {
@@ -223,23 +237,66 @@ public class FactVerificationService {
             return new ArrayList<>(allEvidence);
         }
 
+        // 주장에서 핵심 키워드 추출
+        List<String> claimKeywords = extractKeywords(combinedClaims);
+
         List<SourceEvidence> filtered = new ArrayList<>();
         for (SourceEvidence evidence : allEvidence) {
             if (evidence == null || evidence.getExcerpt() == null || evidence.getExcerpt().isBlank()) {
                 continue;
             }
+            
+            // 자카드 유사도 계산
             double sim = calculateSimilarity(combinedClaims, evidence.getExcerpt());
-            // 너무 낮은 유사도는 제거 (기본 0.1 기준)
-            if (sim >= 0.1) {
+            
+            // 키워드 매칭 점수 계산
+            double keywordScore = calculateKeywordMatchScore(claimKeywords, evidence.getExcerpt());
+            
+            // 학술 소스는 더 관대하게 필터링 (학술 DB는 기본적으로 신뢰할 수 있음)
+            double threshold = "academic".equals(evidence.getSourceType()) ? 0.05 : 0.08;
+            
+            // 유사도 또는 키워드 매칭 중 하나라도 임계값 이상이면 포함
+            if (sim >= threshold || keywordScore >= 0.2) {
+                // 종합 점수로 relevanceScore 업데이트
+                double combinedScore = Math.max(sim, keywordScore);
+                if (evidence.getRelevanceScore() == null || evidence.getRelevanceScore() < combinedScore) {
+                    evidence.setRelevanceScore(combinedScore);
+                }
                 filtered.add(evidence);
             }
         }
 
-        // 너무 많을 경우 상위 N개만 사용 (기본 50개)
-        if (filtered.size() > 50) {
-            return filtered.subList(0, 50);
+        // 관련성 점수로 정렬
+        filtered.sort((a, b) -> Double.compare(
+                b.getRelevanceScore() != null ? b.getRelevanceScore() : 0,
+                a.getRelevanceScore() != null ? a.getRelevanceScore() : 0
+        ));
+
+        // 상위 결과만 사용 (최대 60개)
+        if (filtered.size() > 60) {
+            return filtered.subList(0, 60);
         }
         return filtered;
+    }
+    
+    /**
+     * 키워드 매칭 점수 계산
+     */
+    private double calculateKeywordMatchScore(List<String> keywords, String text) {
+        if (keywords == null || keywords.isEmpty() || text == null || text.isBlank()) {
+            return 0.0;
+        }
+        
+        String lowerText = text.toLowerCase();
+        int matchCount = 0;
+        
+        for (String keyword : keywords) {
+            if (lowerText.contains(keyword.toLowerCase())) {
+                matchCount++;
+            }
+        }
+        
+        return (double) matchCount / keywords.size();
     }
 
     /**
@@ -275,134 +332,147 @@ public class FactVerificationService {
                     .build());
 
             // 병렬로 모든 신뢰할 수 있는 소스에서 정보 수집 (폴백 전략 포함)
-            List<SourceEvidence> allEvidence = fetchAllSourceEvidenceWithFallback(analyzedTopic, language);
+            // Run on bounded elastic scheduler to avoid blocking the reactive stream
+            Mono.fromCallable(() -> fetchAllSourceEvidenceWithFallback(analyzedTopic, language))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .doOnNext(allEvidence -> {
+                        // Claim 정보가 있다면, claim과의 유사도 기반으로 근거를 1차 필터링
+                        List<SourceEvidence> filteredEvidence = filterEvidenceForClaims(allEvidence, claims);
 
-            // Claim 정보가 있다면, claim과의 유사도 기반으로 근거를 1차 필터링
-            List<SourceEvidence> filteredEvidence = filterEvidenceForClaims(allEvidence, claims);
-
-            if (!filteredEvidence.isEmpty()) {
-                // 소스별 통계 생성
-                var sourceStats = filteredEvidence.stream()
-                        .collect(Collectors.groupingBy(
-                                SourceEvidence::getSourceType,
-                                Collectors.counting()));
-                String statsMessage = sourceStats.entrySet().stream()
-                        .map(e -> e.getKey() + ": " + e.getValue() + "개")
-                        .collect(Collectors.joining(", "));
-                
-                sink.next(DeepAnalysisEvent.builder()
-                        .eventType("evidence")
-                        .phase("concepts")
-                        .message("신뢰할 수 있는 출처에서 " + filteredEvidence.size() + "개의 유의미한 근거를 수집했습니다. (" + statsMessage + ")")
-                        .evidence(filteredEvidence)
-                        .build());
-            } else {
-                // 결과가 없을 때 도움말 메시지
-                String noResultMessage = advancedIntentAnalyzer.buildNoResultMessage(analyzedTopic);
-                sink.next(DeepAnalysisEvent.builder()
-                        .eventType("status")
-                        .phase("concepts")
-                        .message("관련 근거를 찾기 어려웠습니다.\n" + noResultMessage)
-                        .build());
-            }
-
-            // 3. 각 주장에 대한 검증 (향상된 키워드 매칭)
-            final List<VerificationResult> verificationResults = new ArrayList<>();
-            final CredibilityAssessment[] credibilityHolder = new CredibilityAssessment[1];
-            
-            if (claims != null && !claims.isEmpty()) {
-                sink.next(DeepAnalysisEvent.builder()
-                        .eventType("status")
-                        .phase("verification")
-                        .message(claims.size() + "개의 주장을 검증하고 있습니다...")
-                        .build());
-                
-                for (int i = 0; i < claims.size(); i++) {
-                    String claim = claims.get(i);
-                    // 향상된 claim 검증
-                    VerificationResult result = verifyClaimWithIntentAnalysis(claim, filteredEvidence);
-                    verificationResults.add(result);
-
-                    sink.next(DeepAnalysisEvent.builder()
-                            .eventType("verification")
-                            .phase("verification")
-                            .message("주장 " + (i + 1) + "/" + claims.size() + " 검증 완료")
-                            .verificationResult(result)
-                            .build());
-                }
-
-                // 4. 신뢰도 평가
-                credibilityHolder[0] = assessCredibility(verificationResults);
-                
-                sink.next(DeepAnalysisEvent.builder()
-                        .eventType("assessment")
-                        .phase("assessment")
-                        .message("신뢰도 평가 완료")
-                        .credibility(credibilityHolder[0])
-                        .build());
-            }
-
-            // 5. AI 기반 종합 분석 (Fallback Chain)
-            int evidenceCount = filteredEvidence.size();
-            
-            // 증거 수에 따른 경고 메시지 생성
-            String synthesisStatusMessage;
-            if (evidenceCount == 0) {
-                synthesisStatusMessage = "⚠️ 신뢰할 수 있는 출처에서 관련 정보를 찾지 못했습니다. 제한된 분석을 진행합니다...";
-                log.warn("No evidence found for topic: {}. AI may refuse to generate content.", topic);
-            } else if (evidenceCount < 3) {
-                synthesisStatusMessage = "⚠️ 수집된 정보가 제한적입니다 (" + evidenceCount + "개). 제한된 분석을 진행합니다...";
-                log.info("Limited evidence ({}) found for topic: {}", evidenceCount, topic);
-            } else {
-                synthesisStatusMessage = "AI가 수집된 " + evidenceCount + "개의 정보를 종합 분석하고 있습니다...";
-            }
-            
-            sink.next(DeepAnalysisEvent.builder()
-                    .eventType("status")
-                    .phase("synthesis")
-                    .message(synthesisStatusMessage)
-                    .build());
-
-            // Build provider chain and try each in sequence
-            String synthesisPrompt = buildSynthesisPrompt(topic, filteredEvidence, claims);
-            StringBuilder aiResponse = new StringBuilder();
-
-            // Try AI providers in order of preference
-            Flux<String> aiStream = getAiStreamWithFallback(synthesisPrompt);
-            
-            aiStream
-                    .doOnNext(chunk -> {
-                        aiResponse.append(chunk);
-                        sink.next(DeepAnalysisEvent.builder()
-                                .eventType("ai_synthesis")
-                                .phase("synthesis")
-                                .message(chunk)
-                                .build());
-                    })
-                    .doOnComplete(() -> {
-                        String conclusion = aiResponse.toString();
-                        if (conclusion.isBlank()) {
-                            conclusion = buildFallbackConclusion(topic, verificationResults, credibilityHolder[0]);
+                        if (!filteredEvidence.isEmpty()) {
+                            // 소스별 통계 생성
+                            var sourceStats = filteredEvidence.stream()
+                                    .collect(Collectors.groupingBy(
+                                            SourceEvidence::getSourceType,
+                                            Collectors.counting()));
+                            String statsMessage = sourceStats.entrySet().stream()
+                                    .map(e -> e.getKey() + ": " + e.getValue() + "개")
+                                    .collect(Collectors.joining(", "));
+                            
+                            sink.next(DeepAnalysisEvent.builder()
+                                    .eventType("evidence")
+                                    .phase("concepts")
+                                    .message("신뢰할 수 있는 출처에서 " + filteredEvidence.size() + "개의 유의미한 근거를 수집했습니다. (" + statsMessage + ")")
+                                    .evidence(filteredEvidence)
+                                    .build());
+                        } else {
+                            // 결과가 없을 때 도움말 메시지
+                            String noResultMessage = advancedIntentAnalyzer.buildNoResultMessage(analyzedTopic);
+                            sink.next(DeepAnalysisEvent.builder()
+                                    .eventType("status")
+                                    .phase("concepts")
+                                    .message("관련 근거를 찾기 어려웠습니다.\n" + noResultMessage)
+                                    .build());
                         }
+
+                        // 3. 각 주장에 대한 검증 (향상된 키워드 매칭)
+                        final List<VerificationResult> verificationResults = new ArrayList<>();
+                        final CredibilityAssessment[] credibilityHolder = new CredibilityAssessment[1];
+                        
+                        if (claims != null && !claims.isEmpty()) {
+                            sink.next(DeepAnalysisEvent.builder()
+                                    .eventType("status")
+                                    .phase("verification")
+                                    .message(claims.size() + "개의 주장을 검증하고 있습니다...")
+                                    .build());
+                            
+                            for (int i = 0; i < claims.size(); i++) {
+                                String claim = claims.get(i);
+                                // 향상된 claim 검증
+                                VerificationResult result = verifyClaimWithIntentAnalysis(claim, filteredEvidence);
+                                verificationResults.add(result);
+
+                                sink.next(DeepAnalysisEvent.builder()
+                                        .eventType("verification")
+                                        .phase("verification")
+                                        .message("주장 " + (i + 1) + "/" + claims.size() + " 검증 완료")
+                                        .verificationResult(result)
+                                        .build());
+                            }
+
+                            // 4. 신뢰도 평가
+                            credibilityHolder[0] = assessCredibility(verificationResults);
+                            
+                            sink.next(DeepAnalysisEvent.builder()
+                                    .eventType("assessment")
+                                    .phase("assessment")
+                                    .message("신뢰도 평가 완료")
+                                    .credibility(credibilityHolder[0])
+                                    .build());
+                        }
+
+                        // 5. AI 기반 종합 분석 (Fallback Chain)
+                        int evidenceCount = filteredEvidence.size();
+                        
+                        // 증거 수에 따른 경고 메시지 생성
+                        String synthesisStatusMessage;
+                        if (evidenceCount == 0) {
+                            synthesisStatusMessage = "⚠️ 신뢰할 수 있는 출처에서 관련 정보를 찾지 못했습니다. 제한된 분석을 진행합니다...";
+                            log.warn("No evidence found for topic: {}. AI may refuse to generate content.", topic);
+                        } else if (evidenceCount < 3) {
+                            synthesisStatusMessage = "⚠️ 수집된 정보가 제한적입니다 (" + evidenceCount + "개). 제한된 분석을 진행합니다...";
+                            log.info("Limited evidence ({}) found for topic: {}", evidenceCount, topic);
+                        } else {
+                            synthesisStatusMessage = "AI가 수집된 " + evidenceCount + "개의 정보를 종합 분석하고 있습니다...";
+                        }
+                        
                         sink.next(DeepAnalysisEvent.builder()
-                                .eventType("complete")
-                                .phase("complete")
-                                .message("심층 분석이 완료되었습니다.")
-                                .finalConclusion(conclusion)
+                                .eventType("status")
+                                .phase("synthesis")
+                                .message(synthesisStatusMessage)
                                 .build());
-                        sink.complete();
+
+                        // Build provider chain and try each in sequence
+                        String synthesisPrompt = buildSynthesisPrompt(topic, filteredEvidence, claims);
+                        StringBuilder aiResponse = new StringBuilder();
+
+                        // Try AI providers in order of preference
+                        Flux<String> aiStream = getAiStreamWithFallback(synthesisPrompt);
+                        
+                        aiStream
+                                .doOnNext(chunk -> {
+                                    aiResponse.append(chunk);
+                                    sink.next(DeepAnalysisEvent.builder()
+                                            .eventType("ai_synthesis")
+                                            .phase("synthesis")
+                                            .message(chunk)
+                                            .build());
+                                })
+                                .doOnComplete(() -> {
+                                    String conclusion = aiResponse.toString();
+                                    if (conclusion.isBlank()) {
+                                        conclusion = buildFallbackConclusion(topic, verificationResults, credibilityHolder[0]);
+                                    }
+                                    sink.next(DeepAnalysisEvent.builder()
+                                            .eventType("complete")
+                                            .phase("complete")
+                                            .message("심층 분석이 완료되었습니다.")
+                                            .finalConclusion(conclusion)
+                                            .build());
+                                    sink.complete();
+                                })
+                                .doOnError(e -> {
+                                    log.error("All AI providers failed: {}", e.getMessage());
+                                    // Generate fallback conclusion without AI
+                                    String fallbackConclusion = buildFallbackConclusion(topic, verificationResults, credibilityHolder[0]);
+                                    sink.next(DeepAnalysisEvent.builder()
+                                            .eventType("complete")
+                                            .phase("complete")
+                                            .message("분석이 완료되었습니다.")
+                                            .finalConclusion(fallbackConclusion)
+                                            .build());
+                                    sink.complete();
+                                })
+                                .subscribe();
                     })
                     .doOnError(e -> {
-                        log.error("All AI providers failed: {}", e.getMessage());
-                        // Generate fallback conclusion without AI
-                        String fallbackConclusion = buildFallbackConclusion(topic, verificationResults, credibilityHolder[0]);
+                        log.error("Evidence collection failed: {}", e.getMessage());
                         sink.next(DeepAnalysisEvent.builder()
-                                .eventType("complete")
-                                .phase("complete")
-                                .message("분석이 완료되었습니다.")
-                                .finalConclusion(fallbackConclusion)
+                                .eventType("error")
+                                .phase("concepts")
+                                .message("증거 수집 중 오류가 발생했습니다: " + e.getMessage())
                                 .build());
-                        sink.complete();
+                        sink.error(e);
                     })
                     .subscribe();
         });
@@ -565,9 +635,59 @@ public class FactVerificationService {
     // ============================================
 
     /**
-     * 폴백 전략을 사용하여 모든 소스에서 근거 수집
+     * RRF 기반 다중 쿼리 병렬 검색으로 근거 수집
+     * 
+     * 의도 분석을 통해 생성된 여러 검색 쿼리를 병렬로 실행하고,
+     * RRF 알고리즘을 사용하여 결과를 융합합니다.
      */
     private List<SourceEvidence> fetchAllSourceEvidenceWithFallback(AnalyzedQuery analyzedQuery, String language) {
+        List<SourceEvidence> allEvidence = new CopyOnWriteArrayList<>();
+        
+        // RRF 기반 다중 쿼리 병렬 검색 사용
+        if (rrfEnabled && rrfFusionService != null) {
+            try {
+                log.info("Using RRF-based multi-query parallel search for: {}", analyzedQuery.getOriginalQuery());
+                
+                FusionResult fusionResult = rrfFusionService
+                        .searchAndFuse(analyzedQuery.getOriginalQuery(), language)
+                        .block(Duration.ofSeconds(timeoutSeconds * 2));
+                
+                if (fusionResult != null && fusionResult.getEvidences() != null) {
+                    allEvidence.addAll(fusionResult.getEvidences());
+                    log.info("RRF search completed: {} queries × {} sources → {} evidences (method: {})",
+                            fusionResult.getQueryCount(),
+                            fusionResult.getSourceCount(),
+                            fusionResult.getEvidences().size(),
+                            fusionResult.getFusionMethod());
+                }
+            } catch (Exception e) {
+                log.warn("RRF search failed, falling back to sequential search: {}", e.getMessage());
+                // RRF 실패 시 기존 방식으로 폴백
+                allEvidence.addAll(fetchAllSourceEvidenceSequential(analyzedQuery, language));
+            }
+        } else {
+            // RRF 비활성화 시 기존 방식 사용
+            allEvidence.addAll(fetchAllSourceEvidenceSequential(analyzedQuery, language));
+        }
+        
+        // Wikipedia 정보 추가 (항상 포함)
+        List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(analyzedQuery.getOriginalQuery());
+        for (SourceEvidence wiki : wikiEvidence) {
+            boolean isDuplicate = allEvidence.stream()
+                    .anyMatch(e -> e.getUrl() != null && e.getUrl().equals(wiki.getUrl()));
+            if (!isDuplicate) {
+                allEvidence.add(wiki);
+            }
+        }
+        
+        log.info("Total evidence collected: {} items", allEvidence.size());
+        return new ArrayList<>(allEvidence);
+    }
+    
+    /**
+     * 기존 순차적 폴백 검색 방식 (RRF 비활성화 시 또는 폴백용)
+     */
+    private List<SourceEvidence> fetchAllSourceEvidenceSequential(AnalyzedQuery analyzedQuery, String language) {
         List<SourceEvidence> allEvidence = new CopyOnWriteArrayList<>();
         
         // 원본 쿼리로 먼저 시도
@@ -596,7 +716,6 @@ public class FactVerificationService {
             }
         }
         
-        log.info("Total evidence collected with fallback: {} items", allEvidence.size());
         return new ArrayList<>(allEvidence);
     }
 
@@ -709,18 +828,49 @@ public class FactVerificationService {
 
     /**
      * 모든 등록된 팩트체크 소스에서 병렬로 근거를 수집합니다.
+     * 실시간 데이터가 필요한 쿼리의 경우 RealtimeSearchSource와 뉴스를 우선 처리합니다.
      */
     private List<SourceEvidence> fetchAllSourceEvidence(String topic, String language) {
         List<SourceEvidence> allEvidence = new CopyOnWriteArrayList<>();
         
-        // 1. 기본 Wikipedia 정보 수집 (기존 로직 유지)
-        List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(topic);
-        allEvidence.addAll(wikiEvidence);
+        // 0. 실시간 검색이 필요한지 판단하고 우선 처리
+        boolean needsRealtime = isRealtimeDataRequired(topic);
+        if (needsRealtime) {
+            log.info("Topic '{}' requires realtime data, prioritizing realtime search and news", topic);
+            
+            // 실시간 검색 우선 처리
+            List<SourceEvidence> realtimeEvidence = fetchRealtimeEvidence(topic, language);
+            if (!realtimeEvidence.isEmpty()) {
+                allEvidence.addAll(realtimeEvidence);
+                log.info("Fetched {} realtime evidence items", realtimeEvidence.size());
+            }
+            
+            // 뉴스 소스 우선 처리 (최신 정보)
+            List<SourceEvidence> newsEvidence = fetchNewsEvidence(topic, language);
+            if (!newsEvidence.isEmpty()) {
+                allEvidence.addAll(newsEvidence);
+                log.info("Fetched {} news evidence items", newsEvidence.size());
+            }
+        }
         
-        // 2. 추가 팩트체크 소스에서 병렬 수집
+        // 1. Wikipedia 정보 수집 (실시간 데이터가 아닌 경우 우선, 실시간인 경우 나중에)
+        if (!needsRealtime) {
+            List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(topic);
+            allEvidence.addAll(wikiEvidence);
+        }
+        
+        // 2. 추가 팩트체크 소스에서 병렬 수집 (실시간 소스와 뉴스 제외 - 이미 처리됨)
         if (factCheckSources != null && !factCheckSources.isEmpty()) {
             List<Mono<List<SourceEvidence>>> sourceFetches = factCheckSources.stream()
                     .filter(FactCheckSource::isAvailable)
+                    .filter(source -> {
+                        String sourceId = source.getSourceId();
+                        // 실시간 데이터 필요 시 이미 처리한 소스 제외
+                        if (needsRealtime && ("realtime_search".equals(sourceId) || "naver_news".equals(sourceId))) {
+                            return false;
+                        }
+                        return true;
+                    })
                     .map(source -> {
                         log.debug("Fetching evidence from source: {}", source.getSourceId());
                         return source.fetchEvidence(topic, language)
@@ -754,8 +904,91 @@ public class FactVerificationService {
             }
         }
         
+        // 3. Wikipedia 정보 추가 (실시간 데이터인 경우 마지막에 추가)
+        if (needsRealtime) {
+            List<SourceEvidence> wikiEvidence = fetchWikipediaInfo(topic);
+            allEvidence.addAll(wikiEvidence);
+        }
+        
         log.info("Collected total {} evidence items for topic: {}", allEvidence.size(), topic);
         return new ArrayList<>(allEvidence);
+    }
+    
+    /**
+     * 실시간 데이터가 필요한 주제인지 판단
+     * 
+     * 기존 키워드 매칭의 한계를 극복하기 위해 AdvancedIntentAnalyzer의
+     * 의미 기반 분석을 사용합니다. (LLM + 휴리스틱 + 의미 패턴)
+     * 
+     * 이를 통해:
+     * - 새로운 암호화폐/자산 이름도 감지
+     * - "X가 얼마야?" 같은 패턴 인식
+     * - 문맥에서 시간 민감성 추론
+     */
+    private boolean isRealtimeDataRequired(String topic) {
+        if (topic == null) return false;
+        
+        // AdvancedIntentAnalyzer의 의미 기반 분석 사용
+        var realtimeAnalysis = advancedIntentAnalyzer.analyzeRealtimeDataNeed(topic);
+        
+        if (realtimeAnalysis.isNeedsRealtimeData()) {
+            log.info("Realtime data required for '{}': type={}, confidence={}, reason={}",
+                    topic, 
+                    realtimeAnalysis.getDataType(),
+                    String.format("%.2f", realtimeAnalysis.getConfidence()),
+                    realtimeAnalysis.getReason());
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * 실시간 검색 소스에서 증거 수집
+     */
+    private List<SourceEvidence> fetchRealtimeEvidence(String topic, String language) {
+        if (factCheckSources == null) return List.of();
+        
+        return factCheckSources.stream()
+                .filter(source -> "realtime_search".equals(source.getSourceId()))
+                .filter(FactCheckSource::isAvailable)
+                .findFirst()
+                .map(source -> {
+                    try {
+                        return source.fetchEvidence(topic, language)
+                                .collectList()
+                                .timeout(Duration.ofSeconds(timeoutSeconds))
+                                .block();
+                    } catch (Exception e) {
+                        log.warn("Failed to fetch realtime evidence: {}", e.getMessage());
+                        return List.<SourceEvidence>of();
+                    }
+                })
+                .orElse(List.of());
+    }
+    
+    /**
+     * 뉴스 소스에서 증거 수집
+     */
+    private List<SourceEvidence> fetchNewsEvidence(String topic, String language) {
+        if (factCheckSources == null) return List.of();
+        
+        return factCheckSources.stream()
+                .filter(source -> "naver_news".equals(source.getSourceId()))
+                .filter(FactCheckSource::isAvailable)
+                .findFirst()
+                .map(source -> {
+                    try {
+                        return source.fetchEvidence(topic, language)
+                                .collectList()
+                                .timeout(Duration.ofSeconds(timeoutSeconds))
+                                .block();
+                    } catch (Exception e) {
+                        log.warn("Failed to fetch news evidence: {}", e.getMessage());
+                        return List.<SourceEvidence>of();
+                    }
+                })
+                .orElse(List.of());
     }
 
     private List<SourceEvidence> fetchWikipediaInfo(String topic) {
@@ -886,21 +1119,56 @@ public class FactVerificationService {
     }
 
     private List<String> extractKeywords(String text) {
-        // 간단한 키워드 추출 (명사 추출)
+        // 개선된 키워드 추출 - 명사 및 중요 단어 추출
         List<String> keywords = new ArrayList<>();
-        String[] words = text.split("[\\s,\\.\\?!]+");
+        String[] words = text.split("[\\s,\\.\\?!\\(\\)\\[\\]\"']+");
+        
         for (String word : words) {
-            if (word.length() > 2 && !isStopWord(word)) {
-                keywords.add(word.toLowerCase());
+            String cleaned = word.trim().toLowerCase();
+            // 최소 2글자 이상, 불용어 제외, 숫자만 있는 것 제외
+            if (cleaned.length() >= 2 && !isStopWord(cleaned) && !cleaned.matches("^\\d+$")) {
+                keywords.add(cleaned);
             }
         }
-        return keywords.stream().distinct().limit(5).toList();
+        
+        // 중복 제거 및 우선순위 정렬 (긴 단어가 더 의미있을 가능성)
+        return keywords.stream()
+                .distinct()
+                .sorted((a, b) -> Integer.compare(b.length(), a.length()))
+                .limit(8)
+                .toList();
     }
 
     private boolean isStopWord(String word) {
-        return List.of("the", "a", "an", "is", "are", "was", "were", "이", "그", "저", 
-                "는", "은", "가", "이", "를", "을", "에", "의").contains(word.toLowerCase());
+        return STOPWORDS.contains(word.toLowerCase());
     }
+    
+    // 확장된 불용어 목록
+    private static final Set<String> STOPWORDS = Set.of(
+            // 영어 불용어
+            "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+            "have", "has", "had", "do", "does", "did", "will", "would", "could",
+            "should", "may", "might", "must", "shall", "can", "need", "dare",
+            "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
+            "from", "as", "into", "through", "during", "before", "after", "above",
+            "below", "between", "under", "again", "further", "then", "once",
+            "here", "there", "when", "where", "why", "how", "all", "each", "few",
+            "more", "most", "other", "some", "such", "no", "nor", "not", "only",
+            "own", "same", "so", "than", "too", "very", "just", "also", "now",
+            "and", "but", "or", "if", "because", "until", "while", "about",
+            "this", "that", "these", "those", "what", "which", "who", "whom",
+            "it", "its", "they", "them", "their", "we", "us", "our", "you", "your",
+            "he", "him", "his", "she", "her", "i", "me", "my",
+            // 한국어 불용어
+            "이", "그", "저", "는", "은", "가", "를", "을", "에", "의", "와", "과",
+            "도", "만", "로", "으로", "에서", "까지", "부터", "에게", "한테",
+            "것", "수", "등", "들", "및", "더", "덜", "뭐", "어디", "언제",
+            "어떻게", "왜", "누구", "있다", "없다", "하다", "되다", "이다",
+            "그리고", "그러나", "하지만", "그래서", "때문에", "대해", "대한",
+            "관련", "관한", "통해", "위해", "따라", "인해", "있는", "없는",
+            "하는", "되는", "아주", "매우", "정말", "너무", "조금", "약간",
+            "진짜", "가짜", "사실", "인가요", "인가", "입니까", "일까", "나요"
+    );
 
     private double calculateSimilarity(String text1, String text2) {
         if (text1 == null || text2 == null) return 0;
@@ -1066,11 +1334,35 @@ public class FactVerificationService {
             }
         } else {
             // 충분한 증거가 있는 경우
-            prompt.append("## 수집된 정보 (").append(evidenceCount).append("개):\n");
+            prompt.append("## 수집된 정보 (").append(evidenceCount).append("개):\n\n");
+            
+            // 실시간 검색 결과를 먼저 표시 (우선순위 높음)
+            boolean hasRealtimeData = false;
             for (SourceEvidence e : evidence) {
-                String url = (e.getUrl() != null && !e.getUrl().isBlank()) ? " - " + e.getUrl() : "";
-                prompt.append("- [").append(e.getSourceName()).append("]").append(url).append("\n");
-                prompt.append("  내용: ").append(truncateContent(e.getExcerpt(), 500)).append("\n\n");
+                if ("realtime_search".equals(e.getSourceType()) || 
+                    "realtime_search_citation".equals(e.getSourceType())) {
+                    if (!hasRealtimeData) {
+                        prompt.append("### 🔴 실시간 검색 결과 (최신 데이터 - 우선 참고)\n");
+                        hasRealtimeData = true;
+                    }
+                    String url = (e.getUrl() != null && !e.getUrl().isBlank()) ? " - " + e.getUrl() : "";
+                    prompt.append("- [").append(e.getSourceName()).append("]").append(url).append("\n");
+                    prompt.append("  내용: ").append(truncateContent(e.getExcerpt(), 600)).append("\n\n");
+                }
+            }
+            if (hasRealtimeData) {
+                prompt.append("⚠️ **위 실시간 검색 결과의 가격/시세 데이터를 최우선으로 사용하세요.**\n\n");
+            }
+            
+            // 나머지 증거 표시
+            prompt.append("### 참고 자료\n");
+            for (SourceEvidence e : evidence) {
+                if (!"realtime_search".equals(e.getSourceType()) && 
+                    !"realtime_search_citation".equals(e.getSourceType())) {
+                    String url = (e.getUrl() != null && !e.getUrl().isBlank()) ? " - " + e.getUrl() : "";
+                    prompt.append("- [").append(e.getSourceName()).append("]").append(url).append("\n");
+                    prompt.append("  내용: ").append(truncateContent(e.getExcerpt(), 500)).append("\n\n");
+                }
             }
         }
 

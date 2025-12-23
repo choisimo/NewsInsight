@@ -25,6 +25,12 @@ class SSEEventType(str, Enum):
     HEALTH_UPDATE = "health_update"
     CAPTCHA_DETECTED = "captcha_detected"
     CAPTCHA_SOLVED = "captcha_solved"
+    # 수집 작업 로그 이벤트
+    COLLECTION_START = "collection_start"
+    COLLECTION_PROGRESS = "collection_progress"
+    COLLECTION_COMPLETE = "collection_complete"
+    COLLECTION_ERROR = "collection_error"
+    COLLECTION_LOG = "collection_log"
 
 
 class SSEEvent(BaseModel):
@@ -146,6 +152,35 @@ class SSEManager:
                 "task_id": task_id,
                 "url": url,
                 "message": message,
+                **kwargs,
+            },
+        )
+        await self.broadcast(event)
+
+    async def send_collection_event(
+        self,
+        event_type: SSEEventType,
+        source_name: str,
+        message: str,
+        level: str = "INFO",
+        **kwargs,
+    ) -> None:
+        """
+        수집 작업 로그 이벤트 전송 헬퍼.
+
+        Args:
+            event_type: 이벤트 타입 (COLLECTION_*)
+            source_name: 데이터 소스 이름 (예: 디시인사이드)
+            message: 로그 메시지
+            level: 로그 레벨 (DEBUG, INFO, WARNING, ERROR)
+            **kwargs: 추가 데이터
+        """
+        event = SSEEvent(
+            type=event_type,
+            data={
+                "source": source_name,
+                "message": message,
+                "level": level,
                 **kwargs,
             },
         )

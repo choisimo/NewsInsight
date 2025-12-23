@@ -157,5 +157,7 @@ public interface ProjectNotificationRepository extends JpaRepository<ProjectNoti
     /**
      * Delete by project
      */
-    void deleteByProjectId(Long projectId);
+    @Modifying
+    @Query("DELETE FROM ProjectNotification n WHERE n.projectId = :projectId")
+    void deleteByProjectId(@Param("projectId") Long projectId);
 }

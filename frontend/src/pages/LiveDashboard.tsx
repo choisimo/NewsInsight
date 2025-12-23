@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { LiveNewsTicker } from "@/components/dashboard/LiveNewsTicker";
 import { TrendChart } from "@/components/dashboard/TrendChart";
 import { Button } from "@/components/ui/button";
-import { RefreshCcw, Calendar, LayoutDashboard, Database, Brain, AlertTriangle, Activity, Wifi, WifiOff } from "lucide-react";
+import { RefreshCcw, Calendar, LayoutDashboard, Database, Brain, AlertTriangle, Activity, Wifi, WifiOff, Terminal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { LiveCounter } from "@/components/admin/LiveCounter";
 import { LiveStream } from "@/components/admin/LiveStream";
+import { CrawlerLogsViewer } from "@/components/admin/CrawlerLogsViewer";
 import { useLiveDashboard } from "@/hooks/useDashboardEvents";
 import { getCollectionStats, type CollectionStatsDTO } from "@/lib/api/collection";
 import { cn } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function LiveDashboard() {
   const today = new Date().toLocaleDateString('ko-KR', { 
@@ -75,7 +77,7 @@ export default function LiveDashboard() {
             <LayoutDashboard className="h-6 w-6 text-primary" />
             Live Dashboard
           </h1>
-          <p className="text-muted-foreground text-sm flex items-center gap-2 mt-1">
+          <div className="text-muted-foreground text-sm flex items-center gap-2 mt-1">
             <Calendar className="h-3 w-3" />
             {today}
             <Badge 
@@ -99,7 +101,7 @@ export default function LiveDashboard() {
                 </>
               )}
             </Badge>
-          </p>
+          </div>
         </div>
         <div className="flex gap-2">
           {!isConnected && (
@@ -166,15 +168,43 @@ export default function LiveDashboard() {
 
         {/* Right Col (Live Activity Stream) - span 2 */}
         <div className="lg:col-span-2 h-[500px]">
-          <LiveStream
-            logs={activityLogs}
-            status={eventsStatus}
-            maxVisible={15}
-            title="실시간 활동"
-            onClear={clearLogs}
-            className="h-full"
-          />
+          <Tabs defaultValue="activity" className="h-full flex flex-col">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="activity" className="text-xs">
+                <Activity className="h-3 w-3 mr-1" />
+                실시간 활동
+              </TabsTrigger>
+              <TabsTrigger value="crawler" className="text-xs">
+                <Terminal className="h-3 w-3 mr-1" />
+                수집 로그
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="activity" className="flex-1 mt-2">
+              <LiveStream
+                logs={activityLogs}
+                status={eventsStatus}
+                maxVisible={15}
+                title="실시간 활동"
+                onClear={clearLogs}
+                className="h-full"
+              />
+            </TabsContent>
+            <TabsContent value="crawler" className="flex-1 mt-2">
+              <CrawlerLogsViewer
+                maxVisible={50}
+                className="h-full"
+              />
+            </TabsContent>
+          </Tabs>
         </div>
+      </div>
+
+      {/* Full Width Crawler Logs Section */}
+      <div className="h-[400px]">
+        <CrawlerLogsViewer
+          maxVisible={100}
+          className="h-full"
+        />
       </div>
     </div>
   );

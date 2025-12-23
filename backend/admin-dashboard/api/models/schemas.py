@@ -364,6 +364,18 @@ class SetupStatus(BaseModel):
 
 
 class Token(BaseModel):
+    """Internal token model with both tokens (used by auth service)"""
+
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    refresh_expires_in: int = 604800  # 7 days in seconds
+
+
+class TokenResponse(BaseModel):
+    """Response model for login/refresh - refresh token is sent via HTTP-Only cookie"""
+
     access_token: str
     token_type: str = "bearer"
     expires_in: int

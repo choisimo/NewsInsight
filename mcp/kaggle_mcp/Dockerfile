@@ -8,10 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Note: Build context should be mcp/ folder
+COPY kaggle_mcp/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py .
+COPY kaggle_mcp/server.py .
+COPY shared ./shared
 
 ENV PORT=5012
 ENV KAGGLE_USERNAME=""

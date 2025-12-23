@@ -2,13 +2,22 @@
 Auth Router - 인증/권한 API 엔드포인트
 """
 
+import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
-from ..models.schemas import AuditAction, Token, User, UserCreate, UserRole, SetupStatus
+from ..models.schemas import (
+    AuditAction,
+    Token,
+    TokenResponse,
+    User,
+    UserCreate,
+    UserRole,
+    SetupStatus,
+)
 from ..dependencies import (
     get_audit_service,
     get_auth_service,
@@ -17,6 +26,37 @@ from ..dependencies import (
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+# Cookie settings
+REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
+# In production, set SECURE_COOKIES=true in environment
+SECURE_COOKIES = os.getenv("SECURE_COOKIES", "false").lower() == "true"
+# Cookie max age: 7 days in seconds
+REFRESH_TOKEN_MAX_AGE = 7 * 24 * 60 * 60
+
+
+def set_refresh_token_cookie(response: Response, refresh_token: str) -> None:
+    """Set refresh token as HTTP-Only cookie"""
+    response.set_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        value=refresh_token,
+        httponly=True,
+        secure=SECURE_COOKIES,  # HTTPS only in production
+        samesite="lax",  # CSRF protection
+        max_age=REFRESH_TOKEN_MAX_AGE,
+        path="/api/v1/admin/auth",  # Restrict to auth endpoints only
+    )
+
+
+def clear_refresh_token_cookie(response: Response) -> None:
+    """Clear the refresh token cookie"""
+    response.delete_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        path="/api/v1/admin/auth",
+        httponly=True,
+        secure=SECURE_COOKIES,
+        samesite="lax",
+    )
 
 
 class LoginRequest(BaseModel):
@@ -39,13 +79,20 @@ class UpdateUserRequest(BaseModel):
     is_active: Optional[bool] = None
 
 
-@router.post("/login", response_model=Token)
+class RefreshTokenRequest(BaseModel):
+    """Optional body for refresh - prefer using HTTP-Only cookie"""
+
+    refresh_token: Optional[str] = None
+
+
+@router.post("/login", response_model=TokenResponse)
 async def login(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     auth_service=Depends(get_auth_service),
     audit_service=Depends(get_audit_service),
 ):
-    """로그인"""
+    """로그인 - 리프레시 토큰은 HTTP-Only 쿠키로 전송됩니다"""
     user = auth_service.authenticate(form_data.username, form_data.password)
 
     if not user:
@@ -66,6 +113,9 @@ async def login(
 
     token = auth_service.create_access_token(user)
 
+    # Set refresh token as HTTP-Only cookie
+    set_refresh_token_cookie(response, token.refresh_token)
+
     # 성공 로그
     audit_service.log(
         user_id=user.id,
@@ -75,17 +125,23 @@ async def login(
         success=True,
     )
 
-    return token
+    # Return only access token in body (refresh token is in cookie)
+    return TokenResponse(
+        access_token=token.access_token,
+        token_type=token.token_type,
+        expires_in=token.expires_in,
+    )
 
 
-@router.post("/token", response_model=Token)
+@router.post("/token", response_model=TokenResponse)
 async def login_for_access_token(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     auth_service=Depends(get_auth_service),
     audit_service=Depends(get_audit_service),
 ):
-    """OAuth2 호환 토큰 엔드포인트"""
-    return await login(form_data, auth_service, audit_service)
+    """OAuth2 호환 토큰 엔드포인트 - 리프레시 토큰은 HTTP-Only 쿠키로 전송됩니다"""
+    return await login(response, form_data, auth_service, audit_service)
 
 
 @router.get("/me", response_model=User)
@@ -96,12 +152,69 @@ async def get_current_user_info(
     return current_user
 
 
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_token(
+    response: Response,
+    request: Optional[RefreshTokenRequest] = None,
+    refresh_token_cookie: Optional[str] = Cookie(None, alias="refresh_token"),
+    auth_service=Depends(get_auth_service),
+):
+    """리프레시 토큰으로 새 액세스 토큰 발급
+
+    리프레시 토큰은 HTTP-Only 쿠키에서 자동으로 읽습니다.
+    쿠키가 없는 경우 요청 본문의 refresh_token을 사용합니다 (하위 호환성).
+
+    - 새 리프레시 토큰은 HTTP-Only 쿠키로 설정됩니다
+    - 기존 리프레시 토큰은 사용 후 폐기됩니다 (Rotation)
+    """
+    # Prefer cookie over body
+    token_to_use = refresh_token_cookie
+    if not token_to_use and request and request.refresh_token:
+        token_to_use = request.refresh_token
+
+    if not token_to_use:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token not provided",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    new_token = auth_service.refresh_access_token(token_to_use)
+
+    if not new_token:
+        # Clear invalid cookie
+        clear_refresh_token_cookie(response)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Set new refresh token as HTTP-Only cookie
+    set_refresh_token_cookie(response, new_token.refresh_token)
+
+    # Return only access token in body
+    return TokenResponse(
+        access_token=new_token.access_token,
+        token_type=new_token.token_type,
+        expires_in=new_token.expires_in,
+    )
+
+
 @router.post("/logout")
 async def logout(
+    response: Response,
     current_user=Depends(get_current_user),
+    auth_service=Depends(get_auth_service),
     audit_service=Depends(get_audit_service),
 ):
-    """로그아웃"""
+    """로그아웃 - 사용자의 모든 리프레시 토큰 폐기 및 쿠키 삭제"""
+    # 모든 리프레시 토큰 폐기 (Redis에서)
+    auth_service.revoke_all_user_tokens(current_user.id)
+
+    # HTTP-Only 쿠키 삭제
+    clear_refresh_token_cookie(response)
+
     # 감사 로그
     audit_service.log(
         user_id=current_user.id,

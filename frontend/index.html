@@ -12,9 +12,76 @@
     <meta property="og:type" content="website" />
 
     <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Prevent FOUC (Flash of Unstyled Content) for theme -->
+    <script>
+      (function() {
+        const THEME_KEY = 'newsinsight-theme';
+        function getSystemTheme() {
+          return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        try {
+          const stored = localStorage.getItem(THEME_KEY);
+          const theme = stored && stored !== 'system' ? stored : getSystemTheme();
+          document.documentElement.classList.add(theme);
+        } catch (e) {
+          // localStorage not available, use system theme
+          document.documentElement.classList.add(getSystemTheme());
+        }
+      })();
+    </script>
+
+    <!-- Critical CSS for initial loading state -->
+    <style>
+      /* Prevent layout shift during initial load */
+      html { background-color: #ffffff; }
+      html.dark { background-color: #0a0a0a; }
+      
+      /* Initial loading indicator (shown before React hydrates) */
+      #initial-loader {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        transition: opacity 0.3s ease-out;
+      }
+      html:not(.dark) #initial-loader { background-color: #ffffff; }
+      html.dark #initial-loader { background-color: #0a0a0a; }
+      
+      #initial-loader.fade-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+      
+      .loader-spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid transparent;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      html:not(.dark) .loader-spinner { border-top-color: #2563eb; border-right-color: #2563eb; }
+      html.dark .loader-spinner { border-top-color: #3b82f6; border-right-color: #3b82f6; }
+      
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      
+      /* Hide initial loader once React is ready */
+      .react-ready #initial-loader {
+        display: none;
+      }
+    </style>
   </head>
 
   <body>
+    <!-- Initial loading indicator -->
+    <div id="initial-loader">
+      <div class="loader-spinner"></div>
+    </div>
+    
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

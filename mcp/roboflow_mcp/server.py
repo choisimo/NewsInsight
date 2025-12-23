@@ -5,7 +5,7 @@ Roboflow MCP Server - Computer Vision 이미지 분석
 Roboflow API와 연동하여 다양한 CV 모델을 활용합니다.
 
 Version: 1.0.0
-Port: 5010
+Port: 5008 (changed from 5010 to avoid conflict with aiagent_mcp)
 """
 
 import os
@@ -31,7 +31,7 @@ from starlette.requests import Request
 # ─────────────────────────────────────────────
 
 # 포트 설정 (환경변수에서 읽음)
-PORT = int(os.environ.get("PORT", "5010"))
+PORT = int(os.environ.get("PORT", "5008"))
 
 server = FastMCP(
     "roboflow-cv-mcp",

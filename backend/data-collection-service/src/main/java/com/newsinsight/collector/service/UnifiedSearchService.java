@@ -20,7 +20,10 @@ import com.newsinsight.collector.service.autocrawl.AutoCrawlIntegrationService;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.AnalyzedQuery;
 import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.FallbackStrategy;
+import com.newsinsight.collector.service.search.AdvancedIntentAnalyzer.RealtimeAnalysisResult;
 import com.newsinsight.collector.service.search.HybridSearchService;
+import com.newsinsight.collector.service.factcheck.RealtimeSearchSource;
+import com.newsinsight.collector.service.FactVerificationService.SourceEvidence;
 import com.newsinsight.collector.service.search.HybridRankingService.RankedResult;
 import lombok.Builder;
 import lombok.Data;
@@ -81,6 +84,7 @@ public class UnifiedSearchService {
     private final SearchHistoryService searchHistoryService;
     private final AdvancedIntentAnalyzer advancedIntentAnalyzer;
     private final SearchCacheService searchCacheService;
+    private final RealtimeSearchSource realtimeSearchSource;
 
     @Value("${autocrawl.enabled:true}")
     private boolean autoCrawlEnabled;
@@ -503,9 +507,9 @@ public class UnifiedSearchService {
         
         try {
             LocalDateTime since = calculateSinceDate(window);
-            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
-                    Sort.by(Sort.Direction.DESC, "publishedDate")
-                            .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+            // Note: Native query already has ORDER BY clause, so use unsorted PageRequest
+            // to avoid duplicate ORDER BY causing SQL syntax error
+            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS, Sort.unsorted());
 
             Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(query, since, pageRequest);
 
@@ -659,9 +663,8 @@ public class UnifiedSearchService {
                         .build());
 
                 LocalDateTime since = calculateSinceDate(window);
-                PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
-                        Sort.by(Sort.Direction.DESC, "publishedDate")
-                                .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+                // Note: Native query already has ORDER BY clause, so use unsorted PageRequest
+                PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS, Sort.unsorted());
 
                 Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(
                         query, since, pageRequest);
@@ -1635,9 +1638,8 @@ public class UnifiedSearchService {
             LocalDateTime since = calculateSinceDate(window, startDate, endDate);
             LocalDateTime until = calculateEndDate(endDate);
             
-            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
-                    Sort.by(Sort.Direction.DESC, "publishedDate")
-                            .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+            // Note: Native query already has ORDER BY clause, so use unsorted PageRequest
+            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS, Sort.unsorted());
 
             // Use date range query if endDate is specified
             Page<CollectedData> page;
@@ -1778,9 +1780,8 @@ public class UnifiedSearchService {
             unifiedSearchEventService.publishStatusUpdate(jobId, "database", "저장된 뉴스에서 검색 중...");
             
             LocalDateTime since = calculateSinceDate(window);
-            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS,
-                    Sort.by(Sort.Direction.DESC, "publishedDate")
-                            .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+            // Note: Native query already has ORDER BY clause, so use unsorted PageRequest
+            PageRequest pageRequest = PageRequest.of(0, MAX_DB_RESULTS, Sort.unsorted());
 
             Page<CollectedData> page = collectedDataRepository.searchByQueryAndSince(
                     query, since, pageRequest);
@@ -1900,7 +1901,11 @@ public class UnifiedSearchService {
         try {
             unifiedSearchEventService.publishStatusUpdate(jobId, "ai", "AI가 관련 정보를 분석하고 있습니다...");
             
-            String prompt = buildAISearchPrompt(query, window);
+            // ===== 실시간 데이터 필요 여부 분석 =====
+            String realtimeContext = collectRealtimeDataIfNeeded(jobId, query);
+            
+            // 프롬프트 생성 (실시간 데이터 포함)
+            String prompt = buildAISearchPromptWithRealtimeData(query, window, realtimeContext);
             
             // Use fallback chain
             Flux<String> aiStream = getAiStreamWithFallbackForSearch(prompt, query, window);
@@ -1938,6 +1943,386 @@ public class UnifiedSearchService {
             log.error("AI search failed for job: {}", jobId, e);
             unifiedSearchEventService.publishSourceError(jobId, "ai", "AI 분석 오류");
         }
+    }
+
+    /**
+     * 실시간 데이터 필요 여부를 분석하고, 필요시 데이터를 수집합니다.
+     * 
+     * 데이터 수집 우선순위:
+     * 1. Perplexity Online API (실시간 웹 검색)
+     * 2. 웹 크롤링 폴백 (Google/Naver/Daum News 크롤링)
+     * 3. DB에 저장된 최근 기사에서 가격/시세 정보 추출
+     * 
+     * @param jobId 검색 작업 ID
+     * @param query 사용자 쿼리
+     * @return 실시간 데이터 컨텍스트 문자열 (필요 없는 경우 빈 문자열)
+     */
+    private String collectRealtimeDataIfNeeded(String jobId, String query) {
+        try {
+            // 실시간 데이터 필요 여부 분석
+            RealtimeAnalysisResult realtimeAnalysis = advancedIntentAnalyzer.analyzeRealtimeDataNeed(query);
+            
+            if (!realtimeAnalysis.isNeedsRealtimeData()) {
+                log.debug("Query '{}' does not require realtime data (confidence: {})", 
+                        query, realtimeAnalysis.getConfidence());
+                return "";
+            }
+            
+            log.info("Query '{}' requires realtime data (type: {}, confidence: {}, reason: {})", 
+                    query, realtimeAnalysis.getDataType(), realtimeAnalysis.getConfidence(), 
+                    realtimeAnalysis.getReason());
+            
+            // 1. Perplexity Online API 시도
+            if (realtimeSearchSource.isAvailable()) {
+                String perplexityResult = collectFromPerplexity(jobId, query);
+                if (!perplexityResult.isBlank()) {
+                    return perplexityResult;
+                }
+            } else {
+                log.info("Perplexity API not available, trying fallback methods for query: '{}'", query);
+            }
+            
+            // 2. 웹 크롤링 폴백
+            String crawlResult = collectFromWebCrawling(jobId, query, realtimeAnalysis.getDataType());
+            if (!crawlResult.isBlank()) {
+                return crawlResult;
+            }
+            
+            // 3. DB 최근 기사에서 가격 정보 추출 폴백
+            String dbResult = collectFromRecentArticles(jobId, query, realtimeAnalysis.getDataType());
+            if (!dbResult.isBlank()) {
+                return dbResult;
+            }
+            
+            log.info("All realtime data collection methods failed for query: '{}'", query);
+            return "";
+            
+        } catch (Exception e) {
+            log.warn("Failed to collect realtime data for query '{}': {}", query, e.getMessage());
+            return "";
+        }
+    }
+    
+    /**
+     * Perplexity Online API로 실시간 데이터 수집
+     */
+    private String collectFromPerplexity(String jobId, String query) {
+        try {
+            unifiedSearchEventService.publishStatusUpdate(jobId, "ai", "실시간 데이터 수집 중 (Perplexity)...");
+            
+            List<SourceEvidence> realtimeEvidence = realtimeSearchSource
+                    .fetchEvidence(query, "ko")
+                    .collectList()
+                    .block(Duration.ofSeconds(30));
+            
+            if (realtimeEvidence == null || realtimeEvidence.isEmpty()) {
+                log.info("No realtime evidence collected from Perplexity for query: '{}'", query);
+                return "";
+            }
+            
+            StringBuilder contextBuilder = new StringBuilder();
+            contextBuilder.append("\n\n## 실시간 검색 결과 (반드시 이 데이터를 우선 참조하세요)\n\n");
+            
+            for (SourceEvidence evidence : realtimeEvidence) {
+                contextBuilder.append("### 출처: ").append(evidence.getSourceName()).append("\n");
+                contextBuilder.append(evidence.getExcerpt()).append("\n");
+                if (evidence.getUrl() != null) {
+                    contextBuilder.append("URL: ").append(evidence.getUrl()).append("\n");
+                }
+                contextBuilder.append("\n");
+            }
+            
+            log.info("Collected {} realtime evidence items from Perplexity for query: '{}'", 
+                    realtimeEvidence.size(), query);
+            
+            return contextBuilder.toString();
+            
+        } catch (Exception e) {
+            log.warn("Perplexity collection failed for query '{}': {}", query, e.getMessage());
+            return "";
+        }
+    }
+    
+    /**
+     * 웹 크롤링으로 실시간 데이터 수집 (폴백)
+     * Google News, Naver News, Daum News를 크롤링하여 가격/시세 정보 추출
+     */
+    private String collectFromWebCrawling(String jobId, String query, String dataType) {
+        try {
+            unifiedSearchEventService.publishStatusUpdate(jobId, "ai", "웹 크롤링으로 최신 정보 수집 중...");
+            
+            // 직접 크롤링 수행
+            List<CrawlSearchService.CrawlResult> crawlResults = new ArrayList<>();
+            List<String> searchUrls = generatePriceSearchUrls(query, dataType);
+            
+            for (String url : searchUrls) {
+                try {
+                    Crawl4aiClient.CrawlResult result = crawl4aiClient.crawl(url);
+                    
+                    if (result != null && result.getContent() != null && !result.getContent().isBlank()) {
+                        // 가격/시세 정보 추출
+                        String extractedPriceInfo = extractPriceInformation(result.getContent(), query, dataType);
+                        if (!extractedPriceInfo.isBlank()) {
+                            crawlResults.add(CrawlSearchService.CrawlResult.success(url, result.getTitle(), extractedPriceInfo));
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("Failed to crawl URL {}: {}", url, e.getMessage());
+                }
+                
+                // 충분한 정보를 수집했으면 중단
+                if (crawlResults.size() >= 3) {
+                    break;
+                }
+            }
+            
+            if (crawlResults.isEmpty()) {
+                log.info("No price information extracted from web crawling for query: '{}'", query);
+                return "";
+            }
+            
+            StringBuilder contextBuilder = new StringBuilder();
+            contextBuilder.append("\n\n## 웹 크롤링 결과 (반드시 이 데이터를 우선 참조하세요)\n\n");
+            contextBuilder.append("**주의**: 이 데이터는 웹 크롤링으로 수집되었습니다. 정확한 시세는 공식 거래소를 확인하세요.\n\n");
+            
+            for (CrawlSearchService.CrawlResult result : crawlResults) {
+                contextBuilder.append("### 출처: ").append(result.url()).append("\n");
+                contextBuilder.append(result.content()).append("\n\n");
+            }
+            
+            log.info("Collected {} price information items from web crawling for query: '{}'", 
+                    crawlResults.size(), query);
+            
+            return contextBuilder.toString();
+            
+        } catch (Exception e) {
+            log.warn("Web crawling collection failed for query '{}': {}", query, e.getMessage());
+            return "";
+        }
+    }
+    
+    /**
+     * DB에 저장된 최근 기사에서 가격/시세 정보 추출 (폴백)
+     */
+    private String collectFromRecentArticles(String jobId, String query, String dataType) {
+        try {
+            unifiedSearchEventService.publishStatusUpdate(jobId, "ai", "최근 기사에서 관련 정보 검색 중...");
+            
+            // 최근 24시간 내 관련 기사 검색
+            LocalDateTime since = LocalDateTime.now().minusHours(24);
+            
+            // 키워드 추출
+            List<String> keywords = extractKeywordsForPriceSearch(query);
+            
+            List<CollectedData> recentArticles = new ArrayList<>();
+            for (String keyword : keywords) {
+                Page<CollectedData> articles = collectedDataRepository.searchByQueryAndSince(
+                        keyword,
+                        since,
+                        PageRequest.of(0, 10, Sort.by(Sort.Direction.DESC, "publishedDate"))
+                );
+                recentArticles.addAll(articles.getContent());
+            }
+            
+            if (recentArticles.isEmpty()) {
+                log.info("No recent articles found in DB for query: '{}'", query);
+                return "";
+            }
+            
+            // 중복 제거 및 가격 정보 추출
+            List<String> extractedInfo = new ArrayList<>();
+            for (CollectedData article : recentArticles.stream().distinct().limit(5).toList()) {
+                String priceInfo = extractPriceInformation(
+                        article.getContent() != null ? article.getContent() : article.getTitle(),
+                        query,
+                        dataType
+                );
+                if (!priceInfo.isBlank()) {
+                    extractedInfo.add("**" + article.getTitle() + "**\n" + priceInfo + 
+                            "\n(출처: " + article.getUrl() + ", " + 
+                            (article.getPublishedDate() != null ? article.getPublishedDate().toString() : "날짜 불명") + ")");
+                }
+            }
+            
+            if (extractedInfo.isEmpty()) {
+                log.info("No price information extracted from recent articles for query: '{}'", query);
+                return "";
+            }
+            
+            StringBuilder contextBuilder = new StringBuilder();
+            contextBuilder.append("\n\n## 최근 기사에서 추출한 정보\n\n");
+            contextBuilder.append("**참고**: 이 데이터는 최근 24시간 내 수집된 기사에서 추출되었습니다. ");
+            contextBuilder.append("최신 시세는 공식 거래소를 확인하세요.\n\n");
+            
+            for (String info : extractedInfo) {
+                contextBuilder.append(info).append("\n\n");
+            }
+            
+            log.info("Extracted price information from {} recent articles for query: '{}'", 
+                    extractedInfo.size(), query);
+            
+            return contextBuilder.toString();
+            
+        } catch (Exception e) {
+            log.warn("Recent articles extraction failed for query '{}': {}", query, e.getMessage());
+            return "";
+        }
+    }
+    
+    /**
+     * 가격 검색용 URL 생성 (암호화폐, 주식, 환율 등)
+     */
+    private List<String> generatePriceSearchUrls(String query, String dataType) {
+        List<String> urls = new ArrayList<>();
+        String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+        
+        // 데이터 유형에 따른 특화 URL 추가
+        if (dataType != null) {
+            switch (dataType.toLowerCase()) {
+                case "cryptocurrency", "crypto", "bitcoin" -> {
+                    // 암호화폐 전문 사이트
+                    urls.add("https://www.coingecko.com/ko/coins/bitcoin");
+                    urls.add("https://coinmarketcap.com/ko/currencies/bitcoin/");
+                    urls.add("https://upbit.com/exchange?code=CRIX.UPBIT.KRW-BTC");
+                }
+                case "stock", "주식" -> {
+                    urls.add("https://finance.naver.com/search/searchList.naver?query=" + encodedQuery);
+                }
+                case "forex", "환율" -> {
+                    urls.add("https://finance.naver.com/marketindex/");
+                }
+            }
+        }
+        
+        // 일반 뉴스 검색
+        urls.add("https://search.naver.com/search.naver?where=news&query=" + encodedQuery + "+시세+가격");
+        urls.add("https://search.daum.net/search?w=news&q=" + encodedQuery + "+시세+가격");
+        
+        return urls.stream().limit(5).toList();
+    }
+    
+    /**
+     * 가격 검색용 키워드 추출
+     */
+    private List<String> extractKeywordsForPriceSearch(String query) {
+        List<String> keywords = new ArrayList<>();
+        
+        // 기본 키워드
+        keywords.add(query);
+        
+        // 암호화폐 관련
+        if (query.contains("비트코인") || query.toLowerCase().contains("bitcoin")) {
+            keywords.add("비트코인");
+            keywords.add("BTC");
+            keywords.add("bitcoin");
+        }
+        if (query.contains("이더리움") || query.toLowerCase().contains("ethereum")) {
+            keywords.add("이더리움");
+            keywords.add("ETH");
+            keywords.add("ethereum");
+        }
+        
+        // 시세/가격 관련 키워드 추가
+        if (query.contains("시세") || query.contains("가격") || query.contains("price")) {
+            String baseKeyword = query.replace("시세", "").replace("가격", "").replace("price", "").trim();
+            if (!baseKeyword.isBlank()) {
+                keywords.add(baseKeyword);
+            }
+        }
+        
+        return keywords.stream().distinct().limit(5).toList();
+    }
+    
+    /**
+     * 텍스트에서 가격/시세 정보 추출
+     */
+    private String extractPriceInformation(String content, String query, String dataType) {
+        if (content == null || content.isBlank()) {
+            return "";
+        }
+        
+        StringBuilder extracted = new StringBuilder();
+        String lowerContent = content.toLowerCase();
+        String lowerQuery = query.toLowerCase();
+        
+        // 가격 패턴 매칭 (한글/영문)
+        List<String> pricePatterns = List.of(
+                // 한글 가격 패턴
+                "\\d{1,3}(,\\d{3})*(\\.\\d+)?\\s*(원|달러|USD|KRW|만원|억원)",
+                // 영문 가격 패턴
+                "\\$\\s*\\d{1,3}(,\\d{3})*(\\.\\d+)?",
+                // 퍼센트 변동
+                "[+-]?\\d+(\\.\\d+)?\\s*%",
+                // 비트코인 등 암호화폐 가격
+                "\\d{1,3}(,\\d{3})*\\s*(BTC|ETH|USDT)"
+        );
+        
+        // 관련 문장 추출 (쿼리 키워드 포함 문장)
+        String[] sentences = content.split("[.!?。]");
+        int extractedCount = 0;
+        
+        for (String sentence : sentences) {
+            String lowerSentence = sentence.toLowerCase();
+            
+            // 쿼리 관련 키워드가 포함된 문장만 선택
+            boolean isRelevant = lowerSentence.contains(lowerQuery) ||
+                    (lowerQuery.contains("비트코인") && (lowerSentence.contains("비트코인") || lowerSentence.contains("btc"))) ||
+                    (lowerQuery.contains("이더리움") && (lowerSentence.contains("이더리움") || lowerSentence.contains("eth")));
+            
+            if (!isRelevant) {
+                continue;
+            }
+            
+            // 가격 정보가 포함된 문장인지 확인
+            boolean hasPriceInfo = sentence.matches(".*\\d+.*") && 
+                    (sentence.contains("원") || sentence.contains("달러") || sentence.contains("$") ||
+                     sentence.contains("%") || sentence.contains("상승") || sentence.contains("하락") ||
+                     sentence.contains("시세") || sentence.contains("가격"));
+            
+            if (hasPriceInfo) {
+                extracted.append("- ").append(sentence.trim()).append("\n");
+                extractedCount++;
+                
+                if (extractedCount >= 5) {
+                    break;
+                }
+            }
+        }
+        
+        return extracted.toString();
+    }
+
+    /**
+     * 실시간 데이터를 포함한 AI 검색 프롬프트를 생성합니다.
+     * 
+     * @param query 사용자 쿼리
+     * @param window 시간 범위
+     * @param realtimeContext 실시간 데이터 컨텍스트 (빈 문자열 가능)
+     * @return AI 프롬프트
+     */
+    private String buildAISearchPromptWithRealtimeData(String query, String window, String realtimeContext) {
+        String basePrompt = buildAISearchPrompt(query, window);
+        
+        if (realtimeContext == null || realtimeContext.isBlank()) {
+            return basePrompt;
+        }
+        
+        // 실시간 데이터를 프롬프트에 삽입
+        // "한국어로 답변해주세요" 또는 프롬프트 끝에 추가
+        String realtimeInstructions = realtimeContext + 
+                "\n\n**중요**: 위의 실시간 검색 결과에 포함된 가격, 시세, 통계 데이터를 반드시 사용하세요. " +
+                "추정하거나 과거 데이터를 사용하지 마세요. 실시간 데이터의 출처도 명시해주세요.\n\n";
+        
+        // 프롬프트에 "한국어로 답변해주세요"가 있으면 그 앞에 삽입
+        if (basePrompt.contains("한국어로 답변해주세요")) {
+            return basePrompt.replace(
+                    "한국어로 답변해주세요.",
+                    realtimeInstructions + "한국어로 답변해주세요."
+            );
+        }
+        
+        // 없으면 프롬프트 끝에 추가
+        return basePrompt + realtimeInstructions;
     }
 
     private void persistAiReportToSearchHistory(String jobId, String query, String window, String fullMarkdown) {

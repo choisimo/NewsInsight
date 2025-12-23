@@ -69,15 +69,10 @@ const generateSummaryPoints = (evidence: Evidence[]): string[] => {
  * Generate conclusion from distribution
  */
 const generateConclusion = (result: DeepSearchResult): string => {
-  const { proRatio, conRatio, neutralRatio } = result.stanceDistribution;
-
-  if (Math.abs(proRatio - conRatio) < 10) {
-    return `${result.topic}에 대해 의견이 팽팽하게 나뉘고 있습니다.`;
-  } else if (proRatio > conRatio) {
-    return `${result.topic}에 대해 전반적으로 긍정적인 평가가 우세합니다.`;
-  } else {
-    return `${result.topic}에 대해 우려와 비판적 시각이 다수를 차지합니다.`;
-  }
+  const total = result.evidence.length;
+  const uniqueSources = new Set(result.evidence.map(e => e.source).filter(Boolean)).size;
+  
+  return `'${result.topic}'에 대해 ${total}개의 관련 자료를 ${uniqueSources}개 출처에서 수집했습니다. 다양한 관점의 자료를 바탕으로 주제에 대한 종합적인 이해를 제공합니다.`;
 };
 
 /**
@@ -85,9 +80,10 @@ const generateConclusion = (result: DeepSearchResult): string => {
  */
 const generateKeyInsight = (result: DeepSearchResult): string => {
   const total = result.evidence.length;
-  const { pro, con, neutral } = result.stanceDistribution;
+  const articlesWithTitle = result.evidence.filter(e => e.title).length;
+  const uniqueSources = new Set(result.evidence.map(e => e.source).filter(Boolean)).size;
 
-  return `총 ${total}개의 출처를 분석한 결과, 찬성 ${pro}건, 반대 ${con}건, 중립 ${neutral}건의 의견이 수집되었습니다. 다양한 관점을 고려하여 균형 잡힌 판단을 내리시기 바랍니다.`;
+  return `총 ${total}개의 자료를 분석한 결과, ${articlesWithTitle}개의 기사/문서와 ${uniqueSources}개의 출처를 참조했습니다. 보다 자세한 내용은 PDF 보고서로 내보내기하여 확인하실 수 있습니다.`;
 };
 
 // ============================================
@@ -346,14 +342,13 @@ export const CompactInsightFlow = ({
     };
   }, [emblaApi]);
 
-  const proEvidence = result.evidence.filter((e) => e.stance === "pro");
-  const conEvidence = result.evidence.filter((e) => e.stance === "con");
-
+  const uniqueSources = new Set(result.evidence.map(e => e.source).filter(Boolean)).size;
+  
   const cards = [
-    { id: "summary", title: "요약", color: "bg-primary/10" },
-    { id: "pro", title: `찬성 (${proEvidence.length})`, color: "bg-teal-100 dark:bg-teal-900/30" },
-    { id: "con", title: `반대 (${conEvidence.length})`, color: "bg-coral-100 dark:bg-coral-900/30" },
-    { id: "conclusion", title: "결론", color: "bg-primary/10" },
+    { id: "summary", title: "핵심 요약", color: "bg-primary/10" },
+    { id: "findings", title: `주요 발견 (${result.evidence.length})`, color: "bg-purple-100 dark:bg-purple-900/30" },
+    { id: "sources", title: `참조 출처 (${uniqueSources})`, color: "bg-blue-100 dark:bg-blue-900/30" },
+    { id: "conclusion", title: "결론", color: "bg-green-100 dark:bg-green-900/30" },
   ];
 
   return (
@@ -386,9 +381,9 @@ export const CompactInsightFlow = ({
               <h4 className="font-semibold mb-2">{card.title}</h4>
               <p className="text-sm text-muted-foreground line-clamp-5">
                 {card.id === "summary" &&
-                  `"${result.topic}"에 대한 ${result.evidence.length}개 출처 분석`}
-                {card.id === "pro" && proEvidence[0]?.snippet}
-                {card.id === "con" && conEvidence[0]?.snippet}
+                  `'${result.topic}'에 대해 ${result.evidence.length}개의 관련 자료를 수집하여 분석했습니다.`}
+                {card.id === "findings" && result.evidence[0]?.snippet}
+                {card.id === "sources" && `${uniqueSources}개의 다양한 출처에서 자료를 수집했습니다.`}
                 {card.id === "conclusion" && generateConclusion(result)}
               </p>
             </div>

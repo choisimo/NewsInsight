@@ -141,12 +141,13 @@ const AdminSources = () => {
   const toggleActiveMutation = useMutation({
     mutationFn: ({ id, active }: { id: number; active: boolean }) => setSourceActive(id, active),
     onMutate: async ({ id, active }) => {
-      // 낙관적 업데이트
-      await queryClient.cancelQueries({ queryKey: ['sources'] });
+      // 낙관적 업데이트 - 현재 페이지의 쿼리 키 사용
+      const queryKey = ['sources', currentPage, pageSize];
+      await queryClient.cancelQueries({ queryKey });
       
-      const previousData = queryClient.getQueryData(['sources']);
+      const previousData = queryClient.getQueryData(queryKey);
       
-      queryClient.setQueryData(['sources'], (old: typeof sourcesPage) => {
+      queryClient.setQueryData(queryKey, (old: typeof sourcesPage) => {
         if (!old) return old;
         return {
           ...old,
@@ -156,12 +157,12 @@ const AdminSources = () => {
         };
       });
       
-      return { previousData };
+      return { previousData, queryKey };
     },
     onError: (error, variables, context) => {
       // 실패 시 롤백
-      if (context?.previousData) {
-        queryClient.setQueryData(['sources'], context.previousData);
+      if (context?.previousData && context?.queryKey) {
+        queryClient.setQueryData(context.queryKey, context.previousData);
       }
       toast({
         title: "상태 변경 실패",
@@ -169,17 +170,21 @@ const AdminSources = () => {
         variant: "destructive",
       });
     },
-    onSuccess: (updated) => {
+    onSuccess: (updated, variables, context) => {
       // 성공 시 서버 데이터로 업데이트
-      queryClient.setQueryData(['sources'], (old: typeof sourcesPage) => {
-        if (!old) return old;
-        return {
-          ...old,
-          content: old.content.map((s: DataSource) => 
-            s.id === updated.id ? updated : s
-          ),
-        };
-      });
+      if (context?.queryKey) {
+        queryClient.setQueryData(context.queryKey, (old: typeof sourcesPage) => {
+          if (!old) return old;
+          return {
+            ...old,
+            content: old.content.map((s: DataSource) => 
+              s.id === updated.id ? updated : s
+            ),
+          };
+        });
+      }
+      // 다른 페이지 캐시도 무효화
+      queryClient.invalidateQueries({ queryKey: ['sources'] });
     },
   });
 

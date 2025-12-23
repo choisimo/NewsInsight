@@ -544,6 +544,7 @@ public class DeepAnalysisService {
                 .stance(evidence.getStance() != null ? evidence.getStance().name().toLowerCase() : "neutral")
                 .snippet(evidence.getSnippet())
                 .source(evidence.getSource())
+                .sourceCategory(evidence.getSourceCategory() != null ? evidence.getSourceCategory().getValue() : "news")
                 .build();
     }
 }

@@ -6,6 +6,7 @@ import com.newsinsight.collector.dto.llm.LlmTestResult;
 import com.newsinsight.collector.entity.settings.LlmProviderSettings;
 import com.newsinsight.collector.entity.settings.LlmProviderType;
 import com.newsinsight.collector.repository.LlmProviderSettingsRepository;
+import com.newsinsight.collector.util.ApiKeyEncryptor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
@@ -30,6 +31,7 @@ public class LlmProviderSettingsService {
 
     private final LlmProviderSettingsRepository repository;
     private final RestTemplate restTemplate;
+    private final ApiKeyEncryptor apiKeyEncryptor;
 
     // ========== 전역(관리자) 설정 관리 ==========
 
@@ -189,6 +191,30 @@ public class LlmProviderSettingsService {
                 .collect(Collectors.toList());
     }
 
+    // ========== API 키 직접 조회 (내부 서비스용) ==========
+
+    /**
+     * 전역 설정에서 API 키 직접 조회 (실시간 검색 등 내부 서비스용)
+     * API 키는 복호화하여 반환합니다.
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> getGlobalApiKey(LlmProviderType providerType) {
+        return repository.findGlobalByProviderType(providerType)
+                .filter(LlmProviderSettings::getEnabled)
+                .map(LlmProviderSettings::getApiKey)
+                .map(apiKeyEncryptor::decrypt);
+    }
+
+    /**
+     * 전역 설정에서 Base URL 직접 조회
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> getGlobalBaseUrl(LlmProviderType providerType) {
+        return repository.findGlobalByProviderType(providerType)
+                .filter(LlmProviderSettings::getEnabled)
+                .map(LlmProviderSettings::getBaseUrl);
+    }
+
     // ========== 연결 테스트 ==========
 
     /**
@@ -257,12 +283,15 @@ public class LlmProviderSettingsService {
                 : settings.getProviderType().getDefaultBaseUrl();
 
         return switch (settings.getProviderType()) {
-            case OPENAI, OPENROUTER -> baseUrl + "/models";
+            case OPENAI, OPENROUTER, TOGETHER_AI -> baseUrl + "/models";
             case ANTHROPIC -> baseUrl + "/v1/messages"; // Will return 405 but proves connectivity
             case GOOGLE -> baseUrl + "/v1/models";
             case OLLAMA -> baseUrl + "/api/tags";
             case AZURE_OPENAI -> baseUrl + "/openai/deployments?api-version=" + 
                     (settings.getAzureApiVersion() != null ? settings.getAzureApiVersion() : "2024-02-01");
+            case PERPLEXITY -> baseUrl + "/chat/completions";
+            case BRAVE_SEARCH -> baseUrl + "/web/search";
+            case TAVILY -> baseUrl + "/search";
             case CUSTOM -> baseUrl + "/health";
         };
     }
@@ -272,15 +301,17 @@ public class LlmProviderSettingsService {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         if (settings.getApiKey() != null && !settings.getApiKey().isBlank()) {
+            // Decrypt the API key before using it in headers
+            String decryptedApiKey = apiKeyEncryptor.decrypt(settings.getApiKey());
             switch (settings.getProviderType()) {
-                case OPENAI, OPENROUTER -> headers.setBearerAuth(settings.getApiKey());
+                case OPENAI, OPENROUTER -> headers.setBearerAuth(decryptedApiKey);
                 case ANTHROPIC -> {
-                    headers.set("x-api-key", settings.getApiKey());
+                    headers.set("x-api-key", decryptedApiKey);
                     headers.set("anthropic-version", "2023-06-01");
                 }
-                case GOOGLE -> headers.set("x-goog-api-key", settings.getApiKey());
-                case AZURE_OPENAI -> headers.set("api-key", settings.getApiKey());
-                default -> headers.setBearerAuth(settings.getApiKey());
+                case GOOGLE -> headers.set("x-goog-api-key", decryptedApiKey);
+                case AZURE_OPENAI -> headers.set("api-key", decryptedApiKey);
+                default -> headers.setBearerAuth(decryptedApiKey);
             }
         }
 
@@ -304,7 +335,7 @@ public class LlmProviderSettingsService {
                 .providerDisplayName(entity.getProviderType().getDisplayName())
                 .userId(entity.getUserId())
                 .isGlobal(entity.isGlobal())
-                .apiKeyMasked(entity.getMaskedApiKey())
+                .apiKeyMasked(apiKeyEncryptor.getMaskedKey(entity.getApiKey()))
                 .hasApiKey(entity.getApiKey() != null && !entity.getApiKey().isBlank())
                 .defaultModel(entity.getDefaultModel())
                 .baseUrl(entity.getBaseUrl())
@@ -324,15 +355,25 @@ public class LlmProviderSettingsService {
     }
 
     private void updateSettingsFromRequest(LlmProviderSettings settings, LlmProviderSettingsRequest request) {
-        if (request.getApiKey() != null) {
-            settings.setApiKey(request.getApiKey());
+        // API Key: only update if provided and not blank
+        if (request.getApiKey() != null && !request.getApiKey().isBlank()) {
+            // Encrypt the API key before storing
+            String encryptedApiKey = apiKeyEncryptor.encrypt(request.getApiKey());
+            settings.setApiKey(encryptedApiKey);
+            log.debug("API key encrypted and stored for provider: {}", settings.getProviderType());
         }
-        if (request.getDefaultModel() != null) {
+        
+        // Default Model: always required, update if provided and not blank
+        if (request.getDefaultModel() != null && !request.getDefaultModel().isBlank()) {
             settings.setDefaultModel(request.getDefaultModel());
         }
+        
+        // Base URL: update if provided (can be blank for some providers)
         if (request.getBaseUrl() != null) {
-            settings.setBaseUrl(request.getBaseUrl());
+            settings.setBaseUrl(request.getBaseUrl().isBlank() ? null : request.getBaseUrl());
         }
+        
+        // Boolean and numeric fields: always update if provided
         if (request.getEnabled() != null) {
             settings.setEnabled(request.getEnabled());
         }
@@ -351,11 +392,13 @@ public class LlmProviderSettingsService {
         if (request.getMaxRequestsPerMinute() != null) {
             settings.setMaxRequestsPerMinute(request.getMaxRequestsPerMinute());
         }
+        
+        // Azure specific fields: update if provided and not blank
         if (request.getAzureDeploymentName() != null) {
-            settings.setAzureDeploymentName(request.getAzureDeploymentName());
+            settings.setAzureDeploymentName(request.getAzureDeploymentName().isBlank() ? null : request.getAzureDeploymentName());
         }
         if (request.getAzureApiVersion() != null) {
-            settings.setAzureApiVersion(request.getAzureApiVersion());
+            settings.setAzureApiVersion(request.getAzureApiVersion().isBlank() ? null : request.getAzureApiVersion());
         }
     }
 }

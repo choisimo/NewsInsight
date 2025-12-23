@@ -8,10 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Note: Build context should be mcp/ folder
+COPY huggingface_mcp/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py .
+COPY huggingface_mcp/server.py .
+COPY shared ./shared
 
 ENV PORT=5011
 ENV HF_TOKEN=""

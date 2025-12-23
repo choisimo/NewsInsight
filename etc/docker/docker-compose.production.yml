@@ -22,6 +22,8 @@ volumes:
   ip_rotation_data:
   maigret_reports:
   workspace_data:
+  ml_trainer_models:
+  ml_trainer_data:
 
 services:
   # ============================================================================
@@ -244,6 +246,7 @@ services:
       AUTONOMOUS_CRAWLER_API_URL: http://autonomous-crawler:8030
       ADMIN_DASHBOARD_URL: http://admin-dashboard:8888
       ML_ADDON_BOT_DETECTOR_URL: http://bot-detector:8041
+      ML_TRAINER_URL: http://ml-trainer:8090
       # Frontend config
       FRONTEND_API_BASE_URL: https://newsinsight.nodove.com
       # JVM settings
@@ -310,8 +313,9 @@ services:
       HYBRID_SEARCH_ENABLED: ${HYBRID_SEARCH_ENABLED:-true}
       # Auto-Crawl Configuration (실시간 확장형 크롤링)
       AUTOCRAWL_ENABLED: ${AUTOCRAWL_ENABLED:-true}
-      AUTOCRAWL_BATCH_SIZE: ${AUTOCRAWL_BATCH_SIZE:-10}
-      AUTOCRAWL_MAX_CONCURRENT_PER_DOMAIN: ${AUTOCRAWL_MAX_CONCURRENT_PER_DOMAIN:-3}
+      AUTOCRAWL_BATCH_SIZE: ${AUTOCRAWL_BATCH_SIZE:-20}
+      AUTOCRAWL_MAX_CONCURRENT_PER_DOMAIN: ${AUTOCRAWL_MAX_CONCURRENT_PER_DOMAIN:-20}
+      MAX_CONCURRENT_COLLECTIONS: ${MAX_CONCURRENT_COLLECTIONS:-20}
       AUTOCRAWL_DISCOVER_FROM_SEARCH: ${AUTOCRAWL_DISCOVER_FROM_SEARCH:-true}
       AUTOCRAWL_DISCOVER_FROM_ARTICLES: ${AUTOCRAWL_DISCOVER_FROM_ARTICLES:-true}
       AUTOCRAWL_DISCOVER_FROM_DEEP_SEARCH: ${AUTOCRAWL_DISCOVER_FROM_DEEP_SEARCH:-true}
@@ -320,6 +324,13 @@ services:
       WORKSPACE_MAX_FILE_SIZE: ${WORKSPACE_MAX_FILE_SIZE:-104857600}
       WORKSPACE_MAX_FILES_PER_SESSION: ${WORKSPACE_MAX_FILES_PER_SESSION:-100}
       WORKSPACE_SESSION_FILE_TTL_HOURS: ${WORKSPACE_SESSION_FILE_TTL_HOURS:-24}
+      # API Key Encryption Configuration
+      # IMPORTANT: Set strong values in production .env file!
+      NEWSINSIGHT_ENCRYPTION_SECRET: ${NEWSINSIGHT_ENCRYPTION_SECRET}
+      NEWSINSIGHT_ENCRYPTION_SALT: ${NEWSINSIGHT_ENCRYPTION_SALT}
+      # Enable migration on first run to encrypt existing plain text API keys
+      # Set to true once, then set back to false after migration completes
+      NEWSINSIGHT_ENCRYPTION_MIGRATE: ${NEWSINSIGHT_ENCRYPTION_MIGRATE:-false}
       # JVM settings
       JAVA_OPTS: "-Xms256m -Xmx512m"
     volumes:
@@ -651,8 +662,8 @@ services:
   newsinsight-mcp:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/newsinsight-mcp:${TAG:-latest}
     build:
-      context: ../../mcp/newsinsight_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: newsinsight_mcp/Dockerfile
     container_name: newsinsight-prod-mcp
     restart: unless-stopped
     environment:
@@ -684,8 +695,8 @@ services:
   bias-mcp:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/bias-mcp:${TAG:-latest}
     build:
-      context: ../../mcp/bias_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: bias_mcp/Dockerfile
     container_name: newsinsight-prod-bias-mcp
     restart: unless-stopped
     environment:
@@ -717,8 +728,8 @@ services:
   factcheck-mcp:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/factcheck-mcp:${TAG:-latest}
     build:
-      context: ../../mcp/factcheck_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: factcheck_mcp/Dockerfile
     container_name: newsinsight-prod-factcheck-mcp
     restart: unless-stopped
     environment:
@@ -750,8 +761,8 @@ services:
   topic-mcp:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/topic-mcp:${TAG:-latest}
     build:
-      context: ../../mcp/topic_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: topic_mcp/Dockerfile
     container_name: newsinsight-prod-topic-mcp
     restart: unless-stopped
     environment:
@@ -783,8 +794,8 @@ services:
   aiagent-mcp:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/aiagent-mcp:${TAG:-latest}
     build:
-      context: ../../mcp/aiagent_mcp
-      dockerfile: Dockerfile
+      context: ../../mcp
+      dockerfile: aiagent_mcp/Dockerfile
     container_name: newsinsight-prod-aiagent-mcp
     restart: unless-stopped
     environment:
@@ -862,7 +873,7 @@ services:
   ip-rotation:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/ip-rotation:${TAG:-latest}
     build:
-      context: ../../backend/browser-use/ip-rotation
+      context: ../../backend/services/ip-rotation
       dockerfile: Dockerfile
     container_name: newsinsight-prod-ip-rotation
     restart: unless-stopped
@@ -972,7 +983,7 @@ services:
     image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/bot-detector:${TAG:-latest}
     build:
       context: ../../
-      dockerfile: backend/browser-use/bot-detector/Dockerfile
+      dockerfile: backend/services/bot-detector/Dockerfile
     container_name: newsinsight-prod-bot-detector
     restart: unless-stopped
     environment:
@@ -983,6 +994,52 @@ services:
         ipv4_address: 172.20.0.74
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8041/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # ML Trainer Service - Model Training and Management
+  # ============================================================================
+  ml-trainer:
+    image: ${REGISTRY:-ghcr.io/nodove}/newsinsight/ml-trainer:${TAG:-latest}
+    build:
+      context: ../../backend/ml-addons/ml-trainer
+      dockerfile: Dockerfile
+    container_name: newsinsight-prod-ml-trainer
+    restart: unless-stopped
+    environment:
+      PORT: "8090"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsinsight}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-newsinsight}
+      MONGODB_URI: mongodb://${MONGO_USER:-newsinsight}:${MONGO_PASSWORD}@mongo:27017/newsinsight?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/5
+      HF_TOKEN: ${HF_TOKEN:-}
+      KAGGLE_USERNAME: ${KAGGLE_USERNAME:-}
+      KAGGLE_KEY: ${KAGGLE_KEY:-}
+      ROBOFLOW_API_KEY: ${ROBOFLOW_API_KEY:-}
+      MODEL_STORAGE_PATH: /app/models
+      TRAINING_DATA_PATH: /app/data
+    volumes:
+      - ml_trainer_models:/app/models
+      - ml_trainer_data:/app/data
+    networks:
+      newsinsight-prod:
+        ipv4_address: 172.20.0.75
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8090/health"]
       interval: 30s
       timeout: 10s
       retries: 3

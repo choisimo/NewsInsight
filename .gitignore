@@ -70,3 +70,5 @@ opencode
 !.env.example
 **.env
 **.env.*
+
+aws/

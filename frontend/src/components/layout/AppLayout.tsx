@@ -16,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { useAutoNotifications } from '@/hooks/useNotificationBridge';
+import { useAutoNotifications, useProjectNotifications } from '@/hooks/useNotificationBridge';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSkipLinks } from '@/hooks/useAccessibility';
 
@@ -36,6 +36,13 @@ export function AppLayout({ children }: AppLayoutProps) {
     enabledEventTypes: ['ERROR', 'COLLECTION_COMPLETED', 'COLLECTION_STARTED'],
     persistent: false, // 브라우저 새로고침 시 알림 삭제
     dedupeInterval: 10000, // 10초 내 동일 타입 알림 중복 방지
+  });
+
+  // 프로젝트 알림을 백엔드에서 가져와서 연결
+  useProjectNotifications({
+    userId: user?.id?.toString(),
+    enabled: isAuthenticated && !!user,
+    pollInterval: 60000, // 1분마다 새 알림 확인
   });
 
   const handleLogout = async () => {

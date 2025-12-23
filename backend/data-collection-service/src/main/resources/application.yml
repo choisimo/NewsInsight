@@ -11,8 +11,16 @@ spring:
       acks: ${KAFKA_PRODUCER_ACKS:all}
       retries: ${KAFKA_PRODUCER_RETRIES:3}
       retry-backoff-ms: ${KAFKA_PRODUCER_RETRY_BACKOFF_MS:1000}
+      # delivery.timeout.ms must be >= linger.ms + request.timeout.ms
+      # linger.ms=5 (hardcoded in KafkaConfig), request.timeout.ms=30000
+      # So delivery-timeout-ms must be >= 30005
       delivery-timeout-ms: ${KAFKA_PRODUCER_DELIVERY_TIMEOUT_MS:120000}
       enable-idempotence: ${KAFKA_PRODUCER_ENABLE_IDEMPOTENCE:true}
+      properties:
+        # Fast-fail settings to avoid long blocking on Kafka unavailability
+        max.block.ms: ${KAFKA_PRODUCER_MAX_BLOCK_MS:5000}
+        request.timeout.ms: ${KAFKA_PRODUCER_REQUEST_TIMEOUT_MS:30000}
+        metadata.max.age.ms: ${KAFKA_PRODUCER_METADATA_MAX_AGE_MS:60000}
     # Consumer reliability settings
     consumer:
       max-retry-attempts: ${KAFKA_CONSUMER_MAX_RETRY_ATTEMPTS:3}
@@ -278,6 +286,79 @@ collector:
     google:
       enabled: ${COLLECTOR_GOOGLE_FACTCHECK_ENABLED:true}
       api-key: ${COLLECTOR_GOOGLE_FACTCHECK_API_KEY:}
+    
+    # Semantic Scholar - AI-powered academic search (free, optional API key)
+    # API docs: https://api.semanticscholar.org/api-docs/
+    semantic-scholar:
+      enabled: ${COLLECTOR_SEMANTIC_SCHOLAR_ENABLED:true}
+      api-key: ${COLLECTOR_SEMANTIC_SCHOLAR_API_KEY:}
+    
+    # PubMed/NCBI - Medical and life sciences (free, optional API key)
+    # API docs: https://www.ncbi.nlm.nih.gov/books/NBK25500/
+    pubmed:
+      enabled: ${COLLECTOR_PUBMED_ENABLED:true}
+      api-key: ${COLLECTOR_PUBMED_API_KEY:}
+    
+    # CORE - Open access research papers (requires free API key)
+    # Get API key: https://core.ac.uk/services/api
+    core:
+      enabled: ${COLLECTOR_CORE_ENABLED:true}
+      api-key: ${COLLECTOR_CORE_API_KEY:}
+    
+    # RRF (Reciprocal Rank Fusion) Configuration
+    # 다중 쿼리 병렬 검색 및 결과 융합 설정
+    rrf:
+      # RRF 기반 검색 활성화 (비활성화 시 기존 순차 검색 사용)
+      enabled: ${COLLECTOR_RRF_ENABLED:true}
+      # RRF 상수 k (낮을수록 상위 랭크에 가중치, 기본 60)
+      k: ${COLLECTOR_RRF_K:60}
+      # 최대 병렬 쿼리 수 (의도 분석 + 확장 쿼리)
+      max-queries: ${COLLECTOR_RRF_MAX_QUERIES:5}
+      # 최대 융합 결과 수
+      max-results: ${COLLECTOR_RRF_MAX_RESULTS:50}
+      # 최소 관련성 점수 (이 점수 이하의 결과는 필터링)
+      min-relevance: ${COLLECTOR_RRF_MIN_RELEVANCE:0.1}
+      # URL 실존 여부 검증 활성화 (LLM 환각, 죽은 링크 필터링)
+      url-validation-enabled: ${COLLECTOR_RRF_URL_VALIDATION_ENABLED:true}
+  
+  # ============================================
+  # URL Validation Configuration (실존 여부 검증)
+  # ============================================
+  # URL이 실제로 접근 가능한지, LLM 환각인지, 삭제된 페이지인지 검증합니다.
+  url-validation:
+    # URL 검증 활성화
+    enabled: ${COLLECTOR_URL_VALIDATION_ENABLED:true}
+    # HTTP HEAD/GET 요청 타임아웃 (초)
+    timeout-seconds: ${COLLECTOR_URL_VALIDATION_TIMEOUT_SECONDS:5}
+    # 검증 결과 캐시 TTL (분)
+    cache-ttl-minutes: ${COLLECTOR_URL_VALIDATION_CACHE_TTL_MINUTES:30}
+  
+  # ============================================
+  # Evidence Validation Configuration (증거 품질 검증)
+  # ============================================
+  # 수집된 증거의 품질을 검증하여 불량 데이터를 필터링합니다.
+  evidence-validation:
+    # 증거 검증 활성화
+    enabled: ${COLLECTOR_EVIDENCE_VALIDATION_ENABLED:true}
+    # Strict 모드 (URL과 콘텐츠 모두 유효해야 함)
+    strict-mode: ${COLLECTOR_EVIDENCE_VALIDATION_STRICT_MODE:false}
+    # 최소 콘텐츠 길이 (이하인 경우 삭제된 페이지로 간주)
+    min-content-length: ${COLLECTOR_EVIDENCE_VALIDATION_MIN_CONTENT_LENGTH:50}
+
+  # ============================================
+  # IP Rotation Configuration (for rate limit bypass)
+  # ============================================
+  ip-rotation:
+    # IP rotation 서비스 활성화
+    enabled: ${COLLECTOR_IP_ROTATION_ENABLED:true}
+    # IP rotation 서비스 URL
+    base-url: ${COLLECTOR_IP_ROTATION_URL:http://ip-rotation:8050}
+    # 프록시 요청 타임아웃
+    timeout-seconds: ${COLLECTOR_IP_ROTATION_TIMEOUT:15}
+    # 최대 재시도 횟수
+    max-retries: ${COLLECTOR_IP_ROTATION_MAX_RETRIES:3}
+    # 재시도 간 대기 시간 (밀리초)
+    retry-delay-ms: ${COLLECTOR_IP_ROTATION_RETRY_DELAY:1000}
 
   # ============================================
   # Hybrid Search Configuration (Keyword + Semantic + RRF)
@@ -483,3 +564,19 @@ workspace:
     cron: ${WORKSPACE_CLEANUP_CRON:0 30 3 * * *}
     # Hours before orphaned session files are marked for deletion
     orphan-hours: ${WORKSPACE_ORPHAN_HOURS:48}
+
+# ============================================
+# API Key Encryption Configuration
+# ============================================
+# AES-256-GCM encryption for secure API key storage.
+# IMPORTANT: Change these values in production!
+newsinsight:
+  encryption:
+    # Secret key for encryption (must be at least 32 characters for AES-256)
+    # In production, use a strong random string and store securely
+    secret: ${NEWSINSIGHT_ENCRYPTION_SECRET:defaultSecretKeyForDevelopmentOnly32}
+    # Salt for key derivation (must be at least 16 characters)
+    salt: ${NEWSINSIGHT_ENCRYPTION_SALT:defaultSaltValue16ch}
+    # Enable migration on startup to encrypt existing plain text API keys
+    # Set to true once to migrate, then set back to false
+    migrate-on-startup: ${NEWSINSIGHT_ENCRYPTION_MIGRATE:false}

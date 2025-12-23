@@ -26,6 +26,7 @@ from .routers import (
     ml_training,
     databases,
     kafka,
+    config_export,
 )
 
 # 버전 정보
@@ -97,6 +98,7 @@ app.include_router(ml_addons.router, prefix=API_PREFIX)
 app.include_router(ml_training.router, prefix=API_PREFIX)
 app.include_router(databases.router, prefix=API_PREFIX)
 app.include_router(kafka.router, prefix=API_PREFIX)
+app.include_router(config_export.router, prefix=API_PREFIX)
 
 # 공개 라우터 (/api/v1/auth/...)
 app.include_router(public_auth.router, prefix=PUBLIC_API_PREFIX)

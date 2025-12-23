@@ -7,8 +7,9 @@ import { BackgroundTaskProvider } from "@/contexts/BackgroundTaskContext";
 import { SearchJobProvider } from "@/contexts/SearchJobContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { QuickAccessProvider } from "@/contexts/QuickAccessContext";
+import { useMemo } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ActiveJobsIndicator } from "@/components/ActiveJobsIndicator";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -44,19 +45,70 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 
 // Admin Pages
+import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminEnvironments from "./pages/admin/AdminEnvironments";
 import AdminScripts from "./pages/admin/AdminScripts";
 import AdminAuditLogs from "./pages/admin/AdminAuditLogs";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminLogin from "./pages/admin/AdminLogin";
 import AdminSetup from "./pages/admin/AdminSetup";
+import AdminLlmProviders from "./pages/admin/AdminLlmProviders";
+import AdminConfigExport from "./pages/admin/AdminConfigExport";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
-const queryClient = new QueryClient();
+/**
+ * React Query 클라이언트 설정
+ * 
+ * - staleTime: 데이터가 "신선"한 것으로 간주되는 시간 (5분)
+ *   → 이 시간 동안은 캐시된 데이터를 즉시 반환하고 백그라운드 리패치 안함
+ * - gcTime: 사용되지 않는 캐시 데이터 보관 시간 (30분)
+ *   → 새로고침 후에도 캐시된 데이터를 즉시 표시 가능
+ * - refetchOnWindowFocus: 탭 포커스 시 자동 리패치 (true)
+ *   → 사용자가 돌아왔을 때 최신 데이터 확인
+ * - retry: 실패 시 재시도 횟수 (1회)
+ */
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000, // 5분간 데이터를 fresh로 간주
+      gcTime: 30 * 60 * 1000, // 30분간 캐시 유지 (구 cacheTime)
+      refetchOnWindowFocus: true, // 탭 포커스 시 리패치
+      refetchOnMount: true, // 마운트 시 stale 데이터면 리패치
+      retry: 1, // 실패 시 1회 재시도
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+    },
+    mutations: {
+      retry: 1,
+    },
+  },
+});
 
 const RedirectWithState = ({ to }: { to: string }) => {
   const location = useLocation();
   return <Navigate to={to} replace state={location.state} />;
+};
+
+// Wrapper to pass authenticated userId to SearchJobProvider
+const AuthenticatedSearchJobProvider = ({ children }: { children: React.ReactNode }) => {
+  const { user, isAuthenticated } = useAuth();
+  
+  // Generate a stable anonymous session ID for unauthenticated users
+  const anonymousSessionId = useMemo(() => {
+    const stored = sessionStorage.getItem('anonymous_session_id');
+    if (stored) return stored;
+    const newId = `anon-${crypto.randomUUID().slice(0, 8)}`;
+    sessionStorage.setItem('anonymous_session_id', newId);
+    return newId;
+  }, []);
+  
+  // Use authenticated user ID or anonymous session ID
+  const userId = isAuthenticated && user?.id ? user.id : anonymousSessionId;
+  
+  return (
+    <SearchJobProvider userId={userId}>
+      {children}
+    </SearchJobProvider>
+  );
 };
 
 const AppContent = () => {
@@ -106,6 +158,7 @@ const AppContent = () => {
                 <Route path="/register" element={<Register />} />
                 
                 {/* Admin Routes */}
+                <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
                 <Route path="/admin/login" element={<AdminLogin />} />
                 <Route path="/admin/setup" element={<ProtectedRoute allowSetup><AdminSetup /></ProtectedRoute>} />
                 <Route path="/admin/sources" element={<ProtectedRoute><AdminSources /></ProtectedRoute>} />
@@ -114,6 +167,8 @@ const AppContent = () => {
                 <Route path="/admin/scripts" element={<ProtectedRoute requiredRole="operator"><AdminScripts /></ProtectedRoute>} />
                 <Route path="/admin/audit-logs" element={<ProtectedRoute requiredRole="admin"><AdminAuditLogs /></ProtectedRoute>} />
                 <Route path="/admin/users" element={<ProtectedRoute requiredRole="admin"><AdminUsers /></ProtectedRoute>} />
+                <Route path="/admin/llm-providers" element={<ProtectedRoute requiredRole="admin"><AdminLlmProviders /></ProtectedRoute>} />
+                <Route path="/admin/config-export" element={<ProtectedRoute requiredRole="admin"><AdminConfigExport /></ProtectedRoute>} />
                 
                 {/* Settings */}
                 <Route path="/settings" element={<Settings />} />
@@ -134,7 +189,7 @@ const App = () => (
       <AuthProvider>
         <NotificationProvider>
           <BackgroundTaskProvider>
-            <SearchJobProvider>
+            <AuthenticatedSearchJobProvider>
               <QuickAccessProvider>
                 <TooltipProvider>
                   <Toaster />
@@ -144,7 +199,7 @@ const App = () => (
                   </BrowserRouter>
                 </TooltipProvider>
               </QuickAccessProvider>
-            </SearchJobProvider>
+            </AuthenticatedSearchJobProvider>
           </BackgroundTaskProvider>
         </NotificationProvider>
       </AuthProvider>

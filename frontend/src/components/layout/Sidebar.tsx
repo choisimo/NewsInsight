@@ -20,6 +20,7 @@ import {
   Database,
   Gauge,
   CheckCircle,
+  Zap,
 } from "lucide-react";
 import { useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -120,6 +121,11 @@ export function Sidebar({ className }: SidebarProps) {
       title: "Audit Logs",
       href: "/admin/audit-logs",
       icon: FileText,
+    },
+    {
+      title: "LLM Providers",
+      href: "/admin/llm-providers",
+      icon: Zap,
     },
   ];
 

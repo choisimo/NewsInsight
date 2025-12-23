@@ -30,6 +30,9 @@ import {
   StopCircle,
   Activity,
   Radio,
+  Cloud,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -80,6 +83,9 @@ import {
   connectTrainingStream,
   startTrainingWithHuggingFaceDataset,
   runInference,
+  startExternalTraining,
+  uploadExternalModel,
+  completeExternalTraining,
   KOREAN_DATASETS,
   DEFAULT_BASE_MODELS,
   type MLTrainerHealth,
@@ -89,6 +95,8 @@ import {
   type MLModelType,
   type TrainingJobState,
   type InferenceResponse,
+  type ExternalTrainingRequest,
+  type ExternalTrainingResponse,
 } from '@/lib/api';
 
 // =============================================================================
@@ -659,6 +667,17 @@ const MLTraining = () => {
   const [liveUpdates, setLiveUpdates] = useState<Record<string, SSEEvent>>({});
   const [sseConnected, setSseConnected] = useState<Record<string, boolean>>({});
   
+  // External Training State
+  const [externalTrainingOpen, setExternalTrainingOpen] = useState(false);
+  const [externalResponse, setExternalResponse] = useState<ExternalTrainingResponse | null>(null);
+  const [externalModelName, setExternalModelName] = useState('');
+  const [externalModelType, setExternalModelType] = useState<MLModelType>('sentiment');
+  const [externalMaxEpochs, setExternalMaxEpochs] = useState(3);
+  const [externalStarting, setExternalStarting] = useState(false);
+  const [externalUploadFile, setExternalUploadFile] = useState<File | null>(null);
+  const [externalUploading, setExternalUploading] = useState(false);
+  const [copiedEndpoint, setCopiedEndpoint] = useState<string | null>(null);
+  
   // SSE event sources ref
   const eventSourcesRef = useRef<Record<string, EventSource>>({});
 
@@ -861,6 +880,109 @@ const MLTraining = () => {
     }
   };
 
+  // External Training Handlers
+  const handleStartExternalTraining = async () => {
+    if (!externalModelName.trim()) {
+      toast({
+        title: "모델 이름 필요",
+        description: "모델 이름을 입력해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setExternalStarting(true);
+    try {
+      const request: ExternalTrainingRequest = {
+        model_name: externalModelName.trim(),
+        model_type: externalModelType,
+        max_epochs: externalMaxEpochs,
+      };
+      const response = await startExternalTraining(request);
+      setExternalResponse(response);
+      toast({
+        title: "외부 학습 준비 완료",
+        description: `Job ID: ${response.job_id} - Colab/Jupyter에서 학습을 진행하세요.`,
+      });
+      fetchData();
+    } catch (e) {
+      toast({
+        title: "외부 학습 시작 실패",
+        description: e instanceof Error ? e.message : "알 수 없는 오류",
+        variant: "destructive",
+      });
+    } finally {
+      setExternalStarting(false);
+    }
+  };
+
+  const handleUploadExternalModel = async () => {
+    if (!externalResponse || !externalUploadFile) {
+      toast({
+        title: "파일 필요",
+        description: "업로드할 모델 파일을 선택해주세요.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setExternalUploading(true);
+    try {
+      await uploadExternalModel(
+        externalResponse.job_id,
+        externalResponse.upload_token,
+        externalUploadFile
+      );
+      toast({
+        title: "모델 업로드 완료",
+        description: "학습 완료 처리를 진행합니다...",
+      });
+
+      // Complete the training
+      await completeExternalTraining(
+        externalResponse.job_id,
+        externalResponse.upload_token
+      );
+      toast({
+        title: "외부 학습 완료",
+        description: "모델이 성공적으로 등록되었습니다.",
+      });
+
+      // Reset state
+      setExternalResponse(null);
+      setExternalUploadFile(null);
+      setExternalModelName('');
+      setExternalTrainingOpen(false);
+      fetchData();
+    } catch (e) {
+      toast({
+        title: "업로드 실패",
+        description: e instanceof Error ? e.message : "알 수 없는 오류",
+        variant: "destructive",
+      });
+    } finally {
+      setExternalUploading(false);
+    }
+  };
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedEndpoint(label);
+      setTimeout(() => setCopiedEndpoint(null), 2000);
+      toast({
+        title: "복사됨",
+        description: `${label}이(가) 클립보드에 복사되었습니다.`,
+      });
+    } catch (e) {
+      toast({
+        title: "복사 실패",
+        description: "클립보드에 복사할 수 없습니다.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const runningJobs = mergedJobs.filter((j) => j.state === 'RUNNING' || j.state === 'INITIALIZING' || j.state === 'PENDING');
   const completedJobs = mergedJobs.filter((j) => j.state === 'COMPLETED');
   const failedJobs = mergedJobs.filter((j) => j.state === 'FAILED' || j.state === 'CANCELLED');
@@ -974,6 +1096,10 @@ const MLTraining = () => {
             <TabsTrigger value="datasets" className="gap-2">
               <Database className="h-4 w-4" />
               데이터셋
+            </TabsTrigger>
+            <TabsTrigger value="external" className="gap-2">
+              <Cloud className="h-4 w-4" />
+              외부 학습
             </TabsTrigger>
           </TabsList>
 
@@ -1158,6 +1284,230 @@ const MLTraining = () => {
                 </Card>
               ))}
             </div>
+          </TabsContent>
+
+          {/* External Training Tab */}
+          <TabsContent value="external" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Cloud className="h-5 w-5" />
+                  외부 환경에서 학습하기
+                </CardTitle>
+                <CardDescription>
+                  Google Colab이나 Jupyter Notebook에서 직접 모델을 학습하고, 완료된 모델을 업로드하세요.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Step 1: Start External Training */}
+                {!externalResponse ? (
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">1</span>
+                      외부 학습 시작
+                    </h3>
+                    
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="external-model-name">모델 이름 *</Label>
+                        <Input
+                          id="external-model-name"
+                          placeholder="예: colab-sentiment-model"
+                          value={externalModelName}
+                          onChange={(e) => setExternalModelName(e.target.value)}
+                        />
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label>모델 타입</Label>
+                        <Select value={externalModelType} onValueChange={(v) => setExternalModelType(v as MLModelType)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(MODEL_TYPE_LABELS).map(([value, label]) => (
+                              <SelectItem key={value} value={value}>
+                                {label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label>최대 에폭 수</Label>
+                      <Input
+                        type="number"
+                        value={externalMaxEpochs}
+                        onChange={(e) => setExternalMaxEpochs(parseInt(e.target.value) || 3)}
+                        min={1}
+                        max={100}
+                        className="w-32"
+                      />
+                    </div>
+                    
+                    <Button
+                      onClick={handleStartExternalTraining}
+                      disabled={externalStarting || !externalModelName.trim()}
+                    >
+                      {externalStarting ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4 mr-2" />
+                      )}
+                      외부 학습 시작
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Step 2: Copy API Endpoints */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold flex items-center gap-2">
+                        <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">2</span>
+                        API 엔드포인트 복사
+                      </h3>
+                      
+                      <Alert>
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertTitle>Job ID: {externalResponse.job_id}</AlertTitle>
+                        <AlertDescription>
+                          아래 엔드포인트를 Colab/Jupyter에서 사용하세요. Upload Token은 안전하게 보관하세요.
+                        </AlertDescription>
+                      </Alert>
+                      
+                      <div className="grid gap-3">
+                        <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                          <div>
+                            <p className="text-sm font-medium">Upload Token</p>
+                            <p className="text-xs text-muted-foreground font-mono truncate max-w-[300px]">
+                              {externalResponse.upload_token}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyToClipboard(externalResponse.upload_token, 'Upload Token')}
+                          >
+                            {copiedEndpoint === 'Upload Token' ? (
+                              <Check className="h-4 w-4 text-green-500" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                        
+                        {Object.entries(externalResponse.api_endpoints).map(([key, value]) => (
+                          <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                            <div>
+                              <p className="text-sm font-medium capitalize">{key} Endpoint</p>
+                              <p className="text-xs text-muted-foreground font-mono">{value}</p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => copyToClipboard(value, `${key} Endpoint`)}
+                            >
+                              {copiedEndpoint === `${key} Endpoint` ? (
+                                <Check className="h-4 w-4 text-green-500" />
+                              ) : (
+                                <Copy className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Step 3: Upload Completed Model */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold flex items-center gap-2">
+                        <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">3</span>
+                        학습 완료 후 모델 업로드
+                      </h3>
+                      
+                      <div className="space-y-2">
+                        <Label htmlFor="model-file">모델 파일 (.pt, .bin, .safetensors 등)</Label>
+                        <Input
+                          id="model-file"
+                          type="file"
+                          accept=".pt,.bin,.safetensors,.ckpt,.h5,.pth"
+                          onChange={(e) => setExternalUploadFile(e.target.files?.[0] || null)}
+                        />
+                        {externalUploadFile && (
+                          <p className="text-sm text-muted-foreground">
+                            선택됨: {externalUploadFile.name} ({(externalUploadFile.size / 1024 / 1024).toFixed(2)} MB)
+                          </p>
+                        )}
+                      </div>
+                      
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={handleUploadExternalModel}
+                          disabled={externalUploading || !externalUploadFile}
+                        >
+                          {externalUploading ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <Upload className="h-4 w-4 mr-2" />
+                          )}
+                          모델 업로드 및 완료
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setExternalResponse(null);
+                            setExternalUploadFile(null);
+                          }}
+                        >
+                          취소
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <Separator />
+
+                {/* Instructions */}
+                <Collapsible>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" className="w-full justify-between">
+                      <span className="flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        Colab/Jupyter 사용 가이드
+                      </span>
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-4">
+                    <div className="rounded-lg bg-muted p-4 text-sm space-y-3">
+                      <p><strong>1. 외부 학습 시작:</strong> 위에서 모델 이름과 타입을 입력하고 시작하세요.</p>
+                      <p><strong>2. API 정보 복사:</strong> 생성된 Job ID, Upload Token, API 엔드포인트를 복사하세요.</p>
+                      <p><strong>3. Colab에서 학습:</strong> 제공된 API를 사용하여 진행 상황을 업데이트할 수 있습니다.</p>
+                      <pre className="bg-background p-2 rounded text-xs overflow-x-auto">
+{`# 진행 상황 업데이트 예시
+import requests
+
+requests.post(
+    "{progress_endpoint}",
+    json={
+        "upload_token": "{token}",
+        "progress": 50,
+        "epoch": 2,
+        "total_epochs": 4,
+        "loss": 0.25
+    }
+)`}
+                      </pre>
+                      <p><strong>4. 모델 업로드:</strong> 학습이 완료되면 여기서 모델 파일을 업로드하세요.</p>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
 

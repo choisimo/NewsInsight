@@ -58,6 +58,9 @@ public class TrustScoreConfig {
         
         /** Google Fact Check verified results */
         private double googleFactCheck = 0.85;
+        
+        /** Realtime web search (Perplexity) - good for current prices/data */
+        private double realtimeSearch = 0.80;
     }
 
     @Data
@@ -111,6 +114,7 @@ public class TrustScoreConfig {
             return factCheck.wikipedia;
         }
         if (key.contains("google") && key.contains("fact")) return factCheck.googleFactCheck;
+        if (key.contains("realtime") || key.contains("perplexity")) return factCheck.realtimeSearch;
         
         // Check trusted sources
         if (key.contains("britannica")) return trusted.britannica;

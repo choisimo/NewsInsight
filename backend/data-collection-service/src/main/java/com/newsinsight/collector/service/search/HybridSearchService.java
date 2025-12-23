@@ -164,9 +164,8 @@ public class HybridSearchService {
     private Mono<List<SearchCandidate>> searchKeyword(String query, LocalDateTime since, LocalDateTime until) {
         return Mono.fromCallable(() -> {
             try {
-                PageRequest pageRequest = PageRequest.of(0, keywordTopK,
-                        Sort.by(Sort.Direction.DESC, "publishedDate")
-                                .and(Sort.by(Sort.Direction.DESC, "collectedAt")));
+                // Note: Native query already has ORDER BY clause, so use unsorted PageRequest
+                PageRequest pageRequest = PageRequest.of(0, keywordTopK, Sort.unsorted());
 
                 Page<CollectedData> page;
                 if (until != null) {

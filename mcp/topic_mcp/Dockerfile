@@ -9,10 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY topic_mcp/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py .
+# Note: Build context should be mcp/ folder
+COPY topic_mcp/server.py .
+COPY shared ./shared
 
 ENV PORT=5003
 ENV DB_BACKEND=postgres

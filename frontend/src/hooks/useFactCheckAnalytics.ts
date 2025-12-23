@@ -540,8 +540,15 @@ export function useFactCheckAnalytics() {
 
 /**
  * Generate mock analytics for demo/testing purposes
+ * WARNING: This function should only be used in development/testing environments.
+ * In production, always use real backend data.
  */
 export function generateMockAnalytics(overrides?: Partial<FactCheckAnalytics>): FactCheckAnalytics {
+  // Log warning in production environment
+  if (import.meta.env.PROD) {
+    console.warn('[generateMockAnalytics] Using mock data in production environment. This should be avoided.');
+  }
+  
   return {
     sourceAnalysis: {
       sourceName: "연합뉴스",

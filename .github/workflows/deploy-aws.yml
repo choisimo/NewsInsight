@@ -1,0 +1,290 @@
+name: Deploy to AWS ECS
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      deploy_infra:
+        description: 'Deploy infrastructure (CDK)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: ap-northeast-2
+  PROJECT_NAME: newsinsight
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # Determine environment based on branch
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      tag: ${{ steps.set-env.outputs.tag }}
+    steps:
+      - name: Set environment
+        id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "tag=${{ inputs.environment }}-${{ github.sha }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+            echo "tag=prod-${{ github.sha }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/staging" ]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "tag=staging-${{ github.sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "tag=dev-${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
+  # Deploy infrastructure with CDK (optional)
+  infrastructure:
+    needs: setup
+    runs-on: ubuntu-latest
+    if: ${{ inputs.deploy_infra == true }}
+    environment: ${{ needs.setup.outputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: aws/cdk/package-lock.json
+
+      - name: Install CDK dependencies
+        working-directory: aws/cdk
+        run: npm ci
+
+      - name: CDK Bootstrap (if needed)
+        working-directory: aws/cdk
+        run: |
+          npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }} || true
+
+      - name: Deploy CDK stacks
+        working-directory: aws/cdk
+        run: |
+          npx cdk deploy --all \
+            -c env=${{ needs.setup.outputs.environment }} \
+            --require-approval never \
+            --outputs-file cdk-outputs.json
+
+      - name: Upload CDK outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs
+          path: aws/cdk/cdk-outputs.json
+
+  # Build and push Docker images
+  build:
+    needs: [setup, infrastructure]
+    if: always() && (needs.infrastructure.result == 'success' || needs.infrastructure.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: ${{ needs.setup.outputs.environment }}
+    strategy:
+      matrix:
+        service:
+          - frontend
+          - api-gateway
+          - collector-service
+          - autonomous-crawler
+          - browser-use-api
+          - admin-dashboard
+          - bot-detector
+          - sentiment-addon
+          - factcheck-addon
+          - bias-addon
+          - newsinsight-mcp
+          - bias-mcp
+          - factcheck-mcp
+          - topic-mcp
+          - aiagent-mcp
+      fail-fast: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service == 'frontend' && '.' || 
+                       matrix.service == 'api-gateway' && '.' ||
+                       matrix.service == 'collector-service' && '.' ||
+                       matrix.service == 'autonomous-crawler' && '.' ||
+                       matrix.service == 'browser-use-api' && 'backend/services/browser-use-api' ||
+                       matrix.service == 'admin-dashboard' && 'backend/admin-dashboard' ||
+                       matrix.service == 'bot-detector' && '.' ||
+                       matrix.service == 'sentiment-addon' && 'backend/ml-addons/sentiment-addon' ||
+                       matrix.service == 'factcheck-addon' && 'backend/ml-addons/factcheck-addon' ||
+                       matrix.service == 'bias-addon' && 'backend/ml-addons/bias-addon' ||
+                       'mcp' }}
+          file: ${{ matrix.service == 'frontend' && 'frontend/Dockerfile' ||
+                   matrix.service == 'api-gateway' && 'backend/api-gateway-service/Dockerfile' ||
+                   matrix.service == 'collector-service' && 'backend/data-collection-service/Dockerfile' ||
+                   matrix.service == 'autonomous-crawler' && 'backend/autonomous-crawler-service/Dockerfile' ||
+                   matrix.service == 'browser-use-api' && 'backend/services/browser-use-api/Dockerfile.api' ||
+                   matrix.service == 'admin-dashboard' && 'backend/admin-dashboard/Dockerfile' ||
+                   matrix.service == 'bot-detector' && 'backend/services/bot-detector/Dockerfile' ||
+                   matrix.service == 'sentiment-addon' && 'backend/ml-addons/sentiment-addon/Dockerfile' ||
+                   matrix.service == 'factcheck-addon' && 'backend/ml-addons/factcheck-addon/Dockerfile' ||
+                   matrix.service == 'bias-addon' && 'backend/ml-addons/bias-addon/Dockerfile' ||
+                   matrix.service == 'newsinsight-mcp' && 'mcp/newsinsight_mcp/Dockerfile' ||
+                   matrix.service == 'bias-mcp' && 'mcp/bias_mcp/Dockerfile' ||
+                   matrix.service == 'factcheck-mcp' && 'mcp/factcheck_mcp/Dockerfile' ||
+                   matrix.service == 'topic-mcp' && 'mcp/topic_mcp/Dockerfile' ||
+                   format('mcp/{0}/Dockerfile', matrix.service) }}
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.PROJECT_NAME }}/${{ matrix.service }}:${{ needs.setup.outputs.tag }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.PROJECT_NAME }}/${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Deploy to ECS
+  deploy:
+    needs: [setup, build]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.setup.outputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update ECS services
+        run: |
+          CLUSTER_NAME="${{ env.PROJECT_NAME }}-cluster-${{ needs.setup.outputs.environment }}"
+          
+          # Get all services in the cluster
+          SERVICES=$(aws ecs list-services \
+            --cluster ${CLUSTER_NAME} \
+            --query 'serviceArns[]' \
+            --output text || echo "")
+          
+          if [ -z "$SERVICES" ]; then
+            echo "No services found in cluster ${CLUSTER_NAME}"
+            exit 0
+          fi
+          
+          # Force new deployment for each service
+          for SERVICE_ARN in ${SERVICES}; do
+            SERVICE_NAME=$(echo ${SERVICE_ARN} | awk -F'/' '{print $NF}')
+            echo "Updating service: ${SERVICE_NAME}"
+            
+            aws ecs update-service \
+              --cluster ${CLUSTER_NAME} \
+              --service ${SERVICE_NAME} \
+              --force-new-deployment || true
+          done
+
+      - name: Wait for services to stabilize
+        run: |
+          CLUSTER_NAME="${{ env.PROJECT_NAME }}-cluster-${{ needs.setup.outputs.environment }}"
+          
+          # Get all services
+          SERVICES=$(aws ecs list-services \
+            --cluster ${CLUSTER_NAME} \
+            --query 'serviceArns[]' \
+            --output text || echo "")
+          
+          if [ -z "$SERVICES" ]; then
+            echo "No services found"
+            exit 0
+          fi
+          
+          # Wait for each service (with timeout)
+          for SERVICE_ARN in ${SERVICES}; do
+            SERVICE_NAME=$(echo ${SERVICE_ARN} | awk -F'/' '{print $NF}')
+            echo "Waiting for ${SERVICE_NAME} to stabilize..."
+            
+            aws ecs wait services-stable \
+              --cluster ${CLUSTER_NAME} \
+              --services ${SERVICE_NAME} || echo "Warning: ${SERVICE_NAME} did not stabilize in time"
+          done
+
+      - name: Get deployment info
+        run: |
+          # Get ALB DNS
+          ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name "${{ env.PROJECT_NAME }}-alb-${{ needs.setup.outputs.environment }}" \
+            --query "Stacks[0].Outputs[?OutputKey=='AlbDnsName'].OutputValue" \
+            --output text || echo "Not available")
+          
+          echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: ${{ needs.setup.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application URL**: https://${ALB_DNS}" >> $GITHUB_STEP_SUMMARY
+
+  # Notify on completion
+  notify:
+    needs: [setup, deploy]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Notify Slack
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "NewsInsight Deployment ${{ needs.deploy.result == 'success' && 'Succeeded' || 'Failed' }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*NewsInsight AWS Deployment*\n\n*Environment:* ${{ needs.setup.outputs.environment }}\n*Status:* ${{ needs.deploy.result == 'success' && ':white_check_mark: Success' || ':x: Failed' }}\n*Commit:* `${{ github.sha }}`"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

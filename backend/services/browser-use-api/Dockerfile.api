@@ -1,0 +1,82 @@
+# Browser-Use API Server Dockerfile
+# Provides browser automation with AI Dove integration
+
+FROM python:3.12-slim
+
+LABEL name="browser-use-api" \
+    description="Browser automation API server with AI Dove integration" \
+    version="1.0.0"
+
+# Environment variables
+ENV TZ=Asia/Seoul \
+    LANGUAGE=en_US:en \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8 \
+    DEBIAN_FRONTEND=noninteractive \
+    PYTHONIOENCODING=UTF-8 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_CACHE_DIR=/root/.cache/uv \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_PREFERENCE=only-system \
+    IN_DOCKER=True
+
+# Paths
+ENV CODE_DIR=/app \
+    DATA_DIR=/data \
+    VENV_DIR=/app/.venv \
+    PATH="/app/.venv/bin:$PATH"
+
+SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-c"]
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update -qq \
+    && apt-get install -qq -y --no-install-recommends \
+        # Basic tools
+        apt-transport-https ca-certificates curl wget gnupg2 \
+        # Build essentials for some pip packages
+        build-essential \
+        # Browser dependencies
+        chromium \
+        fonts-unifont \
+        fonts-liberation \
+        fonts-dejavu-core \
+        fonts-freefont-ttf \
+        fonts-noto-core \
+        # Additional dependencies
+        libnss3 \
+        libxss1 \
+        libasound2 \
+        libx11-xcb1 \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/chromium /usr/bin/chromium-browser
+
+# Install uv for fast package management
+RUN pip install --no-cache-dir uv
+
+# Copy dependency manifest and README first for caching
+COPY pyproject.toml README.md ./
+
+# Create venv and install dependencies from pyproject.toml
+RUN uv venv \
+    && uv pip install .
+
+# Copy source code
+COPY . .
+
+# Create data directory
+RUN mkdir -p /data
+
+# Expose port
+EXPOSE 8500
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:8500/health || exit 1
+
+# Run the server
+CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8500"]

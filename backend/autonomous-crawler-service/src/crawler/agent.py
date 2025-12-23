@@ -118,6 +118,7 @@ class CustomRESTAPIClient:
 
         # For browser-use compatibility
         self.provider = "custom"
+        self.model_name = model or "custom"  # Required by browser-use telemetry
 
     def _build_headers(self) -> dict[str, str]:
         """Build HTTP headers for the request."""
@@ -143,11 +144,25 @@ class CustomRESTAPIClient:
 
     def _build_request_body(self, prompt: str) -> dict[str, Any]:
         """Build request body from template or default format."""
+        # Ensure prompt is a string
+        if not isinstance(prompt, str):
+            if isinstance(prompt, list):
+                # Join list items into a single string
+                prompt = "\n".join(str(item) for item in prompt)
+            else:
+                prompt = str(prompt)
+
         if self.request_format:
             try:
+                # Escape special characters for JSON string embedding
+                # This handles quotes, newlines, backslashes, etc.
+                escaped_prompt = json.dumps(prompt)[
+                    1:-1
+                ]  # Remove surrounding quotes from json.dumps
+
                 # Parse the template and substitute placeholders
                 template = self.request_format
-                template = template.replace("{prompt}", prompt)
+                template = template.replace("{prompt}", escaped_prompt)
                 template = template.replace("{session_id}", self._session_id)
                 template = template.replace("{model}", self.model)
                 template = template.replace("{temperature}", str(self.temperature))
@@ -193,12 +208,13 @@ class CustomRESTAPIClient:
 
         return str(current) if current is not None else ""
 
-    async def ainvoke(self, messages: list[dict[str, Any]], **kwargs) -> Any:
+    async def ainvoke(self, messages: list[dict[str, Any]], config: Any = None, **kwargs) -> Any:
         """
         Async invoke the custom API (compatible with LangChain interface).
 
         Args:
             messages: List of message dicts with 'role' and 'content' keys
+            config: Optional config object (ignored for custom API, for LangChain compatibility)
             **kwargs: Additional arguments (ignored for custom API)
 
         Returns:
@@ -257,10 +273,28 @@ class CustomRESTAPIClient:
                 content_length=len(content),
             )
 
-        # Return an object with 'content' attribute for browser-use compatibility
+        # Return an object with all attributes expected by browser-use/LangChain
         class Response:
+            """Response object compatible with LangChain/browser-use expectations."""
+
             def __init__(self, text: str):
                 self.content = text
+                # Usage as dict with all required fields for browser-use ChatInvokeUsage Pydantic model
+                self.usage = {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "prompt_cached_tokens": 0,
+                    "prompt_cache_creation_tokens": 0,
+                    "prompt_image_tokens": 0,
+                }
+                # Additional attributes expected by browser-use
+                self.response_metadata = {}
+                self.completion = text  # Some frameworks expect 'completion' instead of 'content'
+                self.text = text  # Alias for content
+                self.message = type("Message", (), {"content": text})()  # Mock message object
+                self.id = "custom-response"
+                self.model = "aidove"
 
         return Response(content)
 
@@ -384,6 +418,93 @@ async def create_stealth_hook(crawler_agent: "AutonomousCrawlerAgent") -> callab
 
         except Exception as e:
             logger.debug("Error in stealth hook", error=str(e))
+
+    return on_step_end_hook
+
+
+async def create_url_filter_hook(
+    crawler_agent: "AutonomousCrawlerAgent",
+    on_blocked_url: callable = None,
+) -> callable:
+    """
+    Create a hook function that filters out blocked URLs during navigation.
+
+    This hook is called at the end of each step to check if the browser
+    navigated to a blocked URL (login, help, marketing pages, etc.) and
+    navigates back if so.
+
+    Args:
+        crawler_agent: The AutonomousCrawlerAgent instance
+        on_blocked_url: Optional callback when a blocked URL is detected
+
+    Returns:
+        Async hook function compatible with browser-use Agent
+    """
+    from src.crawler.url_filter import should_block_url, clean_url
+
+    _visited_urls: set[str] = set()
+    _blocked_count = {"value": 0}
+    _max_blocked_navigations = 5  # Give up after too many blocked pages
+
+    async def on_step_end_hook(agent: "BrowserUseAgent") -> None:
+        """Hook called at the end of each browser-use step to filter blocked URLs."""
+        try:
+            browser_session = agent.browser_session
+            if not browser_session:
+                return
+
+            page = None
+            try:
+                if hasattr(browser_session, "_context") and browser_session._context:
+                    pages = browser_session._context.pages
+                    if pages:
+                        page = pages[-1]
+            except Exception:
+                pass
+
+            if not page:
+                return
+
+            current_url = page.url
+
+            # Skip if we've already checked this URL
+            if current_url in _visited_urls:
+                return
+
+            _visited_urls.add(current_url)
+
+            # Check if this URL should be blocked
+            cleaned_url = clean_url(current_url)
+            if should_block_url(cleaned_url, log_reason=True):
+                _blocked_count["value"] += 1
+
+                logger.warning(
+                    "Browser navigated to blocked URL, will navigate back",
+                    blocked_url=current_url[:200],
+                    blocked_count=_blocked_count["value"],
+                )
+
+                if on_blocked_url:
+                    try:
+                        await on_blocked_url(current_url)
+                    except Exception:
+                        pass
+
+                # Navigate back to previous page if we haven't hit the limit
+                if _blocked_count["value"] <= _max_blocked_navigations:
+                    try:
+                        await page.go_back(timeout=5000)
+                        logger.debug("Navigated back from blocked URL")
+                    except Exception as e:
+                        logger.debug("Could not navigate back", error=str(e))
+                else:
+                    logger.warning(
+                        "Too many blocked URLs encountered, stopping back navigation",
+                        blocked_count=_blocked_count["value"],
+                    )
+
+        except Exception as e:
+            logger.debug("Error in URL filter hook", error=str(e))
 
     return on_step_end_hook
 
@@ -761,11 +882,21 @@ class AutonomousCrawlerAgent:
         if self._captcha_solver is None:
             # Get paid solver API keys from settings
             captcha_settings = getattr(self.settings, "captcha", None)
-            capsolver_key = getattr(captcha_settings, "capsolver_api_key", "") if captcha_settings else ""
-            twocaptcha_key = getattr(captcha_settings, "twocaptcha_api_key", "") if captcha_settings else ""
-            prefer_paid = getattr(captcha_settings, "prefer_paid_solver", True) if captcha_settings else True
-            paid_timeout = getattr(captcha_settings, "paid_solver_timeout", 120.0) if captcha_settings else 120.0
-            
+            capsolver_key = (
+                getattr(captcha_settings, "capsolver_api_key", "") if captcha_settings else ""
+            )
+            twocaptcha_key = (
+                getattr(captcha_settings, "twocaptcha_api_key", "") if captcha_settings else ""
+            )
+            prefer_paid = (
+                getattr(captcha_settings, "prefer_paid_solver", True) if captcha_settings else True
+            )
+            paid_timeout = (
+                getattr(captcha_settings, "paid_solver_timeout", 120.0)
+                if captcha_settings
+                else 120.0
+            )
+
             self._captcha_solver = CaptchaSolverOrchestrator(
                 capsolver_api_key=capsolver_key,
                 twocaptcha_api_key=twocaptcha_key,
@@ -1726,6 +1857,20 @@ class AutonomousCrawlerAgent:
                 ),
             )
             stealth_hook = await create_stealth_hook(self)
+            url_filter_hook = await create_url_filter_hook(
+                crawler_agent=self,
+                on_blocked_url=lambda url: logger.info(
+                    "Blocked URL navigation detected",
+                    blocked_url=url[:100],
+                    job_id=session.job_id,
+                ),
+            )
+
+            # Combine stealth and URL filter hooks into a single on_step_end hook
+            async def combined_step_end_hook(agent: "BrowserUseAgent") -> None:
+                """Combined hook for stealth patches and URL filtering."""
+                await stealth_hook(agent)
+                await url_filter_hook(agent)
 
             agent = Agent(
                 task=task_prompt,
@@ -1741,7 +1886,7 @@ class AutonomousCrawlerAgent:
                     agent.run(
                         max_steps=session.max_pages * 3,  # Allow multiple steps per page
                         on_step_start=captcha_hook,  # CAPTCHA detection before each step
-                        on_step_end=stealth_hook,  # Re-apply stealth after navigation
+                        on_step_end=combined_step_end_hook,  # Stealth patches + URL filter after navigation
                     ),
                     timeout=session.budget_seconds,
                 )

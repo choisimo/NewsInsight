@@ -14,6 +14,12 @@ import {
   type SearchJobStatus,
   type StartSearchJobRequest,
 } from '@/lib/api';
+import { 
+  persistState, 
+  loadPersistedState, 
+  PERSISTENCE_KEYS, 
+  EXPIRY_TIMES 
+} from '@/lib/persistence';
 
 // ============================================
 // Types
@@ -41,6 +47,16 @@ type SearchJobAction =
 const MAX_JOBS_TO_KEEP = 50;
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 5;
+const PERSISTENCE_VERSION = 1;
+
+// Persistence options for search jobs
+const persistenceOptions = {
+  key: PERSISTENCE_KEYS.SEARCH_JOBS,
+  storage: 'local' as const,
+  expiry: EXPIRY_TIMES.ONE_DAY,
+  version: PERSISTENCE_VERSION,
+  validate: (jobs: SearchJob[]) => Array.isArray(jobs),
+};
 
 // Job type labels (Korean)
 export const JOB_TYPE_LABELS: Record<SearchJobType, string> = {
@@ -155,17 +171,30 @@ export function SearchJobProvider({
   userId = 'anonymous',
   autoConnect = true,
 }: SearchJobProviderProps) {
-  const [state, dispatch] = useReducer(jobReducer, {
-    jobs: [],
-    isLoaded: false,
-    isConnected: false,
-    connectionError: null,
-  });
+  // Load persisted state on initialization
+  const getInitialState = (): SearchJobState => {
+    const persisted = loadPersistedState<SearchJob[]>(persistenceOptions);
+    return {
+      jobs: persisted || [],
+      isLoaded: persisted !== null, // Mark as loaded if we have persisted data
+      isConnected: false,
+      connectionError: null,
+    };
+  };
+
+  const [state, dispatch] = useReducer(jobReducer, undefined, getInitialState);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectAttempts = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const userIdRef = useRef(userId);
+
+  // Persist jobs to storage whenever they change
+  useEffect(() => {
+    if (state.isLoaded && state.jobs.length > 0) {
+      persistState(state.jobs, persistenceOptions);
+    }
+  }, [state.jobs, state.isLoaded]);
 
   // Keep userId ref updated
   useEffect(() => {

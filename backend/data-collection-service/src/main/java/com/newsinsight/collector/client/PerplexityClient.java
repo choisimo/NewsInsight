@@ -15,6 +15,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.netty.http.client.HttpClient;
 
+import com.newsinsight.collector.service.LlmProviderSettingsService;
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.util.List;
@@ -26,13 +27,14 @@ import java.util.concurrent.TimeUnit;
 public class PerplexityClient {
 
     private final ObjectMapper objectMapper;
+    private final LlmProviderSettingsService llmProviderSettingsService;
     private WebClient perplexityWebClient;
 
     @Value("${PERPLEXITY_API_KEY:}")
-    private String apiKey;
+    private String envApiKey;
 
     @Value("${PERPLEXITY_BASE_URL:https://api.perplexity.ai}")
-    private String baseUrl;
+    private String envBaseUrl;
 
     @Value("${PERPLEXITY_MODEL:llama-3.1-sonar-large-128k-online}")
     private String model;
@@ -40,8 +42,43 @@ public class PerplexityClient {
     @Value("${collector.perplexity.timeout-seconds:120}")
     private int timeoutSeconds;
 
-    public PerplexityClient(ObjectMapper objectMapper) {
+    public PerplexityClient(ObjectMapper objectMapper, LlmProviderSettingsService llmProviderSettingsService) {
         this.objectMapper = objectMapper;
+        this.llmProviderSettingsService = llmProviderSettingsService;
+    }
+    
+    /**
+     * Get API key from LLM Provider Settings or fall back to environment variable
+     */
+    private String getApiKey() {
+        // Try to get from LLM Provider Settings first
+        try {
+            var apiKey = llmProviderSettingsService.getGlobalApiKey(
+                com.newsinsight.collector.entity.settings.LlmProviderType.PERPLEXITY);
+            if (apiKey.isPresent() && !apiKey.get().isBlank()) {
+                return apiKey.get();
+            }
+        } catch (Exception e) {
+            log.debug("Failed to get Perplexity settings from database, falling back to env: {}", e.getMessage());
+        }
+        // Fall back to environment variable
+        return envApiKey;
+    }
+    
+    /**
+     * Get base URL from LLM Provider Settings or fall back to environment variable
+     */
+    private String getBaseUrl() {
+        try {
+            var baseUrl = llmProviderSettingsService.getGlobalBaseUrl(
+                com.newsinsight.collector.entity.settings.LlmProviderType.PERPLEXITY);
+            if (baseUrl.isPresent() && !baseUrl.get().isBlank()) {
+                return baseUrl.get();
+            }
+        } catch (Exception e) {
+            log.debug("Failed to get Perplexity base URL from database: {}", e.getMessage());
+        }
+        return envBaseUrl;
     }
 
     @PostConstruct
@@ -69,14 +106,17 @@ public class PerplexityClient {
      * Check if Perplexity API is enabled (API key is configured)
      */
     public boolean isEnabled() {
+        String apiKey = getApiKey();
         return apiKey != null && !apiKey.isBlank();
     }
 
     public Flux<String> streamCompletion(String prompt) {
-        if (!isEnabled()) {
+        String apiKey = getApiKey();
+        if (apiKey == null || apiKey.isBlank()) {
             return Flux.error(new IllegalStateException("Perplexity API key is not configured"));
         }
 
+        String baseUrl = getBaseUrl();
         String url = baseUrl.endsWith("/") ? baseUrl + "chat/completions" : baseUrl + "/chat/completions";
 
         // System message to guide the AI to respond directly in report format
@@ -111,6 +151,19 @@ public class PerplexityClient {
                 .doOnError(e -> log.error("Perplexity API error: {}", e.getMessage()))
                 .doOnComplete(() -> log.debug("Perplexity stream completed"))
                 .flatMap(this::extractTextFromChunk);
+    }
+
+    /**
+     * Non-streaming search request that collects all chunks into a single response.
+     * Useful for simple queries where streaming is not needed.
+     *
+     * @param prompt The search prompt
+     * @return Mono with the complete response string
+     */
+    public reactor.core.publisher.Mono<String> search(String prompt) {
+        return streamCompletion(prompt)
+                .collectList()
+                .map(chunks -> String.join("", chunks));
     }
 
     private Flux<String> extractTextFromChunk(String chunk) {

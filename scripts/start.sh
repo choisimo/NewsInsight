@@ -110,12 +110,55 @@ fi
 
 echo
 echo "==== 이미지 빌드 ===="
-docker compose -p "${PROJECT_NAME}" ${ENV_FILE_OPT} -f "${COMPOSE_FILE}" build --progress=plain
+if ! docker compose -p "${PROJECT_NAME}" ${ENV_FILE_OPT} -f "${COMPOSE_FILE}" build --progress=plain; then
+  echo "[ERROR] 이미지 빌드에 실패했습니다." >&2
+  exit 1
+fi
 
 echo
 echo "==== 컨테이너 기동 (detached 모드) ===="
-docker compose -p "${PROJECT_NAME}" ${ENV_FILE_OPT} -f "${COMPOSE_FILE}" up -d
+if ! docker compose -p "${PROJECT_NAME}" ${ENV_FILE_OPT} -f "${COMPOSE_FILE}" up -d; then
+  echo "[ERROR] 컨테이너 기동에 실패했습니다." >&2
+  echo "로그 확인: docker compose -p ${PROJECT_NAME} -f ${COMPOSE_FILE} logs" >&2
+  exit 1
+fi
+
+echo
+echo "==== 서비스 상태 대기 (최대 60초) ===="
+MAX_WAIT=60
+WAITED=0
+while [[ $WAITED -lt $MAX_WAIT ]]; do
+  # Check if consul-seed completed (if it exists and is expected to complete)
+  SEED_STATUS=$(docker compose -p "${PROJECT_NAME}" ${ENV_FILE_OPT} -f "${COMPOSE_FILE}" ps consul-seed --format '{{.State}}' 2>/dev/null || echo "missing")
+  
+  if [[ "$SEED_STATUS" == "exited" ]] || [[ "$SEED_STATUS" == "missing" ]]; then
+    # Check exit code if exited
+    if [[ "$SEED_STATUS" == "exited" ]]; then
+      SEED_EXIT_CODE=$(docker inspect --format='{{.State.ExitCode}}' newsinsight-consul-seed-1 2>/dev/null || echo "0")
+      if [[ "$SEED_EXIT_CODE" != "0" ]]; then
+        echo "[WARNING] consul-seed exited with code $SEED_EXIT_CODE" >&2
+        echo "로그 확인: docker logs newsinsight-consul-seed-1" >&2
+      fi
+    fi
+    break
+  fi
+  
+  echo "서비스 초기화 대기 중... ($WAITED/${MAX_WAIT}초)"
+  sleep 5
+  WAITED=$((WAITED + 5))
+done
 
 echo
 echo "==== 완료 ===="
 docker compose -p "${PROJECT_NAME}" ${ENV_FILE_OPT} -f "${COMPOSE_FILE}" ps
+
+echo
+echo "==== 서비스 상태 요약 ===="
+UNHEALTHY=$(docker compose -p "${PROJECT_NAME}" ${ENV_FILE_OPT} -f "${COMPOSE_FILE}" ps --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -i "unhealthy" || true)
+if [[ -n "$UNHEALTHY" ]]; then
+  echo "[WARNING] 다음 서비스가 unhealthy 상태입니다:"
+  echo "$UNHEALTHY"
+  echo "로그 확인: docker compose -p ${PROJECT_NAME} -f ${COMPOSE_FILE} logs <service-name>"
+else
+  echo "[OK] 모든 서비스가 정상적으로 시작되었습니다."
+fi

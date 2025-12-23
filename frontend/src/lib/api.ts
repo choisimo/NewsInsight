@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import type {
   AnalysisResponse,
   ArticlesResponse,
@@ -8,8 +8,26 @@ import type {
 } from '@/types/api';
 import { getSessionId, getDeviceId } from './anonymous-session';
 
-// Storage key for access token (shared with AuthContext)
+// Storage keys for tokens (shared with AuthContext)
 const ACCESS_TOKEN_KEY = 'access_token';
+// Note: Refresh token is now stored in HTTP-Only cookie, not localStorage
+
+// Token refresh state management
+let isRefreshing = false;
+let refreshSubscribers: ((token: string) => void)[] = [];
+
+const subscribeTokenRefresh = (callback: (token: string) => void) => {
+  refreshSubscribers.push(callback);
+};
+
+const onTokenRefreshed = (token: string) => {
+  refreshSubscribers.forEach((callback) => callback(token));
+  refreshSubscribers = [];
+};
+
+const onRefreshError = () => {
+  refreshSubscribers = [];
+};
 
 let apiInstance: ReturnType<typeof axios.create> | null = null;
 
@@ -77,6 +95,82 @@ const getAccessToken = (): string | null => {
   return null;
 };
 
+/**
+ * Save access token to localStorage and cookie
+ * Note: Refresh token is handled via HTTP-Only cookie by the server
+ */
+const saveTokens = (accessToken: string): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+    // Also set access token as cookie for SSE/EventSource requests
+    document.cookie = `access_token=${accessToken}; path=/; SameSite=Lax`;
+  }
+};
+
+/**
+ * Clear all auth tokens from storage
+ * Note: HTTP-Only refresh token cookie is cleared by the logout endpoint
+ */
+const clearTokens = (): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem('token_type');
+    localStorage.removeItem('admin_user');
+    document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  }
+};
+
+/**
+ * Refresh access token using HTTP-Only cookie
+ * The refresh token is stored in an HTTP-Only cookie and sent automatically
+ * Returns new access token or null if refresh fails
+ */
+const refreshAccessToken = async (): Promise<string | null> => {
+  try {
+    // Use fetch directly to avoid interceptor loops
+    // Browser will automatically send the HTTP-Only refresh_token cookie
+    const baseURL = resolveInitialBaseUrl();
+    const response = await fetch(`${baseURL}/api/v1/admin/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include', // Important: include cookies in the request
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    // Server sets new refresh token as HTTP-Only cookie automatically
+    return data.access_token;
+  } catch (error) {
+    console.error('Token refresh failed:', error);
+    return null;
+  }
+};
+
+/**
+ * Append authentication token to URL for SSE connections.
+ * EventSource doesn't support custom headers, so we use query parameter.
+ */
+export const appendTokenToUrl = (url: string): string => {
+  const token = getAccessToken();
+  if (!token) return url;
+  
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+};
+
+/**
+ * Create an authenticated EventSource for SSE connections.
+ * Appends the JWT token as a query parameter since EventSource doesn't support headers.
+ */
+export const createAuthenticatedEventSource = (url: string): EventSource => {
+  return new EventSource(appendTokenToUrl(url));
+};
+
 export const getApiClient = async () => {
   if (apiInstance) {
     return apiInstance;
@@ -113,20 +207,97 @@ export const getApiClient = async () => {
     }
   );
 
-  // Response interceptor to handle 401 errors
+  // Response interceptor to handle 401 errors with automatic token refresh
   apiInstance.interceptors.response.use(
     (response) => response,
-    (error) => {
-      if (error.response?.status === 401) {
-        // Token might be expired, clear storage
-        // The AuthContext will handle re-authentication
-        console.warn('Received 401 Unauthorized, token might be expired');
+    async (error: AxiosError) => {
+      const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+      
+      // Check if error is 401 and we haven't already tried to refresh
+      if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
+        // Skip token refresh for auth endpoints to avoid infinite loops
+        const isAuthEndpoint = originalRequest.url?.includes('/auth/refresh') || 
+                               originalRequest.url?.includes('/auth/token') ||
+                               originalRequest.url?.includes('/auth/login');
         
-        // Optionally trigger a custom event for auth context to handle
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+        // Skip token refresh for public endpoints that should work without auth
+        // These endpoints may return 401 if an invalid token is sent, but they don't require auth
+        const isPublicEndpoint = originalRequest.url?.includes('/api/v1/reports/') ||
+                                 originalRequest.url?.includes('/api/v1/search/') ||
+                                 originalRequest.url?.includes('/api/v1/analysis/') ||
+                                 originalRequest.url?.includes('/api/v1/factcheck-chat/');
+        
+        if (isAuthEndpoint || isPublicEndpoint) {
+          return Promise.reject(error);
+        }
+
+        // If already refreshing, wait for the refresh to complete
+        if (isRefreshing) {
+          return new Promise((resolve, reject) => {
+            subscribeTokenRefresh((newToken: string) => {
+              originalRequest.headers.Authorization = `Bearer ${newToken}`;
+              resolve(apiInstance!.request(originalRequest));
+            });
+            // Add timeout to avoid hanging indefinitely
+            setTimeout(() => reject(error), 10000);
+          });
+        }
+
+        // Start refreshing
+        originalRequest._retry = true;
+        isRefreshing = true;
+
+        try {
+          // refreshAccessToken uses HTTP-Only cookie automatically
+          const newAccessToken = await refreshAccessToken();
+          
+          if (newAccessToken) {
+            // Save new access token (refresh token is in HTTP-Only cookie)
+            saveTokens(newAccessToken);
+            
+            // Update the failed request with new token
+            originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+            
+            // Notify all subscribers
+            onTokenRefreshed(newAccessToken);
+            
+            // Dispatch event for AuthContext to update its state
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('auth:tokenRefreshed', {
+                detail: {
+                  accessToken: newAccessToken,
+                }
+              }));
+            }
+            
+            isRefreshing = false;
+            
+            // Retry the original request
+            return apiInstance!.request(originalRequest);
+          } else {
+            // Refresh failed, clear tokens and notify
+            onRefreshError();
+            clearTokens();
+            isRefreshing = false;
+            
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+            }
+            return Promise.reject(error);
+          }
+        } catch (refreshError) {
+          // Refresh threw an error
+          onRefreshError();
+          clearTokens();
+          isRefreshing = false;
+          
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+          }
+          return Promise.reject(error);
         }
       }
+      
       return Promise.reject(error);
     }
   );
@@ -174,7 +345,7 @@ export const openLiveAnalysisStream = async (
   const url = new URL('/api/v1/analysis/live', baseURL);
   url.searchParams.set('query', query);
   url.searchParams.set('window', window);
-  return new EventSource(url.toString());
+  return createAuthenticatedEventSource(url.toString());
 };
 
 export const getArticles = async (query: string, limit: number = 50): Promise<ArticlesResponse> => {
@@ -293,6 +464,8 @@ export interface DeepSearchJob {
   completedAt?: string;
 }
 
+export type SourceCategory = 'news' | 'community' | 'blog' | 'official' | 'academic';
+
 export interface Evidence {
   id: number;
   url: string;
@@ -300,6 +473,7 @@ export interface Evidence {
   stance: 'pro' | 'con' | 'neutral';
   snippet: string;
   source?: string;
+  sourceCategory?: SourceCategory;
 }
 
 export interface StanceDistribution {
@@ -484,7 +658,7 @@ export const getDeepSearchStreamUrl = async (jobId: string): Promise<string> => 
  */
 export const openDeepSearchStream = async (jobId: string): Promise<EventSource> => {
   const url = await getDeepSearchStreamUrl(jobId);
-  return new EventSource(url);
+  return createAuthenticatedEventSource(url);
 };
 
 
@@ -719,6 +893,106 @@ export const getBrowserWSUrl = (jobId: string): string => {
 
 
 // ============================================
+// API Key Provisioning API
+// ============================================
+
+/**
+ * Supported API providers for auto-provisioning
+ */
+export type APIProvider = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'together_ai' | 'perplexity' | 'brave_search' | 'tavily';
+
+/**
+ * API Key provision request
+ */
+export interface APIKeyProvisionRequest {
+  provider: APIProvider;
+  key_name?: string;
+  auto_save?: boolean;
+  timeout_seconds?: number;
+  headless?: boolean;
+}
+
+/**
+ * API Key provision response
+ */
+export interface APIKeyProvisionResponse {
+  job_id: string;
+  status: string;
+  provider: string;
+  message: string;
+  api_key_masked?: string;
+  saved_to_settings?: boolean;
+  error?: string;
+  requires_intervention?: boolean;
+  intervention_type?: string;
+}
+
+/**
+ * Provider info for display
+ */
+export interface ProviderInfo {
+  name: string;
+  display_name: string;
+  api_keys_url: string;
+}
+
+/**
+ * Get list of supported API providers
+ */
+export const getAPIKeyProviders = async (): Promise<{ providers: ProviderInfo[] }> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/api-key/providers`);
+  if (!response.ok) {
+    throw new Error('Failed to get providers list');
+  }
+  return response.json();
+};
+
+/**
+ * Start API key provisioning task
+ */
+export const startAPIKeyProvisioning = async (request: APIKeyProvisionRequest): Promise<APIKeyProvisionResponse> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/api-key/provision`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to start API key provisioning');
+  }
+  return response.json();
+};
+
+/**
+ * Notify that login has been completed for provisioning job
+ */
+export const notifyLoginComplete = async (jobId: string): Promise<{ message: string }> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/api-key/provision/${jobId}/login-complete`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to notify login completion');
+  }
+  return response.json();
+};
+
+/**
+ * Submit 2FA code for provisioning job
+ */
+export const submitProvision2FA = async (jobId: string, code: string): Promise<{ message: string }> => {
+  const response = await fetch(`${BROWSER_USE_BASE_URL}/api-key/provision/${jobId}/submit-2fa?code=${encodeURIComponent(code)}`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || 'Failed to submit 2FA code');
+  }
+  return response.json();
+};
+
+
+// ============================================
 // Unified Search API (Parallel Search + Deep Analysis)
 // ============================================
 
@@ -845,7 +1119,7 @@ export const openUnifiedSearchStream = async (
   if (priorityUrls && priorityUrls.length > 0) {
     url.searchParams.set('priorityUrls', priorityUrls.join(','));
   }
-  return new EventSource(url.toString());
+  return createAuthenticatedEventSource(url.toString());
 };
 
 /**
@@ -981,7 +1255,7 @@ export const getUnifiedSearchJobStreamUrl = async (jobId: string): Promise<strin
  */
 export const openUnifiedSearchJobStream = async (jobId: string): Promise<EventSource> => {
   const url = await getUnifiedSearchJobStreamUrl(jobId);
-  return new EventSource(url);
+  return createAuthenticatedEventSource(url);
 };
 
 // ============================================
@@ -1571,7 +1845,7 @@ export const openSearchHistoryStream = async (): Promise<EventSource> => {
   const baseURL = await fetchConfiguredBaseUrl(initialBase);
   const effectiveBaseURL = baseURL || (typeof globalThis.window !== 'undefined' ? globalThis.window.location.origin : '');
   const url = `${effectiveBaseURL}/api/v1/search-history/stream`;
-  return new EventSource(url);
+  return createAuthenticatedEventSource(url);
 };
 
 
@@ -1929,38 +2203,53 @@ export const getStaticModels = (provider: LLMProviderType): ProviderModel[] => {
     openai: [
       { id: 'gpt-4o', name: 'GPT-4o (추천)' },
       { id: 'gpt-4o-mini', name: 'GPT-4o Mini (빠름)' },
+      { id: 'gpt-4.1', name: 'GPT-4.1' },
+      { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
       { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
       { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo (저렴)' },
+      { id: 'o1', name: 'o1 (추론)' },
       { id: 'o1-preview', name: 'o1-preview (추론)' },
       { id: 'o1-mini', name: 'o1-mini (추론, 빠름)' },
+      { id: 'o3-mini', name: 'o3-mini (최신 추론)' },
     ],
     anthropic: [
+      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4 (최신)' },
       { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (추천)' },
       { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (빠름)' },
       { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus (강력)' },
     ],
     google: [
-      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (추천)' },
-      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (빠름)' },
-      { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (실험)' },
+      { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 2.5 Flash (최신)' },
+      { id: 'gemini-2.5-pro-preview-05-06', name: 'Gemini 2.5 Pro (최신)' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
+      { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite (빠름)' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
     ],
     openrouter: [
       { id: 'openai/gpt-4o', name: 'GPT-4o (OpenAI)' },
+      { id: 'openai/gpt-4.1', name: 'GPT-4.1 (OpenAI)' },
+      { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4 (Anthropic)' },
       { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
+      { id: 'google/gemini-2.5-flash-preview', name: 'Gemini 2.5 Flash (Google)' },
+      { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash (Google)' },
       { id: 'google/gemini-pro-1.5', name: 'Gemini 1.5 Pro' },
+      { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B' },
       { id: 'meta-llama/llama-3.1-405b-instruct', name: 'Llama 3.1 405B' },
-      { id: 'meta-llama/llama-3.1-70b-instruct', name: 'Llama 3.1 70B' },
-      { id: 'mistralai/mixtral-8x22b-instruct', name: 'Mixtral 8x22B' },
+      { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1 (추론)' },
       { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' },
       { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B' },
     ],
     ollama: [
-      { id: 'llama3.1', name: 'Llama 3.1 (추천)' },
+      { id: 'llama3.3', name: 'Llama 3.3 (최신)' },
+      { id: 'llama3.2', name: 'Llama 3.2' },
+      { id: 'llama3.1', name: 'Llama 3.1' },
       { id: 'llama3.1:70b', name: 'Llama 3.1 70B' },
       { id: 'mistral', name: 'Mistral' },
       { id: 'mixtral', name: 'Mixtral' },
       { id: 'codellama', name: 'Code Llama' },
       { id: 'qwen2.5', name: 'Qwen 2.5' },
+      { id: 'deepseek-r1', name: 'DeepSeek R1' },
       { id: 'gemma2', name: 'Gemma 2' },
     ],
     azure: [
@@ -2028,7 +2317,8 @@ export const subscribeToAnalysisUpdates = (
   const params = articleIds.length > 0 ? `?articleIds=${articleIds.join(',')}` : '';
   const url = `${baseUrl}/api/v1/search/analysis/stream${params}`;
   
-  const eventSource = new EventSource(url, { withCredentials: true });
+  // Use authenticated EventSource for SSE with token in query param
+  const eventSource = createAuthenticatedEventSource(url);
   
   eventSource.onmessage = (event) => {
     try {
@@ -2633,7 +2923,7 @@ export const KOREAN_DATASETS: HuggingFaceDataset[] = [
     language: 'ko',
   },
   {
-    id: 'klue',
+    id: 'klue/nli',
     name: 'KLUE NLI',
     description: '한국어 자연어 추론 데이터셋 (config: nli)',
     size: '28K',
@@ -2642,7 +2932,7 @@ export const KOREAN_DATASETS: HuggingFaceDataset[] = [
     language: 'ko',
   },
   {
-    id: 'klue',
+    id: 'klue/ner',
     name: 'KLUE NER',
     description: '한국어 개체명 인식 데이터셋 (config: ner)',
     size: '26K',
@@ -2651,7 +2941,7 @@ export const KOREAN_DATASETS: HuggingFaceDataset[] = [
     language: 'ko',
   },
   {
-    id: 'klue',
+    id: 'klue/ynat',
     name: 'KLUE YNAT',
     description: '연합뉴스 주제 분류 데이터셋 (config: ynat)',
     size: '55K',
@@ -2945,7 +3235,7 @@ export const connectTrainingStream = (
   }) => void,
   onError?: (error: Error) => void
 ): EventSource => {
-  const eventSource = new EventSource(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/stream`);
+  const eventSource = createAuthenticatedEventSource(`${ML_TRAINER_BASE_URL}/jobs/${jobId}/stream`);
 
   eventSource.onmessage = (event) => {
     try {
@@ -3187,7 +3477,7 @@ export const getSearchJobStreamUrl = async (jobId: string): Promise<string> => {
  */
 export const openSearchJobStream = async (jobId: string): Promise<EventSource> => {
   const url = await getSearchJobStreamUrl(jobId);
-  return new EventSource(url);
+  return createAuthenticatedEventSource(url);
 };
 
 /**
@@ -3205,7 +3495,7 @@ export const getAllJobsStreamUrl = async (userId: string = 'anonymous'): Promise
  */
 export const openAllJobsStream = async (userId: string = 'anonymous'): Promise<EventSource> => {
   const url = await getAllJobsStreamUrl(userId);
-  return new EventSource(url);
+  return createAuthenticatedEventSource(url);
 };
 
 /**
@@ -3908,7 +4198,7 @@ import type {
  */
 export const getLlmProviderTypes = async (): Promise<LlmProviderTypeInfo[]> => {
   const client = await getApiClient();
-  const response = await client.get<LlmProviderTypeInfo[]>('/api/v1/llm-providers/types');
+  const response = await client.get<LlmProviderTypeInfo[]>('/api/v1/admin/llm-providers/types');
   return response.data;
 };
 
@@ -3919,7 +4209,7 @@ export const getLlmProviderTypes = async (): Promise<LlmProviderTypeInfo[]> => {
  */
 export const getGlobalLlmSettings = async (): Promise<LlmProviderSettings[]> => {
   const client = await getApiClient();
-  const response = await client.get<LlmProviderSettings[]>('/api/v1/admin/llm-providers');
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/admin/llm-providers/global');
   return response.data;
 };
 
@@ -3929,7 +4219,7 @@ export const getGlobalLlmSettings = async (): Promise<LlmProviderSettings[]> => 
 export const getGlobalLlmSetting = async (providerType: LlmProviderTypeEnum): Promise<LlmProviderSettings | null> => {
   const client = await getApiClient();
   try {
-    const response = await client.get<LlmProviderSettings>(`/api/v1/admin/llm-providers/${providerType}`);
+    const response = await client.get<LlmProviderSettings>(`/api/v1/admin/llm-providers/global/${providerType}`);
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -3944,7 +4234,7 @@ export const getGlobalLlmSetting = async (providerType: LlmProviderTypeEnum): Pr
  */
 export const saveGlobalLlmSetting = async (request: LlmProviderSettingsRequest): Promise<LlmProviderSettings> => {
   const client = await getApiClient();
-  const response = await client.put<LlmProviderSettings>('/api/v1/admin/llm-providers', request);
+  const response = await client.put<LlmProviderSettings>(`/api/v1/admin/llm-providers/global/${request.providerType}`, request);
   return response.data;
 };
 
@@ -3953,24 +4243,32 @@ export const saveGlobalLlmSetting = async (request: LlmProviderSettingsRequest):
  */
 export const deleteGlobalLlmSetting = async (providerType: LlmProviderTypeEnum): Promise<void> => {
   const client = await getApiClient();
-  await client.delete(`/api/v1/admin/llm-providers/${providerType}`);
+  await client.delete(`/api/v1/admin/llm-providers/global/${providerType}`);
 };
 
 /**
  * 전역 설정 연결 테스트
  */
-export const testGlobalLlmConnection = async (id: number): Promise<LlmTestResult> => {
+export const testGlobalLlmConnection = async (providerType: LlmProviderTypeEnum): Promise<LlmTestResult> => {
   const client = await getApiClient();
-  const response = await client.post<LlmTestResult>(`/api/v1/admin/llm-providers/${id}/test`);
+  const response = await client.post<LlmTestResult>('/api/v1/admin/llm-providers/test', null, {
+    params: { providerType }
+  });
   return response.data;
 };
 
 /**
  * 전역 설정 활성화/비활성화
+ * NOTE: Backend 엔드포인트가 없어 saveGlobalLlmSetting을 통해 처리
  */
-export const toggleGlobalLlmSetting = async (id: number, enabled: boolean): Promise<void> => {
+export const toggleGlobalLlmSetting = async (providerType: LlmProviderTypeEnum, enabled: boolean): Promise<void> => {
   const client = await getApiClient();
-  await client.post(`/api/v1/admin/llm-providers/${id}/toggle`, null, { params: { enabled } });
+  // enabled 상태만 변경하는 최소한의 요청
+  await client.put(`/api/v1/admin/llm-providers/global/${providerType}`, { 
+    providerType, 
+    enabled,
+    defaultModel: '' // 기존 값 유지
+  });
 };
 
 // ========== 사용자별 설정 API ==========
@@ -3980,9 +4278,9 @@ export const toggleGlobalLlmSetting = async (id: number, enabled: boolean): Prom
  */
 export const getEffectiveLlmSettings = async (userId?: string): Promise<LlmProviderSettings[]> => {
   const client = await getApiClient();
-  const headers: Record<string, string> = {};
-  if (userId) headers['X-User-Id'] = userId;
-  const response = await client.get<LlmProviderSettings[]>('/api/v1/llm-providers/effective', { headers });
+  const params: Record<string, string> = {};
+  if (userId) params.user_id = userId;
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/admin/llm-providers/effective', { params });
   return response.data;
 };
 
@@ -3991,9 +4289,9 @@ export const getEffectiveLlmSettings = async (userId?: string): Promise<LlmProvi
  */
 export const getEnabledLlmProviders = async (userId?: string): Promise<LlmProviderSettings[]> => {
   const client = await getApiClient();
-  const headers: Record<string, string> = {};
-  if (userId) headers['X-User-Id'] = userId;
-  const response = await client.get<LlmProviderSettings[]>('/api/v1/llm-providers/enabled', { headers });
+  const params: Record<string, string> = {};
+  if (userId) params.user_id = userId;
+  const response = await client.get<LlmProviderSettings[]>('/api/v1/admin/llm-providers/enabled', { params });
   return response.data;
 };
 
@@ -4081,5 +4379,79 @@ export const testUserLlmConnection = async (id: number): Promise<LlmTestResult> 
 export const testNewLlmConnection = async (request: LlmProviderSettingsRequest): Promise<LlmTestResult> => {
   const client = await getApiClient();
   const response = await client.post<LlmTestResult>('/api/v1/llm-providers/test', request);
+  return response.data;
+};
+
+// ============================================
+// Config Export/Import API (관리자 설정 일괄 관리)
+// ============================================
+
+import type {
+  SystemConfigExport,
+  SystemConfigImport,
+  ConfigImportResult,
+  ConfigImportOptions,
+} from '@/types/api';
+
+/**
+ * 전체 시스템 설정 Export (LLM Provider + ML Addon)
+ */
+export const exportSystemConfig = async (
+  includeLlm: boolean = true,
+  includeMl: boolean = true
+): Promise<SystemConfigExport> => {
+  const client = await getApiClient();
+  const response = await client.get<SystemConfigExport>('/api/v1/admin/config-export/export', {
+    params: { include_llm: includeLlm, include_ml: includeMl },
+  });
+  return response.data;
+};
+
+/**
+ * 설정을 JSON 파일로 다운로드
+ */
+export const downloadSystemConfig = async (
+  includeLlm: boolean = true,
+  includeMl: boolean = true
+): Promise<Blob> => {
+  const client = await getApiClient();
+  const response = await client.get('/api/v1/admin/config-export/export/download', {
+    params: { include_llm: includeLlm, include_ml: includeMl },
+    responseType: 'blob',
+  });
+  return response.data;
+};
+
+/**
+ * JSON 설정을 시스템에 Import
+ */
+export const importSystemConfig = async (
+  config: SystemConfigImport,
+  options?: ConfigImportOptions
+): Promise<ConfigImportResult> => {
+  const client = await getApiClient();
+  const response = await client.post<ConfigImportResult>('/api/v1/admin/config-export/import', config, {
+    params: options,
+  });
+  return response.data;
+};
+
+/**
+ * Import 설정 유효성 검증 (실제 import 안함)
+ */
+export const validateSystemConfig = async (
+  config: SystemConfigImport
+): Promise<ConfigImportResult> => {
+  const client = await getApiClient();
+  const response = await client.post<ConfigImportResult>('/api/v1/admin/config-export/import/validate', config);
+  return response.data;
+};
+
+/**
+ * Import용 설정 템플릿 가져오기
+ */
+export const getConfigTemplate = async (): Promise<SystemConfigImport> => {
+  const client = await getApiClient();
+  const response = await client.get<SystemConfigImport>('/api/v1/admin/config-export/template');
   return response.data;
 };

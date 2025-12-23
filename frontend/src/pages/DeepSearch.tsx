@@ -23,6 +23,11 @@ import {
   ArrowDownRight,
   History,
   ChevronRight,
+  Newspaper,
+  Users,
+  FileText,
+  Shield,
+  GraduationCap,
 } from "lucide-react";
 import { ExportButton } from "@/components/ExportButton";
 import { ReportExportButton } from "@/components/ReportExportButton";
@@ -81,9 +86,17 @@ const STATUS_CONFIG = {
 } as const;
 
 const STANCE_CONFIG = {
-  pro: { label: "찬성", icon: ThumbsUp, color: "text-teal-600", bgColor: "bg-teal-100 dark:bg-teal-900/30" },
-  con: { label: "반대", icon: ThumbsDown, color: "text-coral-600", bgColor: "bg-coral-100 dark:bg-coral-900/30" },
+  pro: { label: "긍정", icon: ThumbsUp, color: "text-teal-600", bgColor: "bg-teal-100 dark:bg-teal-900/30" },
+  con: { label: "부정", icon: ThumbsDown, color: "text-coral-600", bgColor: "bg-coral-100 dark:bg-coral-900/30" },
   neutral: { label: "중립", icon: Minus, color: "text-gray-600", bgColor: "bg-gray-100 dark:bg-gray-800" },
+} as const;
+
+const SOURCE_CATEGORY_CONFIG = {
+  news: { label: "뉴스", icon: Newspaper, color: "text-blue-600", bgColor: "bg-blue-100 dark:bg-blue-900/30" },
+  community: { label: "커뮤니티", icon: Users, color: "text-orange-600", bgColor: "bg-orange-100 dark:bg-orange-900/30" },
+  blog: { label: "블로그", icon: FileText, color: "text-purple-600", bgColor: "bg-purple-100 dark:bg-purple-900/30" },
+  official: { label: "공식", icon: Shield, color: "text-green-600", bgColor: "bg-green-100 dark:bg-green-900/30" },
+  academic: { label: "학술", icon: GraduationCap, color: "text-indigo-600", bgColor: "bg-indigo-100 dark:bg-indigo-900/30" },
 } as const;
 
 interface EvidenceCardProps {
@@ -101,11 +114,17 @@ const EvidenceCard = ({ evidence, onDrilldown, drilldownEnabled = true }: Eviden
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <Badge variant="outline" className={`${stanceInfo.color} flex items-center gap-1`}>
                 <StanceIcon className="h-3 w-3" />
                 {stanceInfo.label}
               </Badge>
+              {evidence.sourceCategory && SOURCE_CATEGORY_CONFIG[evidence.sourceCategory] && (
+                <Badge variant="secondary" className={`${SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].color} flex items-center gap-1`}>
+                  {(() => { const Icon = SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].icon; return <Icon className="h-3 w-3" />; })()}
+                  {SOURCE_CATEGORY_CONFIG[evidence.sourceCategory].label}
+                </Badge>
+              )}
               {evidence.source && (
                 <span className="text-xs text-muted-foreground truncate">{evidence.source}</span>
               )}
@@ -161,8 +180,8 @@ const StanceChart = ({ distribution }: StanceChartProps) => {
   return (
     <Card className="glass">
       <CardHeader className="pb-2">
-        <CardTitle className="text-lg">입장 분포</CardTitle>
-        <CardDescription>수집된 증거의 입장 분석 결과</CardDescription>
+        <CardTitle className="text-lg">관점 분석</CardTitle>
+        <CardDescription>수집된 자료의 관점 분포</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex gap-1 h-8 rounded-lg overflow-hidden">
@@ -1061,47 +1080,47 @@ const DeepSearch = () => {
             {/* List View (Original) */}
             {viewMode === "list" && (
               <>
-                {/* Summary */}
+                {/* 분석 개요 */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <Card className="glass">
                     <CardContent className="pt-6">
                       <div className="text-center">
                         <p className="text-3xl font-bold">{result.evidence.length}</p>
-                        <p className="text-sm text-muted-foreground">수집된 증거</p>
+                        <p className="text-sm text-muted-foreground">총 수집 자료</p>
                       </div>
                     </CardContent>
                   </Card>
                   <Card className="glass">
                     <CardContent className="pt-6">
                       <div className="text-center">
-                        <p className="text-3xl font-bold text-teal-600">
-                          {result.stanceDistribution.proRatio.toFixed(0)}%
+                        <p className="text-3xl font-bold text-green-600">
+                          {new Set(result.evidence.map(e => e.source).filter(Boolean)).size}
                         </p>
-                        <p className="text-sm text-muted-foreground">찬성 비율</p>
+                        <p className="text-sm text-muted-foreground">참조 출처</p>
                       </div>
                     </CardContent>
                   </Card>
                   <Card className="glass">
                     <CardContent className="pt-6">
                       <div className="text-center">
-                        <p className="text-3xl font-bold text-coral-600">
-                          {result.stanceDistribution.conRatio.toFixed(0)}%
+                        <p className="text-3xl font-bold text-blue-600">
+                          {result.evidence.filter(e => e.title).length}
                         </p>
-                        <p className="text-sm text-muted-foreground">반대 비율</p>
+                        <p className="text-sm text-muted-foreground">기사/문서</p>
                       </div>
                     </CardContent>
                   </Card>
                 </div>
 
-                {/* Stance Distribution */}
+                {/* 관점 분석 (선택적) */}
                 <StanceChart distribution={result.stanceDistribution} />
 
-                {/* Evidence List */}
+                {/* 수집된 자료 목록 */}
                 <Card>
                   <CardHeader>
-                    <CardTitle>수집된 증거</CardTitle>
+                    <CardTitle>수집된 자료</CardTitle>
                     <CardDescription>
-                      '{result.topic}'에 대해 수집된 다양한 입장의 증거입니다.
+                      '{result.topic}'에 대해 수집된 관련 자료입니다.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -1111,13 +1130,13 @@ const DeepSearch = () => {
                           전체 ({result.evidence.length})
                         </TabsTrigger>
                         <TabsTrigger value="pro" className="text-teal-600">
-                          찬성 ({result.stanceDistribution.pro})
+                          긍정 ({result.stanceDistribution.pro})
                         </TabsTrigger>
                         <TabsTrigger value="neutral">
                           중립 ({result.stanceDistribution.neutral})
                         </TabsTrigger>
                         <TabsTrigger value="con" className="text-coral-600">
-                          반대 ({result.stanceDistribution.con})
+                          부정 ({result.stanceDistribution.con})
                         </TabsTrigger>
                       </TabsList>
                       <TabsContent value={activeStance} className="space-y-4">
@@ -1132,7 +1151,7 @@ const DeepSearch = () => {
                           ))
                         ) : (
                           <div className="text-center py-8 text-muted-foreground">
-                            해당 입장의 증거가 없습니다.
+                            해당 관점의 자료가 없습니다.
                           </div>
                         )}
                       </TabsContent>
@@ -1157,9 +1176,9 @@ const DeepSearch = () => {
             <div className="inline-block p-4 rounded-full bg-accent/10 mb-4">
               <Search className="h-12 w-12 text-accent" />
             </div>
-            <h2 className="text-xl font-semibold mb-2">주제를 입력하세요</h2>
+            <h2 className="text-xl font-semibold mb-2">심층 보고서 생성</h2>
             <p className="text-muted-foreground max-w-md mx-auto mb-4">
-              분석하고 싶은 주제를 입력하면 AI가 웹에서 다양한 입장의 증거를 수집하고 분류합니다.
+              분석하고 싶은 주제를 입력하면 AI가 웹에서 관련 자료를 수집하고 심층 분석 보고서를 생성합니다.
             </p>
             <p className="text-sm text-muted-foreground">
               분석 중에도 다른 페이지를 탐색할 수 있으며, 상단의 작업 인디케이터에서 진행 상황을 확인할 수 있습니다.

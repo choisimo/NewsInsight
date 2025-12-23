@@ -179,30 +179,49 @@ export const useFactCheckChat = (options: UseFactCheckChatOptions): UseFactCheck
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
+        let currentEventType = '';
+        
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
+          // SSE event type 라인 처리 (event: done 형식)
+          if (line.startsWith('event:')) {
+            currentEventType = line.startsWith('event: ') ? line.slice(7).trim() : line.slice(6).trim();
+            continue;
+          }
+          
+          // Handle both 'data: ' and 'data:' formats (with or without space)
+          if (line.startsWith('data:')) {
+            const data = line.startsWith('data: ') ? line.slice(6) : line.slice(5);
             
             if (data === '[DONE]') {
               setIsStreaming(false);
               optionsRef.current.onComplete?.();
+              currentEventType = '';
               continue;
             }
 
             try {
               const event = JSON.parse(data);
               
-              if (event.type === 'done') {
+              // SSE event type 또는 JSON data의 type 필드로 done 확인
+              if (currentEventType === 'done' || event.type === 'done') {
                 setIsStreaming(false);
                 optionsRef.current.onComplete?.();
-              } else if (event.type === 'error') {
+              } else if (currentEventType === 'error' || event.type === 'error') {
                 optionsRef.current.onError?.(event.error || 'Unknown error');
+                setIsStreaming(false);
               } else {
+                // event type이 있으면 event 객체에 추가
+                if (currentEventType && !event.type) {
+                  event.type = currentEventType;
+                }
                 optionsRef.current.onMessage?.(event);
               }
             } catch (e) {
-              console.error('Failed to parse SSE event:', e);
+              console.error('Failed to parse SSE event:', e, 'data:', data);
             }
+            
+            // 이벤트 처리 후 타입 리셋
+            currentEventType = '';
           }
         }
       }

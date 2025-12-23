@@ -135,38 +135,53 @@ const LLM_MODELS: Record<LLMProviderType, { value: string; label: string }[]> = 
   openai: [
     { value: 'gpt-4o', label: 'GPT-4o (추천)' },
     { value: 'gpt-4o-mini', label: 'GPT-4o Mini (빠름)' },
+    { value: 'gpt-4.1', label: 'GPT-4.1' },
+    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
     { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
     { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo (저렴)' },
+    { value: 'o1', label: 'o1 (추론)' },
     { value: 'o1-preview', label: 'o1-preview (추론)' },
     { value: 'o1-mini', label: 'o1-mini (추론, 빠름)' },
+    { value: 'o3-mini', label: 'o3-mini (최신 추론)' },
   ],
   anthropic: [
+    { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4 (최신)' },
     { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (추천)' },
     { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (빠름)' },
     { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus (강력)' },
   ],
   google: [
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (추천)' },
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (빠름)' },
-    { value: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash (실험)' },
+    { value: 'gemini-2.5-flash-preview-05-20', label: 'Gemini 2.5 Flash (최신)' },
+    { value: 'gemini-2.5-pro-preview-05-06', label: 'Gemini 2.5 Pro (최신)' },
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+    { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite (빠름)' },
+    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
   ],
   openrouter: [
     { value: 'openai/gpt-4o', label: 'GPT-4o (OpenAI)' },
+    { value: 'openai/gpt-4.1', label: 'GPT-4.1 (OpenAI)' },
+    { value: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (Anthropic)' },
     { value: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
+    { value: 'google/gemini-2.5-flash-preview', label: 'Gemini 2.5 Flash (Google)' },
+    { value: 'google/gemini-2.0-flash-001', label: 'Gemini 2.0 Flash (Google)' },
     { value: 'google/gemini-pro-1.5', label: 'Gemini 1.5 Pro' },
+    { value: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
     { value: 'meta-llama/llama-3.1-405b-instruct', label: 'Llama 3.1 405B' },
-    { value: 'meta-llama/llama-3.1-70b-instruct', label: 'Llama 3.1 70B' },
-    { value: 'mistralai/mixtral-8x22b-instruct', label: 'Mixtral 8x22B' },
+    { value: 'deepseek/deepseek-r1', label: 'DeepSeek R1 (추론)' },
     { value: 'deepseek/deepseek-chat', label: 'DeepSeek Chat' },
     { value: 'qwen/qwen-2.5-72b-instruct', label: 'Qwen 2.5 72B' },
   ],
   ollama: [
-    { value: 'llama3.1', label: 'Llama 3.1 (추천)' },
+    { value: 'llama3.3', label: 'Llama 3.3 (최신)' },
+    { value: 'llama3.2', label: 'Llama 3.2' },
+    { value: 'llama3.1', label: 'Llama 3.1' },
     { value: 'llama3.1:70b', label: 'Llama 3.1 70B' },
     { value: 'mistral', label: 'Mistral' },
     { value: 'mixtral', label: 'Mixtral' },
     { value: 'codellama', label: 'Code Llama' },
     { value: 'qwen2.5', label: 'Qwen 2.5' },
+    { value: 'deepseek-r1', label: 'DeepSeek R1' },
     { value: 'gemma2', label: 'Gemma 2' },
   ],
   azure: [
@@ -244,10 +259,20 @@ const Settings = () => {
     azure: 'static',
     custom: 'static',
   });
+  const [modelLoadError, setModelLoadError] = useState<Record<LLMProviderType, string | null>>({
+    openai: null,
+    anthropic: null,
+    google: null,
+    openrouter: null,
+    ollama: null,
+    azure: null,
+    custom: null,
+  });
 
   // Fetch models for a provider
-  const loadModelsForProvider = useCallback(async (provider: LLMProviderType) => {
+  const loadModelsForProvider = useCallback(async (provider: LLMProviderType, showToast = false) => {
     setIsLoadingModels(prev => ({ ...prev, [provider]: true }));
+    setModelLoadError(prev => ({ ...prev, [provider]: null }));
     try {
       // Get API key and base URL from current settings
       let apiKey: string | undefined;
@@ -256,6 +281,12 @@ const Settings = () => {
       switch (provider) {
         case 'openai':
           apiKey = aiSettings.openaiApiKey || undefined;
+          break;
+        case 'anthropic':
+          apiKey = aiSettings.anthropicApiKey || undefined;
+          break;
+        case 'google':
+          apiKey = aiSettings.googleApiKey || undefined;
           break;
         case 'openrouter':
           apiKey = aiSettings.openrouterApiKey || undefined;
@@ -276,20 +307,31 @@ const Settings = () => {
       if (models.length > 0) {
         setDynamicModels(prev => ({ ...prev, [provider]: models }));
         setModelSource(prev => ({ ...prev, [provider]: response.source || 'api' }));
+        if (showToast && response.source === 'api') {
+          toast({
+            title: '모델 목록 로드 완료',
+            description: `${models.length}개의 ${provider} 모델을 API에서 가져왔습니다.`,
+          });
+        }
       } else {
         // Fallback to static
         setDynamicModels(prev => ({ ...prev, [provider]: getStaticModels(provider as ApiLLMProviderType) }));
         setModelSource(prev => ({ ...prev, [provider]: 'static' }));
+        if (response.error) {
+          setModelLoadError(prev => ({ ...prev, [provider]: response.error || null }));
+        }
       }
     } catch (e) {
       console.error(`Failed to load models for ${provider}:`, e);
+      const errorMessage = e instanceof Error ? e.message : '알 수 없는 오류';
+      setModelLoadError(prev => ({ ...prev, [provider]: errorMessage }));
       // Fallback to static models
       setDynamicModels(prev => ({ ...prev, [provider]: getStaticModels(provider as ApiLLMProviderType) }));
       setModelSource(prev => ({ ...prev, [provider]: 'static' }));
     } finally {
       setIsLoadingModels(prev => ({ ...prev, [provider]: false }));
     }
-  }, [aiSettings.openaiApiKey, aiSettings.openrouterApiKey, aiSettings.ollamaBaseUrl, aiSettings.customBaseUrl, aiSettings.customApiKey]);
+  }, [aiSettings.openaiApiKey, aiSettings.anthropicApiKey, aiSettings.googleApiKey, aiSettings.openrouterApiKey, aiSettings.ollamaBaseUrl, aiSettings.customBaseUrl, aiSettings.customApiKey, toast]);
 
   // Load models when provider changes or on mount
   useEffect(() => {
@@ -298,6 +340,73 @@ const Settings = () => {
       loadModelsForProvider(aiSettings.llmProvider);
     }
   }, [activeTab, aiSettings.llmProvider, loadModelsForProvider]);
+
+  // Auto-refresh models when API key changes (with debounce)
+  useEffect(() => {
+    if (activeTab !== 'ai-settings') return;
+    
+    const timeoutId = setTimeout(() => {
+      // Only refresh if the API key looks valid (has some length)
+      if (aiSettings.openaiApiKey && aiSettings.openaiApiKey.length > 10) {
+        loadModelsForProvider('openai');
+      }
+    }, 1000); // 1 second debounce
+    
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiSettings.openaiApiKey, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'ai-settings') return;
+    
+    const timeoutId = setTimeout(() => {
+      if (aiSettings.googleApiKey && aiSettings.googleApiKey.length > 10) {
+        loadModelsForProvider('google');
+      }
+    }, 1000);
+    
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiSettings.googleApiKey, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'ai-settings') return;
+    
+    const timeoutId = setTimeout(() => {
+      if (aiSettings.openrouterApiKey && aiSettings.openrouterApiKey.length > 10) {
+        loadModelsForProvider('openrouter');
+      }
+    }, 1000);
+    
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiSettings.openrouterApiKey, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'ai-settings') return;
+    
+    const timeoutId = setTimeout(() => {
+      if (aiSettings.ollamaBaseUrl && aiSettings.ollamaBaseUrl.length > 5) {
+        loadModelsForProvider('ollama');
+      }
+    }, 1000);
+    
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiSettings.ollamaBaseUrl, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'ai-settings') return;
+    
+    const timeoutId = setTimeout(() => {
+      if (aiSettings.customBaseUrl && aiSettings.customBaseUrl.length > 5) {
+        loadModelsForProvider('custom');
+      }
+    }, 1000);
+    
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiSettings.customBaseUrl, activeTab]);
 
   // Get models for display (dynamic if available, otherwise static fallback from LLM_MODELS)
   const getModelsForProvider = (provider: LLMProviderType): { value: string; label: string }[] => {
@@ -705,7 +814,7 @@ const Settings = () => {
                           variant="ghost"
                           size="icon"
                           className="h-5 w-5"
-                          onClick={() => loadModelsForProvider('openai')}
+                          onClick={() => loadModelsForProvider('openai', true)}
                           disabled={isLoadingModels.openai}
                         >
                           <RefreshCw className={`h-3 w-3 ${isLoadingModels.openai ? 'animate-spin' : ''}`} />
@@ -726,6 +835,9 @@ const Settings = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                      {modelLoadError.openai && (
+                        <p className="text-xs text-destructive mt-1">{modelLoadError.openai}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -824,6 +936,16 @@ const Settings = () => {
                         {modelSource.google === 'api' && (
                           <Badge variant="outline" className="text-xs">API</Badge>
                         )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5"
+                          onClick={() => loadModelsForProvider('google', true)}
+                          disabled={isLoadingModels.google}
+                        >
+                          <RefreshCw className={`h-3 w-3 ${isLoadingModels.google ? 'animate-spin' : ''}`} />
+                        </Button>
                       </Label>
                       <Select
                         value={aiSettings.googleModel}
@@ -840,6 +962,9 @@ const Settings = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                      {modelLoadError.google && (
+                        <p className="text-xs text-destructive mt-1">{modelLoadError.google}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -889,7 +1014,7 @@ const Settings = () => {
                           variant="ghost"
                           size="icon"
                           className="h-5 w-5"
-                          onClick={() => loadModelsForProvider('openrouter')}
+                          onClick={() => loadModelsForProvider('openrouter', true)}
                           disabled={isLoadingModels.openrouter}
                         >
                           <RefreshCw className={`h-3 w-3 ${isLoadingModels.openrouter ? 'animate-spin' : ''}`} />
@@ -910,6 +1035,9 @@ const Settings = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                      {modelLoadError.openrouter && (
+                        <p className="text-xs text-destructive mt-1">{modelLoadError.openrouter}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -945,7 +1073,7 @@ const Settings = () => {
                           variant="ghost"
                           size="icon"
                           className="h-5 w-5"
-                          onClick={() => loadModelsForProvider('ollama')}
+                          onClick={() => loadModelsForProvider('ollama', true)}
                           disabled={isLoadingModels.ollama}
                         >
                           <RefreshCw className={`h-3 w-3 ${isLoadingModels.ollama ? 'animate-spin' : ''}`} />
@@ -966,6 +1094,9 @@ const Settings = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                      {modelLoadError.ollama && (
+                        <p className="text-xs text-destructive mt-1">{modelLoadError.ollama}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1329,7 +1460,7 @@ const Settings = () => {
                   <Label className="text-muted-foreground">외부 링크</Label>
                   <div className="flex flex-wrap gap-2">
                     <Button variant="outline" size="sm" asChild>
-                      <a href="https://github.com/your-repo/newsinsight" target="_blank" rel="noopener noreferrer">
+                      <a href="https://github.com/choisimo/newsinsight" target="_blank" rel="noopener noreferrer">
                         <ExternalLink className="h-4 w-4 mr-2" />
                         GitHub
                       </a>

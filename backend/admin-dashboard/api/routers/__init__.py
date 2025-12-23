@@ -13,4 +13,5 @@ from . import (
     ml_training,
     databases,
     kafka,
+    config_export,
 )

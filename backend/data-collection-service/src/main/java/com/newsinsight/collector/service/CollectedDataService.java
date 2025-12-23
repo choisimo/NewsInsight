@@ -6,7 +6,9 @@ import com.newsinsight.collector.repository.CollectedDataRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -103,16 +105,20 @@ public class CollectedDataService {
 
     /**
      * 키워드 기반 검색 (제목 + 본문)
+     * Note: Native query에 ORDER BY가 이미 포함되어 있으므로 Sort.unsorted() 사용
      */
     public Page<CollectedData> search(String query, Pageable pageable) {
         if (query == null || query.isBlank()) {
             return collectedDataRepository.findAll(pageable);
         }
-        return collectedDataRepository.searchByQuery(query.trim(), pageable);
+        // Native query already has ORDER BY, create unsorted pageable to avoid duplicate ORDER BY
+        Pageable unsortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), Sort.unsorted());
+        return collectedDataRepository.searchByQuery(query.trim(), unsortedPageable);
     }
 
     /**
      * 키워드 기반 검색 + 처리 상태 필터
+     * Note: Native query에 ORDER BY가 이미 포함되어 있으므로 Sort.unsorted() 사용
      */
     public Page<CollectedData> searchWithFilter(String query, Boolean processed, Pageable pageable) {
         if (query == null || query.isBlank()) {
@@ -125,8 +131,9 @@ public class CollectedDataService {
             }
         }
         
-        // 검색 + 필터링: Repository에 추가 쿼리 필요하므로 여기서 후처리
-        Page<CollectedData> results = collectedDataRepository.searchByQuery(query.trim(), pageable);
+        // Native query already has ORDER BY, create unsorted pageable to avoid duplicate ORDER BY
+        Pageable unsortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), Sort.unsorted());
+        Page<CollectedData> results = collectedDataRepository.searchByQuery(query.trim(), unsortedPageable);
         if (processed == null) {
             return results;
         }

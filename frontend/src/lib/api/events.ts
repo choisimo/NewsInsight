@@ -6,6 +6,7 @@
  */
 
 import type { DashboardEvent, DashboardStats } from '@/types/api';
+import { appendTokenToUrl } from '@/lib/api';
 
 // ============================================
 // SSE Stream URLs
@@ -47,7 +48,8 @@ export const getDashboardStatsStreamUrl = (): string => {
  */
 export const openDashboardEventsStream = (): EventSource => {
   const url = getDashboardEventsStreamUrl();
-  return new EventSource(url);
+  // Append auth token for SSE authentication
+  return new EventSource(appendTokenToUrl(url));
 };
 
 /**
@@ -56,7 +58,8 @@ export const openDashboardEventsStream = (): EventSource => {
  */
 export const openDashboardStatsStream = (): EventSource => {
   const url = getDashboardStatsStreamUrl();
-  return new EventSource(url);
+  // Append auth token for SSE authentication
+  return new EventSource(appendTokenToUrl(url));
 };
 
 // ============================================

@@ -157,12 +157,16 @@ async def get_current_user(
 
 
 def require_role(required_role: UserRole) -> Callable:
-    """특정 역할 이상 권한 요구"""
+    """특정 역할 이상 권한 요구 (ADMIN은 항상 허용)"""
 
     async def role_checker(
         current_user: User = Depends(get_current_user),
         auth_service: AuthService = Depends(get_auth_service),
     ) -> User:
+        # ADMIN은 모든 경로에 접근 가능
+        if current_user.role == UserRole.ADMIN:
+            return current_user
+            
         if not auth_service.check_permission(current_user.role, required_role):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -171,3 +175,37 @@ def require_role(required_role: UserRole) -> Callable:
         return current_user
 
     return role_checker
+
+
+# Optional authentication - returns anonymous user if not authenticated
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/v1/admin/auth/token", auto_error=False)
+
+
+async def get_current_user_optional(
+    token: str = Depends(oauth2_scheme_optional),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> User:
+    """현재 인증된 사용자 조회 (선택적 - 인증 없으면 익명 사용자 반환)"""
+    from datetime import datetime
+    
+    anonymous_user = User(
+        id="anonymous",
+        username="anonymous",
+        email="anonymous@local",
+        role=UserRole.VIEWER,
+        is_active=True,
+        created_at=datetime.utcnow(),
+    )
+    
+    if not token:
+        return anonymous_user
+
+    token_data = auth_service.verify_token(token)
+    if not token_data:
+        return anonymous_user
+
+    user = auth_service.get_user(token_data.user_id)
+    if not user or not user.is_active:
+        return anonymous_user
+
+    return user

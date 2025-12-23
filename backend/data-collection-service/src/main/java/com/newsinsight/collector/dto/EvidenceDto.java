@@ -19,4 +19,5 @@ public class EvidenceDto {
     private String stance;  // pro, con, neutral
     private String snippet;
     private String source;
+    private String sourceCategory;  // news, community, blog, official, academic
 }

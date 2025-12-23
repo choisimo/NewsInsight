@@ -6,10 +6,15 @@ package com.newsinsight.collector.entity.settings;
 public enum LlmProviderType {
     OPENAI("OpenAI", "https://api.openai.com/v1"),
     ANTHROPIC("Anthropic", "https://api.anthropic.com"),
-    GOOGLE("Google AI", "https://generativelanguage.googleapis.com"),
+    GOOGLE("Google AI", "https://generativelanguage.googleapis.com/v1beta"),
     OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1"),
     OLLAMA("Ollama", "http://localhost:11434"),
     AZURE_OPENAI("Azure OpenAI", null),
+    TOGETHER_AI("Together AI", "https://api.together.xyz/v1"),
+    // Search API Providers (실시간 검색용)
+    PERPLEXITY("Perplexity", "https://api.perplexity.ai"),
+    BRAVE_SEARCH("Brave Search", "https://api.search.brave.com/res/v1"),
+    TAVILY("Tavily", "https://api.tavily.com"),
     CUSTOM("Custom", null);
 
     private final String displayName;
