@@ -54,6 +54,7 @@ import AdminLogin from "./pages/admin/AdminLogin";
 import AdminSetup from "./pages/admin/AdminSetup";
 import AdminLlmProviders from "./pages/admin/AdminLlmProviders";
 import AdminConfigExport from "./pages/admin/AdminConfigExport";
+import ServerMonitoring from "./pages/admin/ServerMonitoring";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 /**
@@ -169,6 +170,7 @@ const AppContent = () => {
                 <Route path="/admin/users" element={<ProtectedRoute requiredRole="admin"><AdminUsers /></ProtectedRoute>} />
                 <Route path="/admin/llm-providers" element={<ProtectedRoute requiredRole="admin"><AdminLlmProviders /></ProtectedRoute>} />
                 <Route path="/admin/config-export" element={<ProtectedRoute requiredRole="admin"><AdminConfigExport /></ProtectedRoute>} />
+                <Route path="/admin/monitoring" element={<ProtectedRoute requiredRole="operator"><ServerMonitoring /></ProtectedRoute>} />
                 
                 {/* Settings */}
                 <Route path="/settings" element={<Settings />} />

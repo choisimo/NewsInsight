@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Bot,
+  Workflow,
   CheckCircle2,
   XCircle,
   Loader2,
@@ -359,7 +359,7 @@ export const UserLlmSettings: React.FC<UserLlmSettingsProps> = ({ userId }) => {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Bot className="h-5 w-5" />
+                <Workflow className="h-5 w-5" />
                 LLM 제공자 설정
               </CardTitle>
               <CardDescription>

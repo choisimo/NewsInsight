@@ -4,7 +4,7 @@ import {
   Clock,
   TrendingUp,
   X,
-  Sparkles,
+  Zap,
   Loader2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -52,7 +52,7 @@ interface SearchInputWithSuggestionsProps {
 const typeConfig: Record<SearchSuggestion["type"], { icon: typeof Clock; label: string; color: string }> = {
   history: { icon: Clock, label: "최근", color: "text-muted-foreground" },
   trending: { icon: TrendingUp, label: "트렌딩", color: "text-orange-500" },
-  suggestion: { icon: Sparkles, label: "추천", color: "text-blue-500" },
+  suggestion: { icon: Zap, label: "추천", color: "text-blue-500" },
 };
 
 export const SearchInputWithSuggestions = forwardRef<HTMLInputElement, SearchInputWithSuggestionsProps>(

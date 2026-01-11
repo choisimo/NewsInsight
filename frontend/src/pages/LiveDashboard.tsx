@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { LiveNewsTicker } from "@/components/dashboard/LiveNewsTicker";
 import { TrendChart } from "@/components/dashboard/TrendChart";
 import { Button } from "@/components/ui/button";
-import { RefreshCcw, Calendar, LayoutDashboard, Database, Brain, AlertTriangle, Activity, Wifi, WifiOff, Terminal } from "lucide-react";
+import { RefreshCcw, Calendar, LayoutDashboard, Database, Layers, AlertTriangle, Activity, Wifi, WifiOff, Terminal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { LiveCounter } from "@/components/admin/LiveCounter";
 import { LiveStream } from "@/components/admin/LiveStream";
@@ -131,8 +131,8 @@ export default function LiveDashboard() {
           value={displayStats?.processed ?? 0}
           previousValue={previousStats?.processed}
           label="처리 완료"
-          icon={<Brain className="h-4 w-4" />}
-          subtitle="AI 분석 완료"
+          icon={<Layers className="h-4 w-4" />}
+          subtitle="분석 완료"
           isLoading={!displayStats && isLoadingFallback}
         />
         <LiveCounter

@@ -10,7 +10,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
-  Brain,
+  Layers,
   RefreshCw,
   Loader2,
   CheckCircle2,
@@ -731,7 +731,7 @@ const ExecutionCard: React.FC<ExecutionCardProps> = ({ execution }) => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className={`p-2 rounded-lg ${execution.status === 'SUCCESS' ? 'bg-green-100 dark:bg-green-900/30' : execution.status === 'FAILED' ? 'bg-red-100 dark:bg-red-900/30' : 'bg-primary/10'}`}>
-                  <Brain className={`h-4 w-4 ${execution.status === 'SUCCESS' ? 'text-green-600' : execution.status === 'FAILED' ? 'text-red-600' : 'text-primary'}`} />
+                  <Layers className={`h-4 w-4 ${execution.status === 'SUCCESS' ? 'text-green-600' : execution.status === 'FAILED' ? 'text-red-600' : 'text-primary'}`} />
                 </div>
                 <div>
                   <CardTitle className="text-sm font-medium">
@@ -949,7 +949,7 @@ const MLResults: React.FC = () => {
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-primary/10 rounded-lg">
-                <Brain className="h-6 w-6 text-primary" />
+                <Layers className="h-6 w-6 text-primary" />
               </div>
               <div>
                 <h1 className="text-2xl font-bold">
@@ -1125,7 +1125,7 @@ const MLResults: React.FC = () => {
         
         {/* 도움말 */}
         <Alert className="mt-6">
-          <Brain className="h-4 w-4" />
+          <Layers className="h-4 w-4" />
           <AlertDescription>
             <strong>분석 결과 확인:</strong> 각 카드를 클릭하면 감정, 편향성, 팩트체크 등 상세 분석 결과를 시각적으로 확인할 수 있습니다.
             탭을 전환하여 다양한 분석 유형의 결과를 살펴보세요.

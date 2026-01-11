@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, CheckCircle2, Search, Brain, Shield, Loader2, AlertCircle } from "lucide-react";
+import { Activity, CheckCircle2, Search, Layers, Shield, Loader2, AlertCircle } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { listSearchHistory, type SearchHistoryRecord } from "@/lib/api";
 
@@ -26,7 +26,7 @@ const getActivityStyle = (searchType: string) => {
       };
     case 'DEEP_SEARCH':
       return {
-        icon: Brain,
+        icon: Layers,
         color: "text-purple-500",
         bg: "bg-purple-100 dark:bg-purple-900/30",
         label: "Deep Search 분석"

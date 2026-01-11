@@ -9,11 +9,10 @@
 
 import { Link } from 'react-router-dom';
 import {
-  Brain,
+  Layers,
   Shield,
   Link as LinkIcon,
   ArrowRight,
-  Sparkles,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -22,25 +21,23 @@ interface QuickAction {
   id: string;
   label: string;
   description: string;
-  icon: typeof Brain;
+  icon: typeof Layers;
   color: string;
   bgColor: string;
   hoverColor: string;
   href: string;
-  badge?: string;
 }
 
 const QUICK_ACTIONS: QuickAction[] = [
   {
     id: 'deep',
     label: '심층 분석',
-    description: 'AI가 심층 증거를 수집하고 입장을 분석합니다',
-    icon: Brain,
+    description: '다양한 출처에서 증거를 수집하고 입장을 분석합니다',
+    icon: Layers,
     color: 'text-purple-600 dark:text-purple-400',
     bgColor: 'bg-purple-50 dark:bg-purple-900/20',
     hoverColor: 'hover:bg-purple-100 dark:hover:bg-purple-900/30',
     href: '/search?mode=deep',
-    badge: 'AI',
   },
   {
     id: 'factcheck',
@@ -120,21 +117,9 @@ function QuickActionCard({ action }: QuickActionCardProps) {
               <Icon className="h-6 w-6" />
             </div>
 
-            {/* 내용 */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <h3 className="font-semibold text-base">{action.label}</h3>
-                {action.badge && (
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium',
-                      'bg-primary/10 text-primary'
-                    )}
-                  >
-                    <Sparkles className="h-3 w-3" />
-                    {action.badge}
-                  </span>
-                )}
               </div>
               <p className="text-sm text-muted-foreground line-clamp-2">
                 {action.description}

@@ -6,7 +6,7 @@ import {
   AlertCircle,
   Database,
   Globe,
-  Brain,
+  Layers,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -18,8 +18,8 @@ import {
   FolderOpen,
   Link as LinkIcon,
   X,
-  Bot,
-  Sparkles,
+  Workflow,
+  Activity,
   Save,
   BookmarkPlus,
   Maximize2,
@@ -81,8 +81,8 @@ const SOURCE_CONFIG = {
     borderColor: "border-l-green-500",
   },
   ai: {
-    label: "AI 분석",
-    icon: Brain,
+    label: "심층 분석",
+    icon: Layers,
     color: "text-purple-600",
     bgColor: "bg-purple-100 dark:bg-purple-900/30",
     borderColor: "border-l-purple-500",
@@ -241,7 +241,7 @@ const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence =
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Brain className="h-5 w-5 text-purple-600" />
+              <Layers className="h-5 w-5 text-purple-600" />
               <CardTitle className="text-lg">AI 실시간 분석</CardTitle>
               {!isComplete && (
                 <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
@@ -274,7 +274,7 @@ const AIStreamCard = ({ content, isComplete, onSave, isSaved = false, evidence =
                     <DialogHeader className="flex-shrink-0">
                       <div className="flex items-center justify-between">
                         <DialogTitle className="flex items-center gap-2">
-                          <Brain className="h-5 w-5 text-purple-600" />
+                          <Layers className="h-5 w-5 text-purple-600" />
                           AI 분석 보고서
                         </DialogTitle>
                         <div className="flex items-center gap-2 mr-8">
@@ -554,7 +554,7 @@ const QuickActions = () => (
       <Card className="p-4 hover:shadow-md transition-all cursor-pointer border-purple-200 dark:border-purple-800 hover:border-purple-400">
         <div className="flex flex-col items-center text-center gap-2">
           <div className="p-3 rounded-full bg-purple-100 dark:bg-purple-900/30">
-            <Sparkles className="h-6 w-6 text-purple-600" />
+            <Activity className="h-6 w-6 text-purple-600" />
           </div>
           <span className="font-medium text-sm">Deep AI Search</span>
           <span className="text-xs text-muted-foreground">심층 AI 분석</span>
@@ -576,7 +576,7 @@ const QuickActions = () => (
       <Card className="p-4 hover:shadow-md transition-all cursor-pointer border-blue-200 dark:border-blue-800 hover:border-blue-400">
         <div className="flex flex-col items-center text-center gap-2">
           <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-900/30">
-            <Bot className="h-6 w-6 text-blue-600" />
+            <Workflow className="h-6 w-6 text-blue-600" />
           </div>
           <span className="font-medium text-sm">브라우저 에이전트</span>
           <span className="text-xs text-muted-foreground">자동 수집</span>
@@ -1683,7 +1683,7 @@ const ParallelSearch = () => {
                 <Globe className="h-8 w-8 text-green-600" />
               </div>
               <div className="p-3 rounded-full bg-purple-100 dark:bg-purple-900/30">
-                <Brain className="h-8 w-8 text-purple-600" />
+                <Layers className="h-8 w-8 text-purple-600" />
               </div>
             </div>
             <h2 className="text-xl font-semibold mb-2">통합 병렬 검색</h2>
@@ -1701,7 +1701,7 @@ const ParallelSearch = () => {
                 실시간 웹 크롤링
               </div>
               <div className="flex items-center gap-2">
-                <Brain className="h-4 w-4 text-purple-600" />
+                <Layers className="h-4 w-4 text-purple-600" />
                 AI 심층 분석
               </div>
             </div>

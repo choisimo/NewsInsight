@@ -19,7 +19,7 @@ import {
   FolderKanban,
   Settings,
   Search,
-  Bot,
+  Workflow,
   Cpu,
   Activity,
   Gauge,
@@ -27,14 +27,14 @@ import {
   History,
   FolderOpen,
   Globe,
-  Brain,
+  Layers,
   ChevronDown,
   Shield,
   Server,
   Terminal,
   FileText,
   Newspaper,
-  Sparkles,
+  BarChart3,
   Zap,
   FileJson,
 } from 'lucide-react';
@@ -112,21 +112,21 @@ const navConfig: NavItem[] = [
       },
       {
         to: '/ml-results',
-        icon: <Sparkles className="h-4 w-4" />,
+        icon: <BarChart3 className="h-4 w-4" />,
         label: 'ML 분석 결과',
         description: '분석 결과 확인'
       },
       {
         to: '/ai-agent',
-        icon: <Bot className="h-4 w-4" />,
+        icon: <Workflow className="h-4 w-4" />,
         label: '브라우저 에이전트',
-        description: 'AI 웹 자동화'
+        description: '웹 자동화'
       },
       {
         to: '/ai-jobs',
-        icon: <Brain className="h-4 w-4" />,
-        label: 'AI Jobs',
-        description: 'AI 작업 관리'
+        icon: <Layers className="h-4 w-4" />,
+        label: '자동화 작업',
+        description: '작업 관리'
       },
     ],
   },

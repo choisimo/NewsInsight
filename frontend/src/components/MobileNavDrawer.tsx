@@ -4,7 +4,7 @@ import {
   Menu,
   X,
   Search,
-  Bot,
+  Workflow,
   FolderOpen,
   History,
   Settings,
@@ -19,7 +19,7 @@ import {
   FolderKanban,
   Activity,
   Gauge,
-  Brain,
+  Layers,
   Globe,
   ChevronDown,
   ChevronRight,
@@ -72,8 +72,8 @@ const navItems: NavItem[] = [
     subItems: [
       { href: "/search", label: "스마트 검색", icon: Search },
       { href: "/ml-addons", label: "ML Add-ons", icon: Cpu },
-      { href: "/ai-agent", label: "브라우저 에이전트", icon: Bot },
-      { href: "/ai-jobs", label: "AI Jobs", icon: Brain },
+      { href: "/ai-agent", label: "브라우저 에이전트", icon: Workflow },
+      { href: "/ai-jobs", label: "자동화 작업", icon: Layers },
     ]
   },
   { 

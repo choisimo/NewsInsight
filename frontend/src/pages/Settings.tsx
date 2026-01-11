@@ -14,8 +14,8 @@ import {
   Eye,
   Key,
   Save,
-  Sparkles,
-  Bot,
+  Activity,
+  Workflow,
   Search,
   EyeOff,
   BarChart3,
@@ -643,12 +643,12 @@ const Settings = () => {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className={`grid w-full ${isAdmin ? 'grid-cols-3 lg:w-[600px]' : 'grid-cols-2 lg:w-[400px]'}`}>
             <TabsTrigger value="user-llm" className="gap-2">
-              <Bot className="h-4 w-4" />
+              <Workflow className="h-4 w-4" />
               내 LLM 설정
             </TabsTrigger>
             {isAdmin && (
               <TabsTrigger value="ai-settings" className="gap-2">
-                <Sparkles className="h-4 w-4" />
+                <Activity className="h-4 w-4" />
                 고급 AI 설정
               </TabsTrigger>
             )}
@@ -690,7 +690,7 @@ const Settings = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="flex items-center gap-2">
-                      <Bot className="h-5 w-5" />
+                      <Workflow className="h-5 w-5" />
                       LLM 제공자 설정
                     </CardTitle>
                     <CardDescription>

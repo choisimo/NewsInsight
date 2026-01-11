@@ -6,7 +6,7 @@ import {
   Calendar as CalendarIcon,
   Globe,
   Database,
-  Brain,
+  Layers,
   X,
   RotateCcw,
 } from "lucide-react";
@@ -91,7 +91,7 @@ interface AdvancedFiltersProps {
 const sourceConfig = {
   database: { icon: Database, label: "저장된 뉴스", color: "text-blue-600" },
   web: { icon: Globe, label: "웹 검색", color: "text-green-600" },
-  ai: { icon: Brain, label: "AI 분석", color: "text-purple-600" },
+  ai: { icon: Layers, label: "심층 분석", color: "text-purple-600" },
 };
 
 const timeOptions = [

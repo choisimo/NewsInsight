@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useImperativeHandle, forwardRef, useCallback, useMemo } from 'react';
 import { 
-  Send, Loader2, Bot, User, AlertCircle, CheckCircle2, XCircle, Scale, Shield, 
-  Download, Copy, Check, FileText, FileCode, RefreshCw, Sparkles, Search,
+  Send, Loader2, Activity, User, AlertCircle, CheckCircle2, XCircle, Scale, Shield, 
+  Download, Copy, Check, FileText, FileCode, RefreshCw, Zap as ZapIcon, Search,
   ExternalLink, BookOpen, TrendingUp, MessageSquare, Zap
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -557,7 +557,7 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
                     <div className="relative mb-6">
                       <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full opacity-20 blur-xl" />
                       <div className="relative bg-gradient-to-br from-blue-500/10 to-purple-600/10 rounded-full p-6 border border-primary/10">
-                        <Sparkles className={cn("text-primary", compact ? "h-8 w-8" : "h-10 w-10")} />
+                        <Shield className={cn("text-primary", compact ? "h-8 w-8" : "h-10 w-10")} />
                       </div>
                     </div>
                     
@@ -616,7 +616,7 @@ export const FactCheckChatbot = forwardRef<FactCheckChatbotRef, FactCheckChatbot
                       <div className="flex items-center gap-3 py-2">
                         <div className="flex-shrink-0">
                           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                            <Bot className="h-4 w-4 text-white" />
+                            <Activity className="h-4 w-4 text-white" />
                           </div>
                         </div>
                         <div className="flex items-center gap-2 text-muted-foreground bg-muted/50 rounded-full px-4 py-2">
@@ -803,7 +803,7 @@ const MessageBubble = ({ message, isFirst = false, compact = false }: MessageBub
       <div className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
         <div className="flex-shrink-0">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/20">
-            <Sparkles className="h-4 w-4 text-white" />
+            <Activity className="h-4 w-4 text-white" />
           </div>
         </div>
         <div className="flex-1 min-w-0">
@@ -815,7 +815,7 @@ const MessageBubble = ({ message, isFirst = false, compact = false }: MessageBub
             ) : message.isStreaming ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm">AI 분석 결과 생성 중...</span>
+                <span className="text-sm">분석 결과 생성 중...</span>
               </div>
             ) : null}
             {message.isStreaming && message.content && (
@@ -877,7 +877,7 @@ const MessageBubble = ({ message, isFirst = false, compact = false }: MessageBub
     <div className="flex gap-3 animate-in fade-in slide-in-from-left-2 duration-300">
       <div className="flex-shrink-0">
         <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center">
-          <Bot className="h-4 w-4 text-muted-foreground" />
+          <Activity className="h-4 w-4 text-muted-foreground" />
         </div>
       </div>
       <div className="flex-1 min-w-0 max-w-[85%]">

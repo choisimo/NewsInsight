@@ -26,12 +26,12 @@ import {
   RefreshCw,
   LogIn,
   Shield,
-  Sparkles,
-  Brain,
+  Zap as ZapIcon,
+  Layers,
   Globe,
   Zap,
   Search,
-  Bot,
+  Workflow,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -64,7 +64,7 @@ const ProviderIcon = ({ provider, className = "h-5 w-5" }: { provider: string; c
         </svg>
       );
     case 'anthropic':
-      return <Brain className={className} />;
+      return <Layers className={className} />;
     case 'google':
       return (
         <svg className={className} viewBox="0 0 24 24" fill="currentColor">
@@ -77,7 +77,7 @@ const ProviderIcon = ({ provider, className = "h-5 w-5" }: { provider: string; c
     case 'openrouter':
       return <Globe className={className} />;
     case 'together_ai':
-      return <Sparkles className={className} />;
+      return <ZapIcon className={className} />;
     case 'perplexity':
       return <Zap className={className} />;
     case 'brave_search':
@@ -89,7 +89,7 @@ const ProviderIcon = ({ provider, className = "h-5 w-5" }: { provider: string; c
     case 'tavily':
       return <Search className={className} />;
     default:
-      return <Bot className={className} />;
+      return <Workflow className={className} />;
   }
 };
 

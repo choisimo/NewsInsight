@@ -6,7 +6,7 @@ import {
   Users,
   FileText,
   Settings,
-  Brain,
+  Layers,
   Activity,
   Database,
   Shield,
@@ -55,7 +55,7 @@ export default function AdminDashboard() {
     {
       title: 'ML 학습 관리',
       description: 'Kaggle 데이터셋 학습 및 모델 훈련',
-      icon: Brain,
+      icon: Layers,
       path: '/ml-training',
       color: 'text-purple-500',
       bgColor: 'bg-purple-50',
@@ -152,7 +152,7 @@ export default function AdminDashboard() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">ML Add-ons</CardTitle>
-            <Brain className="h-4 w-4 text-muted-foreground" />
+            <Layers className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             {isLoading ? (

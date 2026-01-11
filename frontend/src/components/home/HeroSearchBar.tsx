@@ -11,11 +11,9 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
-  Sparkles,
-  Brain,
+  Layers,
   Shield,
   Link as LinkIcon,
-  ArrowRight,
   Loader2,
   X,
 } from 'lucide-react';
@@ -45,7 +43,7 @@ const SEARCH_MODES: SearchModeConfig[] = [
   {
     id: 'unified',
     label: '통합 검색',
-    description: 'DB + 웹 + AI 동시 검색',
+    description: 'DB + 웹 동시 검색',
     icon: Search,
     color: 'text-blue-600',
     placeholder: '무엇이든 검색하세요...',
@@ -53,8 +51,8 @@ const SEARCH_MODES: SearchModeConfig[] = [
   {
     id: 'deep',
     label: '심층 분석',
-    description: 'AI 기반 심층 증거 수집',
-    icon: Brain,
+    description: '다중 소스 심층 증거 수집',
+    icon: Layers,
     color: 'text-purple-600',
     placeholder: '분석할 주제를 입력하세요...',
   },
@@ -250,14 +248,15 @@ export function HeroSearchBar({
 
       {/* 하단 힌트 */}
       <div className="flex items-center justify-center gap-4 mt-3 text-sm text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <Sparkles className="h-3.5 w-3.5 text-yellow-500" />
-          AI 분석 지원
-        </span>
+        <span>실시간 검색</span>
+        <span className="hidden sm:inline">•</span>
+        <span className="hidden sm:inline">다중 소스</span>
+        <span className="hidden sm:inline">•</span>
+        <span className="hidden sm:inline">팩트체크</span>
         <span className="hidden sm:inline">•</span>
         <span className="hidden sm:flex items-center gap-1">
           <kbd className="px-1.5 py-0.5 rounded bg-muted text-xs">Ctrl+K</kbd>
-          로 빠른 검색
+          빠른 검색
         </span>
       </div>
     </div>

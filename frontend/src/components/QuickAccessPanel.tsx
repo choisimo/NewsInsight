@@ -10,7 +10,7 @@ import {
   Clock,
   TrendingUp,
   Zap,
-  Brain,
+  Layers,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -146,7 +146,7 @@ export const QuickAccessPanel = ({ isOpen, onClose, onSelectSearch }: QuickAcces
             onClick={() => setActiveTab('ml')}
             className="flex-1"
           >
-            <Brain className="h-4 w-4 mr-2" />
+            <Layers className="h-4 w-4 mr-2" />
             ML
           </Button>
         </div>
@@ -185,7 +185,7 @@ export const QuickAccessPanel = ({ isOpen, onClose, onSelectSearch }: QuickAcces
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm flex items-center gap-2">
-                    <Brain className="h-4 w-4" />
+                    <Layers className="h-4 w-4" />
                     ML 학습
                   </CardTitle>
                 </CardHeader>

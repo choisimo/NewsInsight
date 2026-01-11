@@ -25,7 +25,7 @@ import { useUsageStreak } from '@/hooks/useUsageStreak';
 import { useTrendingTopics } from '@/hooks/useTrendingTopics';
 import { getFavoriteTemplates, getMostUsedTemplates, type SearchTemplate } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Sparkles, TrendingUp } from 'lucide-react';
+import { Flame, TrendingUp } from 'lucide-react';
 
 const DEFAULT_USER_ID = 'default-user';
 
@@ -82,7 +82,7 @@ export function NewHome() {
               오늘의 뉴스, 더 깊게 분석하세요
             </h1>
             <p className="text-muted-foreground text-lg">
-              AI 기반 뉴스 분석 플랫폼
+              뉴스 인텔리전스 플랫폼
             </p>
           </div>
 
@@ -92,7 +92,7 @@ export function NewHome() {
           {/* 연속 사용 뱃지 */}
           {!usageLoading && usageStats.currentStreak > 0 && (
             <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-sm">
-              <Sparkles className="h-4 w-4 text-primary" />
+              <Flame className="h-4 w-4 text-primary" />
               <span className="font-medium">{usageStats.currentStreak}일 연속 사용 중!</span>
             </div>
           )}

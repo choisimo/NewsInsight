@@ -4,7 +4,7 @@ import {
   Loader2,
   AlertCircle,
   X,
-  Sparkles,
+  Zap,
   FileText,
   Globe,
   ArrowRight,
@@ -198,7 +198,7 @@ export function UrlClaimExtractor({
                 </>
               ) : (
                 <>
-                  <Sparkles className="h-4 w-4 mr-2" />
+                  <Zap className="h-4 w-4 mr-2" />
                   추출
                 </>
               )}

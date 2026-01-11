@@ -57,7 +57,7 @@ const config = {
   // 한 파일 최대 크기 (바이너리/초대형 파일 방지)
   maxFileSizeBytes: 2 * 1024 * 1024,
   // 출력할 Markdown 파일 개수 (1이면 단일 파일)
-  maxOutputFiles: 5,
+  maxOutputFiles: 1,
   // 첫 번째 출력 파일을 Kwrite로 열지 여부
   openInKwrite: false,
   // 출력 파일들이 있는 디렉터리를 Dolphin으로 열지 여부

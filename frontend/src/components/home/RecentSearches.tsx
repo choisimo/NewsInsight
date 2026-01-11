@@ -10,9 +10,9 @@ import { Link } from 'react-router-dom';
 import {
   History,
   Search,
-  Brain,
+  Layers,
   Shield,
-  Bot,
+  Workflow,
   Link as LinkIcon,
   ArrowRight,
   Clock,
@@ -36,7 +36,7 @@ const SEARCH_TYPE_CONFIG: Record<SearchHistoryType, {
     label: '검색',
   },
   DEEP_SEARCH: {
-    icon: Brain,
+    icon: Layers,
     color: 'text-purple-600',
     label: '심층분석',
   },
@@ -46,7 +46,7 @@ const SEARCH_TYPE_CONFIG: Record<SearchHistoryType, {
     label: '팩트체크',
   },
   BROWSER_AGENT: {
-    icon: Bot,
+    icon: Workflow,
     color: 'text-orange-600',
     label: '에이전트',
   },

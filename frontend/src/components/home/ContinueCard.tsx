@@ -10,10 +10,10 @@
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
-  Brain,
+  Layers,
   Shield,
   Search,
-  Bot,
+  Workflow,
   Link as LinkIcon,
   X,
   Loader2,
@@ -36,7 +36,7 @@ const WORK_TYPE_CONFIG: Record<WorkType, {
   label: string;
 }> = {
   deep_search: {
-    icon: Brain,
+    icon: Layers,
     color: 'text-purple-600',
     bgColor: 'bg-purple-50 dark:bg-purple-900/20',
     label: '심층 분석',
@@ -54,10 +54,10 @@ const WORK_TYPE_CONFIG: Record<WorkType, {
     label: '검색',
   },
   browser_agent: {
-    icon: Bot,
+    icon: Workflow,
     color: 'text-orange-600',
     bgColor: 'bg-orange-50 dark:bg-orange-900/20',
-    label: 'AI 에이전트',
+    label: '브라우저 에이전트',
   },
   url_analysis: {
     icon: LinkIcon,

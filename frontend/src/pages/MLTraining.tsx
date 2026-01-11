@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
-  Brain,
+  Layers,
   Play,
   Pause,
   RefreshCw,
@@ -392,7 +392,7 @@ const NewTrainingDialog = ({ open, onOpenChange, onSubmit, isSubmitting }: NewTr
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Brain className="h-5 w-5" />
+            <Layers className="h-5 w-5" />
             새 ML 모델 학습
           </DialogTitle>
           <DialogDescription>
@@ -1164,7 +1164,7 @@ const MLTraining = () => {
 
             {jobs.length === 0 && (
               <div className="text-center py-16">
-                <Brain className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
+                <Layers className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
                 <h3 className="text-xl font-semibold mb-2">학습 작업이 없습니다</h3>
                 <p className="text-muted-foreground mb-4">
                   새 ML 모델 학습을 시작해보세요.

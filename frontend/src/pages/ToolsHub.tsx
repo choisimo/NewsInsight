@@ -16,14 +16,13 @@ import { Badge } from '@/components/ui/badge';
 import {
   Search,
   Cpu,
-  Bot,
-  Brain,
+  Workflow,
+  Layers,
   ArrowRight,
   Zap,
   Shield,
   BarChart3,
   Globe,
-  Sparkles,
   Activity,
   CheckCircle2,
   XCircle,
@@ -210,7 +209,7 @@ export function ToolsHub() {
       features: [
         '빠른 검색 / 심층 분석 / 팩트체크 모드',
         '멀티소스 뉴스 통합 검색',
-        'AI 기반 요약 및 분석',
+        '심층 분석 및 요약',
       ],
       badge: '핵심 기능',
       badgeVariant: 'default',
@@ -225,15 +224,15 @@ export function ToolsHub() {
         '감정/논조 분석',
         '주제 클러스터링',
       ],
-      badge: 'AI',
+      badge: '고급',
       status: mlStatus.status,
       statusText: mlStatus.text,
     },
     {
       to: '/ai-agent',
-      icon: <Bot className="h-6 w-6" />,
+      icon: <Workflow className="h-6 w-6" />,
       title: '브라우저 에이전트',
-      description: 'AI 웹 자동화 도구',
+      description: '웹 자동화 도구',
       features: [
         '자연어로 웹 탐색 명령',
         '자동 데이터 수집',
@@ -245,9 +244,9 @@ export function ToolsHub() {
     },
     {
       to: '/ai-jobs',
-      icon: <Brain className="h-6 w-6" />,
-      title: 'AI Jobs',
-      description: 'AI 작업 관리 및 모니터링',
+      icon: <Layers className="h-6 w-6" />,
+      title: '자동화 작업',
+      description: '작업 관리 및 모니터링',
       features: [
         '배치 분석 작업 관리',
         '작업 스케줄링',
@@ -256,7 +255,7 @@ export function ToolsHub() {
     },
     {
       to: '/ml-results',
-      icon: <Sparkles className="h-6 w-6" />,
+      icon: <BarChart3 className="h-6 w-6" />,
       title: 'ML 분석 결과',
       description: 'ML 분석 결과 확인 및 조회',
       features: [
@@ -274,7 +273,7 @@ export function ToolsHub() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight mb-2">도구</h1>
         <p className="text-muted-foreground text-lg">
-          AI 기반 뉴스 분석을 위한 다양한 도구를 활용하세요
+          다양한 뉴스 분석 도구를 활용하세요
         </p>
       </div>
 
@@ -318,7 +317,7 @@ export function ToolsHub() {
         <CardContent className="py-6">
           <div className="flex items-start gap-4">
             <div className="p-2 rounded-lg bg-primary/10">
-              <Sparkles className="h-5 w-5 text-primary" />
+              <Zap className="h-5 w-5 text-primary" />
             </div>
             <div>
               <h3 className="font-semibold mb-1">Pro Tip</h3>

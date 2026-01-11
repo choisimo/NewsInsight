@@ -14,14 +14,14 @@ import { useState, useCallback, useRef, useEffect, useMemo, createElement } from
 import { useLocation, useSearchParams, useNavigate } from "react-router-dom";
 import {
   Search,
-  Brain,
+  Layers,
   Shield,
   Loader2,
   Pin,
   Bookmark,
   ChevronRight,
   ChevronDown,
-  Sparkles,
+  Activity,
   ExternalLink,
   CheckCircle2,
   Clock,
@@ -188,7 +188,7 @@ interface VerificationResult {
 const MODE_CONFIG = {
   unified: {
     label: "통합 검색",
-    description: "DB + 웹 + AI를 동시에 검색",
+    description: "DB + 웹을 동시에 검색",
     icon: Search,
     color: "text-blue-600",
     bgColor: "bg-blue-50 dark:bg-blue-900/20",
@@ -196,8 +196,8 @@ const MODE_CONFIG = {
   },
   deep: {
     label: "심층 보고서",
-    description: "AI 기반 심층 분석 보고서 생성",
-    icon: Brain,
+    description: "다중 소스 심층 분석 보고서 생성",
+    icon: Layers,
     color: "text-purple-600",
     bgColor: "bg-purple-50 dark:bg-purple-900/20",
     borderColor: "border-purple-500",
@@ -223,7 +223,7 @@ const MODE_CONFIG = {
 const SOURCE_CONFIG = {
   database: { label: "DB", icon: Database, color: "text-blue-600", bgColor: "bg-blue-100 dark:bg-blue-900/30" },
   web: { label: "웹", icon: Globe, color: "text-green-600", bgColor: "bg-green-100 dark:bg-green-900/30" },
-  ai: { label: "AI", icon: Brain, color: "text-purple-600", bgColor: "bg-purple-100 dark:bg-purple-900/30" },
+  ai: { label: "분석", icon: Layers, color: "text-purple-600", bgColor: "bg-purple-100 dark:bg-purple-900/30" },
 } as const;
 
 const STANCE_CONFIG = {
@@ -1560,7 +1560,7 @@ export default function SmartSearch() {
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Sparkles className="h-6 w-6 text-primary" />
+            <Search className="h-6 w-6 text-primary" />
             검색
           </h1>
           <p className="text-muted-foreground text-sm">
@@ -1961,8 +1961,8 @@ export default function SmartSearch() {
           <Card className={`${MODE_CONFIG.deep.bgColor} border-none`}>
             <CardContent className="py-3">
               <div className="flex items-center gap-2 text-sm">
-                <Brain className={`h-4 w-4 ${MODE_CONFIG.deep.color}`} />
-                <span className="text-muted-foreground">AI가 주제에 대한 심층 분석 보고서를 생성합니다.</span>
+                <Layers className={`h-4 w-4 ${MODE_CONFIG.deep.color}`} />
+                <span className="text-muted-foreground">주제에 대한 심층 분석 보고서를 생성합니다.</span>
                 
                 {/* History toggle button */}
                 <Button
@@ -2126,7 +2126,7 @@ export default function SmartSearch() {
                 <Card className="border-l-4 border-l-purple-500">
                   <CardHeader className="pb-2">
                     <div className="flex items-center gap-2">
-                      <Sparkles className="h-5 w-5 text-purple-600" />
+                      <Activity className="h-5 w-5 text-purple-600" />
                       <CardTitle className="text-lg">핵심 요약</CardTitle>
                     </div>
                   </CardHeader>
@@ -2299,14 +2299,14 @@ export default function SmartSearch() {
           {/* 초기 상태 */}
           {!deepLoading && !deepJobId && !deepResults && !deepError && (
             <div className="text-center py-12 text-muted-foreground">
-              <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <Layers className="h-12 w-12 mx-auto mb-4 opacity-30" />
               <p>검색어를 입력하고 심층 보고서를 생성해보세요.</p>
-              <p className="text-xs mt-1">AI가 주제에 대한 심층 분석을 수행하며 2-5분 정도 소요됩니다.</p>
+              <p className="text-xs mt-1">주제에 대한 심층 분석을 수행하며 2-5분 정도 소요됩니다.</p>
             </div>
           )}
           {!deepLoading && deepResults && deepResults.evidence?.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
-              <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <Layers className="h-12 w-12 mx-auto mb-4 opacity-30" />
               <p>분석 결과가 없습니다.</p>
               <p className="text-xs mt-1">다른 검색어로 다시 시도해보세요.</p>
             </div>
@@ -2320,7 +2320,7 @@ export default function SmartSearch() {
               <div className="flex items-center gap-2 text-sm">
                 <Shield className={`h-4 w-4 ${MODE_CONFIG.factcheck.color}`} />
                 <span className="text-muted-foreground">
-                  AI 챗봇과 대화하며 주장이나 뉴스의 사실 여부를 검증합니다.
+                  대화를 통해 주장이나 뉴스의 사실 여부를 검증합니다.
                 </span>
               </div>
             </CardContent>

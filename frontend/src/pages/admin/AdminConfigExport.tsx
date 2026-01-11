@@ -12,7 +12,7 @@ import {
   Copy,
   ShieldAlert,
   FileUp,
-  Bot,
+  Workflow,
   Cpu,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -294,7 +294,7 @@ export default function AdminConfigExport() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Bot className="w-4 h-4 text-muted-foreground" />
+                  <Workflow className="w-4 h-4 text-muted-foreground" />
                   <Label>LLM Provider 설정 포함</Label>
                 </div>
                 <Switch
@@ -464,7 +464,7 @@ export default function AdminConfigExport() {
                 <Card>
                   <CardHeader className="py-3">
                     <CardTitle className="text-sm flex items-center gap-2">
-                      <Bot className="w-4 h-4" />
+                      <Workflow className="w-4 h-4" />
                       LLM Provider ({importData.llmProviders.length}개)
                     </CardTitle>
                   </CardHeader>

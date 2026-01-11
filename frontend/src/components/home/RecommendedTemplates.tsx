@@ -11,10 +11,10 @@ import { Link } from 'react-router-dom';
 import {
   FileText,
   Star,
-  Sparkles,
+  Zap,
   ArrowRight,
   Search,
-  Brain,
+  Layers,
   Shield,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -68,7 +68,7 @@ const MODE_CONFIG = {
     bgColor: 'bg-blue-50 dark:bg-blue-900/20',
   },
   deep: {
-    icon: Brain,
+    icon: Layers,
     color: 'text-purple-600',
     bgColor: 'bg-purple-50 dark:bg-purple-900/20',
   },
@@ -140,7 +140,7 @@ export function RecommendedTemplates({
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-yellow-500" />
+            <Zap className="h-4 w-4 text-yellow-500" />
             추천 템플릿
           </CardTitle>
           <Button variant="ghost" size="sm" asChild className="text-xs h-7">

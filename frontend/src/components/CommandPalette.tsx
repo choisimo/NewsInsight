@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Search,
   Home,
-  Bot,
+  Workflow,
   FolderOpen,
   History,
   Moon,
@@ -11,7 +11,7 @@ import {
   FileJson,
   Command,
   Cpu,
-  Brain,
+  Layers,
   Shield,
   Database,
   Link as LinkIcon,
@@ -107,7 +107,7 @@ export function CommandPalette({
     {
       id: "search-deep",
       label: "Deep Search 모드",
-      icon: Brain,
+      icon: Layers,
       shortcut: "⌘D",
       action: () => { navigate("/?mode=deep"); setIsOpen(false); },
       keywords: ["deep", "search", "ai", "분석", "심층"],
@@ -142,7 +142,7 @@ export function CommandPalette({
     {
       id: "browser-agent",
       label: "브라우저 에이전트",
-      icon: Bot,
+      icon: Workflow,
       shortcut: "⌘B",
       action: () => { navigate("/ai-agent"); setIsOpen(false); },
       keywords: ["browser", "agent", "automation", "에이전트", "자동화"],

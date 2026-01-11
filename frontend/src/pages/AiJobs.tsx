@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
-  Brain,
+  Layers,
   RefreshCw,
   Loader2,
   Clock,
@@ -406,12 +406,12 @@ const AiJobs: React.FC = () => {
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-primary/10 rounded-lg">
-                <Brain className="h-6 w-6 text-primary" />
+                <Layers className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <h1 className="text-3xl font-bold">AI 작업 관리</h1>
+                <h1 className="text-3xl font-bold">작업 관리</h1>
                 <p className="text-muted-foreground">
-                  AI 분석 작업 상태를 모니터링하고 관리합니다.
+                  분석 작업 상태를 모니터링하고 관리합니다.
                 </p>
               </div>
             </div>
@@ -591,7 +591,7 @@ const AiJobs: React.FC = () => {
             <div className="space-y-2">
               <Link to="/deep-search">
                 <Button variant="outline" className="w-full justify-start">
-                  <Brain className="h-4 w-4 mr-2" />
+                  <Layers className="h-4 w-4 mr-2" />
                   Deep Search
                 </Button>
               </Link>

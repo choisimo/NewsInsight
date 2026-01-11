@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Bot,
+  Workflow,
   Loader2,
   AlertCircle,
   CheckCircle2,
@@ -311,7 +311,7 @@ const InterventionPanel = ({ job, onSubmit, isSubmitting }: InterventionPanelPro
               </SelectItem>
               <SelectItem value="custom">
                 <div className="flex items-center gap-2">
-                  <Bot className="h-4 w-4" /> Custom Script
+                  <Workflow className="h-4 w-4" /> Custom Script
                 </div>
               </SelectItem>
               <SelectItem value="skip">
@@ -1698,7 +1698,7 @@ const BrowserAgent = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Bot className="h-5 w-5" />
+                  <Workflow className="h-5 w-5" />
                   New Task
                 </CardTitle>
                 <CardDescription>
@@ -2005,7 +2005,7 @@ const BrowserAgent = () => {
                 <CardContent className="py-16">
                   <div className="text-center">
                     <div className="inline-block p-4 rounded-full bg-accent/10 mb-4">
-                      <Bot className="h-12 w-12 text-accent" />
+                      <Workflow className="h-12 w-12 text-accent" />
                     </div>
                     <h2 className="text-xl font-semibold mb-2">Ready to Browse</h2>
                     <p className="text-muted-foreground max-w-md mx-auto">

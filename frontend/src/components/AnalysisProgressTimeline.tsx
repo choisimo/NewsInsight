@@ -3,13 +3,13 @@ import {
   Search,
   Globe,
   FileText,
-  Brain,
+  Layers,
   CheckCircle2,
   Loader2,
   Circle,
   AlertCircle,
   Clock,
-  Sparkles,
+  Zap,
   Database,
   Filter,
 } from "lucide-react";
@@ -50,7 +50,7 @@ export const DEFAULT_ANALYSIS_STEPS: AnalysisStepInfo[] = [
     id: "initializing",
     label: "초기화",
     description: "분석 환경을 준비하고 있습니다",
-    icon: Sparkles,
+    icon: Zap,
     estimatedDuration: 3,
   },
   {
@@ -71,7 +71,7 @@ export const DEFAULT_ANALYSIS_STEPS: AnalysisStepInfo[] = [
     id: "analyzing",
     label: "분석 중",
     description: "AI가 수집된 정보를 분석하고 있습니다",
-    icon: Brain,
+    icon: Layers,
     estimatedDuration: 30,
   },
   {

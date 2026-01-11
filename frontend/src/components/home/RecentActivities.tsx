@@ -10,9 +10,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   History,
   Search,
-  Brain,
+  Layers,
   Shield,
-  Bot,
+  Workflow,
   Link as LinkIcon,
   ArrowRight,
   Clock,
@@ -73,7 +73,7 @@ const SEARCH_TYPE_CONFIG: Record<SearchHistoryType, {
     labelKo: '통합 검색',
   },
   DEEP_SEARCH: {
-    icon: Brain,
+    icon: Layers,
     color: 'text-purple-600 dark:text-purple-400',
     bgColor: 'bg-purple-100 dark:bg-purple-900/30',
     label: 'DEEP',
@@ -87,7 +87,7 @@ const SEARCH_TYPE_CONFIG: Record<SearchHistoryType, {
     labelKo: '팩트체크',
   },
   BROWSER_AGENT: {
-    icon: Bot,
+    icon: Workflow,
     color: 'text-orange-600 dark:text-orange-400',
     bgColor: 'bg-orange-100 dark:bg-orange-900/30',
     label: 'AGENT',

@@ -8,7 +8,7 @@ import {
   History,
   Newspaper,
   BookOpen,
-  Bot,
+  Workflow,
   Layers,
   Shield,
   Server,
@@ -16,11 +16,11 @@ import {
   FileText,
   Activity,
   ChevronDown,
-  Brain,
   Database,
   Gauge,
   CheckCircle,
   Zap,
+  Monitor,
 } from "lucide-react";
 import { useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -72,7 +72,7 @@ export function Sidebar({ className }: SidebarProps) {
     {
       title: "Browser Agent",
       href: "/ai-agent",
-      icon: Bot,
+      icon: Workflow,
       variant: "ghost",
     },
     {
@@ -88,9 +88,9 @@ export function Sidebar({ className }: SidebarProps) {
       variant: "ghost",
     },
     {
-      title: "AI Jobs",
+      title: "Automation Jobs",
       href: "/ai-jobs",
-      icon: Brain,
+      icon: Layers,
       variant: "ghost",
     },
     {
@@ -106,6 +106,11 @@ export function Sidebar({ className }: SidebarProps) {
       title: "Sources",
       href: "/admin/sources",
       icon: Newspaper,
+    },
+    {
+      title: "Server Monitoring",
+      href: "/admin/monitoring",
+      icon: Monitor,
     },
     {
       title: "Environments",

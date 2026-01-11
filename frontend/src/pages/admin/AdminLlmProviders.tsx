@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Bot,
+  Workflow,
   CheckCircle2,
   XCircle,
   Loader2,
@@ -449,7 +449,7 @@ export default function AdminLlmProviders() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Bot className="w-5 h-5" />
+            <Workflow className="w-5 h-5" />
             설정된 Provider
           </CardTitle>
           <CardDescription>
@@ -459,7 +459,7 @@ export default function AdminLlmProviders() {
         <CardContent>
           {settings.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              <Bot className="w-12 h-12 mx-auto mb-4 opacity-20" />
+              <Workflow className="w-12 h-12 mx-auto mb-4 opacity-20" />
               <p>설정된 LLM Provider가 없습니다.</p>
               <p className="text-sm mt-1">위의 "Provider 추가" 버튼을 클릭하여 추가하세요.</p>
             </div>

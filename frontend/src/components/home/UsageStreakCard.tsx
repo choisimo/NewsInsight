@@ -12,7 +12,7 @@ import {
   Calendar,
   TrendingUp,
   Search,
-  Brain,
+  Layers,
   Shield,
   Award,
   Target,
@@ -115,7 +115,7 @@ export function UsageStreakCard({
             color="text-blue-600"
           />
           <StatItem
-            icon={Brain}
+            icon={Layers}
             label="심층분석"
             value={stats.weeklyDeepSearchCount}
             color="text-purple-600"

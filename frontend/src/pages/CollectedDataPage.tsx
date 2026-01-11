@@ -13,8 +13,8 @@ import {
   Inbox,
   AlertCircle,
   Activity,
-  Brain,
-  Sparkles,
+  Layers,
+  Zap,
   MoreHorizontal,
   Search,
   X,
@@ -175,18 +175,18 @@ const DataItemCard: React.FC<DataItemCardProps> = ({
                   {isAnalyzing ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Brain className="h-4 w-4" />
+                    <Layers className="h-4 w-4" />
                   )}
                   <span className="text-xs">분석</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => handleAnalyze('realtime')}>
-                  <Sparkles className="mr-2 h-4 w-4 text-yellow-500" />
+                  <Zap className="mr-2 h-4 w-4 text-yellow-500" />
                   실시간 분석
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleAnalyze('batch')}>
-                  <Brain className="mr-2 h-4 w-4" />
+                  <Layers className="mr-2 h-4 w-4" />
                   배치 분석
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
@@ -426,7 +426,7 @@ const CollectedDataPage: React.FC = () => {
                 onClick={handleBatchAnalyze}
                 className="gap-2"
               >
-                <Brain className="h-4 w-4" />
+                <Layers className="h-4 w-4" />
                 일괄 분석 ({Math.min(unprocessedData.length, 50)}건)
               </Button>
             )}

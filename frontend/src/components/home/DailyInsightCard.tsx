@@ -14,7 +14,7 @@ import {
   ThumbsDown,
   Minus,
   ArrowRight,
-  Sparkles,
+  Zap,
   RefreshCw,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -169,7 +169,7 @@ export function DailyInsightCard({ className }: DailyInsightCardProps) {
 
           <Button asChild size="sm" className="gap-1">
             <Link to={hotTopic.searchUrl}>
-              <Sparkles className="h-4 w-4" />
+              <Zap className="h-4 w-4" />
               심층 분석 시작
             </Link>
           </Button>
